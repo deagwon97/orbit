@@ -17,25 +17,31 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-const clearScreenSeq = "\x1b[2J\x1b[H"
+const (
+	clearScreenSeq     = "\x1b[2J\x1b[H"
+	restoreTerminalSeq = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[0m"
+)
 
 var detachTokens = [][]byte{
-	{0x1D},      // Ctrl-].
-	{0x1B, ']'}, // Some terminals encode Ctrl-] as ESC ].
-	{0x1C},      // Ctrl-\.
-	{0x1E},      // Ctrl-^.
-	{0x1F},      // Ctrl-_.
-	{0x07},      // Ctrl-G.
+	{0x1D},                  // Ctrl-].
+	{0x1C},                  // Ctrl-\.
+	[]byte("\x1b[93;5u"),    // CSI-u Ctrl-].
+	[]byte("\x1b[92;5u"),    // CSI-u Ctrl-\.
+	[]byte("\x1b[27;5;93~"), // xterm modifyOtherKeys Ctrl-].
+	[]byte("\x1b[27;5;92~"), // xterm modifyOtherKeys Ctrl-\.
 }
 
 var errDetached = errors.New("detached")
+var errAttachClosed = errors.New("attach websocket closed")
 
 type Command struct {
 	URL   string
@@ -72,15 +78,12 @@ func (c *Command) Run() error {
 	if _, err := io.WriteString(c.out, clearScreenSeq); err != nil {
 		return err
 	}
-	if err := replayLogs(c.URL, c.Token, c.out); err != nil {
-		fmt.Fprintf(c.err, "history replay failed: %v\n", err)
-	}
 
 	guard, err := enableRaw(c.in)
 	if err == nil {
 		defer guard.restore()
-		drainInput(c.in)
 	}
+	defer cleanupTerminal(c.in, c.out)
 
 	done := make(chan error, 2)
 	var closeOnce sync.Once
@@ -94,9 +97,11 @@ func (c *Command) Run() error {
 		if errors.Is(err, errDetached) {
 			_ = ws.writeText(detachMessage())
 			_ = ws.writeControl(0x8, nil)
+			done <- err
+			closeConn()
+			return
 		}
-		done <- err
-		closeConn()
+		reportInputError(c.err, err)
 	}()
 	go func() {
 		done <- copyOutput(ws, c.out)
@@ -104,10 +109,26 @@ func (c *Command) Run() error {
 	}()
 
 	err = <-done
-	if errors.Is(err, errDetached) || err == io.EOF || strings.Contains(errString(err), "use of closed network connection") {
+	if errors.Is(err, errDetached) || err == nil {
 		return nil
 	}
+	if err == io.EOF || strings.Contains(errString(err), "use of closed network connection") {
+		return errAttachClosed
+	}
 	return err
+}
+
+func reportInputError(out io.Writer, err error) {
+	if err == nil || errors.Is(err, io.EOF) {
+		return
+	}
+	fmt.Fprintf(out, "\r\n[orb] stdin relay stopped: %v\r\n", err)
+}
+
+func cleanupTerminal(in io.Reader, out io.Writer) {
+	_, _ = io.WriteString(out, restoreTerminalSeq)
+	drainInputFor(in, 200*time.Millisecond)
+	_, _ = io.WriteString(out, clearScreenSeq)
 }
 
 func errString(err error) string {
@@ -220,12 +241,20 @@ func copyInput(ws stdinWriter, in io.Reader) error {
 			}
 		}
 		if err != nil {
+			if isRetryableInputError(err) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 			if pending := detach.takePending(); len(pending) > 0 {
 				_ = ws.writeText(stdinMessage(pending))
 			}
 			return err
 		}
 	}
+}
+
+func isRetryableInputError(err error) bool {
+	return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR)
 }
 
 func stdinMessage(data []byte) []byte {
@@ -356,6 +385,10 @@ func scanCSI(in []byte, i int) (int, bool) {
 }
 
 func drainInput(r io.Reader) {
+	drainInputFor(r, 0)
+}
+
+func drainInputFor(r io.Reader, duration time.Duration) {
 	file, ok := r.(*os.File)
 	if !ok {
 		return
@@ -370,6 +403,7 @@ func drainInput(r io.Reader) {
 	}
 	defer func() { _, _ = unix.FcntlInt(uintptr(fd), unix.F_SETFL, oldFlags) }()
 
+	deadline := time.Now().Add(duration)
 	buf := make([]byte, 1024)
 	for {
 		n, err := file.Read(buf)
@@ -378,7 +412,11 @@ func drainInput(r io.Reader) {
 		}
 		if err != nil {
 			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-				return
+				if duration <= 0 || time.Now().After(deadline) {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
 			return
 		}
@@ -442,16 +480,84 @@ func copyOutput(ws *websocket, out io.Writer) error {
 				if err != nil {
 					return err
 				}
+				bytes = adaptOutputColors(bytes)
 				if _, err := out.Write(bytes); err != nil {
 					return err
 				}
 			}
 		case 0x8:
-			return nil
+			return errAttachClosed
 		case 0x9:
 			_ = ws.writeControl(0xA, payload)
 		}
 	}
+}
+
+func adaptOutputColors(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); {
+		if in[i] != 0x1b || i+1 >= len(in) || in[i+1] != '[' {
+			out = append(out, in[i])
+			i++
+			continue
+		}
+		next, replacement, ok := rewriteSGR(in, i)
+		if !ok {
+			out = append(out, in[i])
+			i++
+			continue
+		}
+		out = append(out, replacement...)
+		i = next
+	}
+	return out
+}
+
+func rewriteSGR(in []byte, start int) (int, []byte, bool) {
+	i := start + 2
+	for i < len(in) && in[i] != 'm' {
+		if in[i] < '0' || in[i] > '9' {
+			if in[i] != ';' {
+				return start, nil, false
+			}
+		}
+		i++
+	}
+	if i >= len(in) {
+		return start, nil, false
+	}
+	params := string(in[start+2 : i])
+	if params == "" {
+		return i + 1, in[start : i+1], true
+	}
+	parts := strings.Split(params, ";")
+	rewritten := make([]string, 0, len(parts))
+	changed := false
+	for p := 0; p < len(parts); p++ {
+		value, err := strconv.Atoi(parts[p])
+		if err != nil {
+			return start, nil, false
+		}
+		switch {
+		case value == 30:
+			rewritten = append(rewritten, "39")
+			changed = true
+		case value == 38 && p+2 < len(parts) && parts[p+1] == "5" && parts[p+2] == "0":
+			rewritten = append(rewritten, "39")
+			p += 2
+			changed = true
+		case value == 38 && p+4 < len(parts) && parts[p+1] == "2" && parts[p+2] == "0" && parts[p+3] == "0" && parts[p+4] == "0":
+			rewritten = append(rewritten, "39")
+			p += 4
+			changed = true
+		default:
+			rewritten = append(rewritten, parts[p])
+		}
+	}
+	if !changed {
+		return i + 1, in[start : i+1], true
+	}
+	return i + 1, []byte("\x1b[" + strings.Join(rewritten, ";") + "m"), true
 }
 
 type websocket struct {
