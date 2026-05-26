@@ -6,6 +6,7 @@ use std::{collections::HashMap, path::PathBuf};
 #[serde(rename_all = "kebab-case")]
 pub enum ToolType {
     Codex,
+    #[serde(rename = "claude")]
     ClaudeCode,
     Opencode,
     Pi,
@@ -40,7 +41,7 @@ impl std::str::FromStr for ToolType {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "codex" => Ok(Self::Codex),
-            "claude-code" | "claude" => Ok(Self::ClaudeCode),
+            "claude" => Ok(Self::ClaudeCode),
             "opencode" => Ok(Self::Opencode),
             "pi" => Ok(Self::Pi),
             other => Err(format!("unsupported tool: {other}")),

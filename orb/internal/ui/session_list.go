@@ -20,7 +20,7 @@ const (
 	modeLogs
 )
 
-var tools = []string{"codex", "claude-code", "opencode", "pi"}
+var tools = []string{"codex", "claude", "opencode", "pi"}
 
 type Model struct {
 	client   client.Client

@@ -70,7 +70,7 @@ func run(c client.Client, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: orb run [--detach] [--name NAME] [--cwd DIR] [-e KEY=VALUE] <codex|claude-code|opencode|pi>")
+		return fmt.Errorf("usage: orb run [--detach] [--name NAME] [--cwd DIR] [-e KEY=VALUE] <codex|claude|opencode|pi>")
 	}
 
 	req := models.CreateSessionRequest{
@@ -307,6 +307,6 @@ func usageText() string {
   orb rm <id|name>     remove a session
   orb logs [opts] <id>  print session logs
 
-tools: codex, claude-code, opencode, pi
+tools: codex, claude, opencode, pi
 `
 }
