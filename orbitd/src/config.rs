@@ -10,6 +10,7 @@ pub struct Config {
     pub session_logs_dir: PathBuf,
     pub audit_path: PathBuf,
     pub token_path: PathBuf,
+    pub process_path: String,
     pub scrollback_lines: usize,
     pub scrollback_max_bytes: usize,
 }
@@ -26,6 +27,7 @@ impl Default for Config {
             listen: "127.0.0.1:7777".into(),
             audit_path: data_dir.join("audit.jsonl"),
             token_path: config_dir.join("token"),
+            process_path: std::env::var("PATH").unwrap_or_default(),
             config_dir,
             data_dir,
             session_logs_dir,

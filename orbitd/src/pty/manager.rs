@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     fs::OpenOptions,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
@@ -42,15 +42,18 @@ impl PtyManager {
             pixel_height: 0,
         };
         let pair = pty_system.openpty(initial_size)?;
-        let mut cmd = CommandBuilder::new(executable);
+        let path_env = env
+            .get("PATH")
+            .map(String::as_str)
+            .unwrap_or(&config.process_path);
+        let resolved_executable = resolve_executable(executable, path_env);
+        let mut cmd = CommandBuilder::new(&resolved_executable);
         cmd.cwd(cwd);
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
+        apply_default_env(&mut cmd, path_env, env);
         let child = pair
             .slave
             .spawn_command(cmd)
-            .with_context(|| format!("spawn {executable}"))?;
+            .with_context(|| format!("spawn {executable} with PATH={path_env}"))?;
         let pid = child.process_id().unwrap_or_default();
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
@@ -122,6 +125,11 @@ impl PtyManager {
                         SessionStatus::Crashed
                     };
                     let _ = monitor_db.update_runtime(&session_id, Some(pid), state, Some(code));
+                    monitor_manager.publish_system_output(
+                        &monitor_db,
+                        &session_id,
+                        format!("\r\n[orb] process exited with code {code}\r\n").into_bytes(),
+                    );
                     break;
                 }
                 Ok(None) => {}
@@ -132,6 +140,11 @@ impl PtyManager {
                         SessionStatus::Crashed,
                         Some(1),
                     );
+                    monitor_manager.publish_system_output(
+                        &monitor_db,
+                        &session_id,
+                        b"\r\n[orb] process status check failed\r\n".to_vec(),
+                    );
                     break;
                 }
             }
@@ -139,8 +152,14 @@ impl PtyManager {
         Ok((manager, pid))
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
-        self.output_tx.subscribe()
+    pub fn subscribe_with_scrollback(&self) -> (broadcast::Receiver<Vec<u8>>, Vec<Vec<u8>>) {
+        let scrollback = self.scrollback.lock().unwrap();
+        let snapshot = scrollback
+            .get_last_n(usize::MAX)
+            .into_iter()
+            .map(|line| line.content)
+            .collect();
+        (self.output_tx.subscribe(), snapshot)
     }
 
     pub fn claim_writer(&self, client_id: &str) {
@@ -173,6 +192,13 @@ impl PtyManager {
         Ok(())
     }
 
+    fn publish_system_output(&self, db: &Db, session_id: &str, chunk: Vec<u8>) {
+        self.scrollback.lock().unwrap().push(chunk.clone());
+        let _ = self.output_tx.send(chunk.clone());
+        let content = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &chunk);
+        let _ = db.append_log(session_id, &content);
+    }
+
     #[allow(dead_code)]
     pub fn scrollback(&self, n: usize) -> Vec<Vec<u8>> {
         self.scrollback
@@ -182,5 +208,75 @@ impl PtyManager {
             .into_iter()
             .map(|line| line.content)
             .collect()
+    }
+}
+
+fn apply_default_env(cmd: &mut CommandBuilder, path_env: &str, env: &HashMap<String, String>) {
+    cmd.env("PATH", path_env);
+    cmd.env_remove("NO_COLOR");
+    set_env_if_missing(cmd, env, "TERM", "xterm-256color");
+    set_env_if_missing(cmd, env, "COLORTERM", "truecolor");
+    set_env_if_missing(cmd, env, "COLORFGBG", "15;0");
+    for key in ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL"] {
+        if !env.contains_key(key) {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, value);
+            }
+        }
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+}
+
+fn set_env_if_missing(
+    cmd: &mut CommandBuilder,
+    env: &HashMap<String, String>,
+    key: &str,
+    fallback: &str,
+) {
+    if env.contains_key(key) {
+        return;
+    }
+    let value = std::env::var(key).unwrap_or_else(|_| fallback.to_string());
+    cmd.env(key, value);
+}
+
+fn resolve_executable(executable: &str, path_env: &str) -> String {
+    if executable.contains(std::path::MAIN_SEPARATOR) {
+        return executable.to_string();
+    }
+    for dir in std::env::split_paths(path_env) {
+        let candidate = dir.join(executable);
+        if is_executable_file(&candidate) {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    executable.to_string()
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &PathBuf) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.is_file()
+        && path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &PathBuf) -> bool {
+    path.is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_executable;
+
+    #[test]
+    fn leaves_unresolved_executable_when_path_does_not_match() {
+        assert_eq!(resolve_executable("codex", "/no/such/path"), "codex");
     }
 }
