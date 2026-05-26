@@ -37,7 +37,7 @@
 
 완료된 항목:
 
-- [x] `ToolType` 정의: `codex`, `claude-code`, `opencode`, `pi`
+- [x] `ToolType` 정의: `codex`, `claude`, `opencode`, `pi`
 - [x] tool -> executable 매핑
 - [x] portable-pty spawn
 - [x] cwd/env 전달

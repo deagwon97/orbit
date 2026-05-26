@@ -179,7 +179,7 @@ delete session
 logs tail display
 ```
 
-Attach 구현은 Go 내부 `orb/internal/attach`에 있다. attach 시 REST logs로 과거 기록을 먼저 출력한 뒤 WebSocket live attach를 시작한다. HTTP upgrade를 직접 수행하고, WebSocket frame mask 처리, stdin raw mode, stdout relay, `Ctrl-]`/`Ctrl-\` detach sequence를 처리한다. 터미널 호환 fallback으로 `Ctrl-G`, `Ctrl-^`, `Ctrl-_`도 detach로 처리한다. detach는 명시적 WebSocket `detach` 메시지로 서버에 전달된다. 더 이상 외부 attach subprocess를 실행하지 않는다.
+Attach 구현은 Go 내부 `orb/internal/attach`에 있다. attach 시 WebSocket에서 서버 메모리의 PTY scrollback을 먼저 받은 뒤 live attach로 이어진다. HTTP upgrade를 직접 수행하고, WebSocket frame mask 처리, stdin raw mode, stdout relay, `Ctrl-]`/`Ctrl-\` detach sequence를 처리한다. 터미널 호환 fallback으로 `Ctrl-G`, `Ctrl-^`, `Ctrl-_`도 detach로 처리한다. detach는 명시적 WebSocket `detach` 메시지로 서버에 전달된다. 더 이상 외부 attach subprocess를 실행하지 않는다.
 
 ## 지원 도구
 
@@ -188,7 +188,7 @@ Attach 구현은 Go 내부 `orb/internal/attach`에 있다. attach 시 REST logs
 | Tool | 실행 바이너리 |
 | --- | --- |
 | `codex` | `codex` |
-| `claude-code` | `claude` |
+| `claude` | `claude` |
 | `opencode` | `opencode` |
 | `pi` | `pi` |
 

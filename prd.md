@@ -20,7 +20,7 @@ Orbit은 여러 AI 코딩 도구를 지속형 PTY 세션으로 실행하고, 로
 | 제품 표시 | 세션 tool 값 | 실행 바이너리 |
 | --- | --- | --- |
 | Codex | `codex` | `codex` |
-| Claude Code | `claude-code` | `claude` |
+| Claude Code | `claude` | `claude` |
 | OpenCode | `opencode` | `opencode` |
 | pi | `pi` | `pi` |
 
@@ -153,7 +153,7 @@ Server -> Client:
 TUI attach 요구사항:
 
 - 터미널 raw mode 진입과 복구
-- attach 시작 시 REST logs로 과거 기록 출력
+- attach 시작 시 WebSocket에서 PTY scrollback을 먼저 출력
 - stdin bytes를 base64 JSON message로 전송
 - stdout bytes를 그대로 터미널에 출력
 - client WebSocket frame masking
