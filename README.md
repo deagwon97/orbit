@@ -72,11 +72,19 @@ q        quit
 새 세션 생성 화면에서 지원하는 도구 값은 다음과 같습니다.
 
 - `codex`
-- `claude-code`
+- `claude`
 - `opencode`
 - `pi`
 
 `env` 값은 `KEY=VALUE` 형식으로 공백 구분해 입력합니다. `detach=false`로 생성하면 세션 생성 직후 TUI가 직접 WebSocket attach를 시작합니다. attach 중 `Ctrl-]` 또는 `Ctrl-\`를 누르면 세션은 유지한 채 detach합니다. 터미널이 키를 가로채는 경우 `Ctrl-G`, `Ctrl-^`, `Ctrl-_`도 detach로 처리합니다.
+
+## CLI 실행
+
+```bash
+./orb run codex
+```
+
+`orb run <tool>`은 세션 생성 직후 자동으로 attach합니다. 세션만 만들고 attach하지 않으려면 `--detach`를 사용합니다.
 
 ## Rust 빌드
 
@@ -166,3 +174,18 @@ TUI에서 인증에 실패하면 `orbitd`를 한 번 먼저 실행해 `~/.config
 `orbitd`가 이미 실행 중인데 TUI 연결이 실패하면 `127.0.0.1:7777` 포트와 서버 로그를 확인합니다.
 
 새 세션 생성이 실패하면 선택한 도구 바이너리가 PATH에 있는지 확인합니다.
+
+## systemd 실행
+
+systemd로 `orbitd`를 실행할 때는 `codex`, `claude`, `opencode`, `pi`가 있는 경로를 `PATH`에 명시해야 합니다. 예시는 `deploy/orbitd.service`에 있습니다.
+
+```bash
+cd /data/private/orbit
+cargo build -p orbitd --release --manifest-path orbitd/Cargo.toml
+sudo install -m 0755 orbitd/target/release/orbitd /opt/orbit/orbitd
+sudo install -m 0644 deploy/orbitd.service /etc/systemd/system/orbitd.service
+sudo systemctl daemon-reload
+sudo systemctl restart orbitd
+```
+
+서비스 파일의 `Environment=PATH=...` 값은 `orbitd`가 도구 프로세스를 만들 때 그대로 사용됩니다.
