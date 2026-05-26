@@ -243,7 +243,7 @@ func (m Model) createCmd() tea.Cmd {
 	return func() tea.Msg {
 		req := models.CreateSessionRequest{
 			Tool: tools[form.tool],
-			Env:  parseEnv(form.env),
+			Env:  models.WithTerminalEnv(parseEnv(form.env)),
 		}
 		if strings.TrimSpace(form.name) != "" {
 			name := strings.TrimSpace(form.name)
