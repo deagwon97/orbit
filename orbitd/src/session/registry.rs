@@ -40,14 +40,20 @@ impl SessionRegistry {
         };
         self.db.create_session(&session)?;
         let executable = adapter::executable_for(&session.tool);
-        let (pty, pid) = PtyManager::spawn(
+        let (pty, pid) = match PtyManager::spawn(
             id.clone(),
             executable,
             &cwd,
             &req.env,
             self.db.clone(),
             &self.config,
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                self.db.delete_session(&id).ok();
+                return Err(err);
+            }
+        };
         session.pid = Some(pid);
         session.status = SessionStatus::Running;
         self.db
