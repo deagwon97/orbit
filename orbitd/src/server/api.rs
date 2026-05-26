@@ -13,7 +13,7 @@ pub async fn create_session(
 ) -> Response {
     match state.registry.create_session(req) {
         Ok(session) => (StatusCode::CREATED, Json(session)).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, format!("{err:#}")).into_response(),
     }
 }
 
@@ -57,7 +57,7 @@ pub async fn get_logs(
     Path(id): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Response {
-    match state.registry.logs(&id, query.tail.unwrap_or(100)) {
+    match state.registry.logs(&id, query.tail.unwrap_or(0)) {
         Ok(lines) => Json(LogsResponse { lines }).into_response(),
         Err(err) => (StatusCode::NOT_FOUND, err.to_string()).into_response(),
     }

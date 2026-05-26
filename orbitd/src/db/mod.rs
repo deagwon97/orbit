@@ -141,10 +141,13 @@ impl Db {
     pub fn logs(&self, ident: &str, tail: usize) -> Result<Vec<LogLine>> {
         let session = self.get_session(ident)?.context("session not found")?;
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![session.id, tail as i64], |row| {
+        let query = if tail == 0 {
+            "SELECT timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id ASC"
+        } else {
+            "SELECT timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2"
+        };
+        let mut stmt = conn.prepare(query)?;
+        let map_row = |row: &rusqlite::Row<'_>| {
             let ts: String = row.get(0)?;
             Ok(LogLine {
                 timestamp: DateTime::parse_from_rfc3339(&ts)
@@ -152,9 +155,16 @@ impl Db {
                     .with_timezone(&Utc),
                 content: row.get(1)?,
             })
-        })?;
+        };
+        let rows = if tail == 0 {
+            stmt.query_map(params![session.id], map_row)?
+        } else {
+            stmt.query_map(params![session.id, tail as i64], map_row)?
+        };
         let mut lines = rows.collect::<Result<Vec<_>, _>>()?;
-        lines.reverse();
+        if tail != 0 {
+            lines.reverse();
+        }
         Ok(lines)
     }
 }
