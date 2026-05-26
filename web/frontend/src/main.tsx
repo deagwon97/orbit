@@ -43,7 +43,7 @@ function App() {
     <section className="toolbar">
       <strong>Orbit</strong>
       <select value={newTool} onChange={(e) => setNewTool(e.target.value)}>
-        <option value="codex">codex</option><option value="claude-code">claude-code</option><option value="opencode">opencode</option><option value="pi">pi</option>
+        <option value="codex">codex</option><option value="claude">claude</option><option value="opencode">opencode</option><option value="pi">pi</option>
       </select>
       <button onClick={async () => { await api("/api/v1/sessions", { method: "POST", body: JSON.stringify({ tool: newTool }) }); await load(); }}>Run</button>
       <button title="Refresh" onClick={load}><RefreshCcw size={16}/></button>
