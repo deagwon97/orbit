@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleStop, FileText, FolderOpen, Home, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -18,8 +18,6 @@ type Session = {
   exit_code?: number | null;
 };
 
-type LogLine = { timestamp: string; content: string };
-type LogsResponse = { lines: LogLine[] };
 type AgentBackend = { id: string; name: string; command: string; args: string[] };
 type DirListing = {
   cwd: string;
@@ -51,7 +49,11 @@ function token() {
 }
 
 async function api(path: string, init: RequestInit = {}) {
-  const headers = { Authorization: `Bearer ${token()}`, "content-type": "application/json", ...(init.headers || {}) };
+  const headers = {
+    Authorization: `Bearer ${token()}`,
+    ...(init.body ? { "content-type": "application/json" } : {}),
+    ...(init.headers || {})
+  };
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
@@ -113,8 +115,6 @@ function App() {
   const [cwd, setCwd] = useState("");
   const [env, setEnv] = useState("");
   const [attachAfterRun, setAttachAfterRun] = useState(true);
-  const [view, setView] = useState<"terminal" | "logs">("terminal");
-  const [logs, setLogs] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
@@ -157,7 +157,6 @@ function App() {
       setCreateOpen(false);
       if (attachAfterRun) {
         setSelectedId(session.id);
-        setView("terminal");
         setFileEditorOpen(false);
         setDetailOpen(true);
       }
@@ -169,32 +168,12 @@ function App() {
     }
   }
 
-  async function stopSession(session: Session) {
-    try {
-      await api(`/api/v1/sessions/${encodeURIComponent(session.id)}/stop`, { method: "POST", body: "{}" });
-      setMessage(`stopped ${session.id}`);
-      await load();
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function deleteSession(session: Session) {
     try {
       await api(`/api/v1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
       setMessage(`removed ${session.id}`);
       if (selectedId === session.id) setSelectedId(null);
       await load();
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function loadLogs(session: Session) {
-    try {
-      const response = await api(`/api/v1/sessions/${encodeURIComponent(session.id)}/logs?tail=500`) as LogsResponse;
-      setLogs(response.lines.map((line) => decodeBytes(line.content)).join(""));
-      setView("logs");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     }
@@ -251,7 +230,7 @@ function App() {
           </div>
           <div className="sessions">
             <div className="row header"><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
-            {sessions.map((session) => <button className={selectedId === session.id ? "row active" : "row"} key={session.id} onClick={() => { setSelectedId(session.id); setView("terminal"); setDetailOpen(true); }}>
+            {sessions.map((session) => <button className={selectedId === session.id ? "row active" : "row"} key={session.id} onClick={() => { setSelectedId(session.id); setDetailOpen(true); }}>
               <span title={session.id}>{session.id}</span>
               <span title={session.name}>{session.name}</span>
               <span>{session.tool}</span>
@@ -264,13 +243,8 @@ function App() {
           <button className="mobileBackButton" onClick={() => setDetailOpen(false)}><ChevronLeft size={16} />Sessions</button>
           {selected ? <SessionPane
             session={selected}
-            view={view}
-            logs={logs}
             onDetach={() => { setSelectedId(null); setDetailOpen(false); }}
-            onStop={() => void stopSession(selected)}
             onDelete={() => void deleteSession(selected)}
-            onLogs={() => void loadLogs(selected)}
-            onTerminal={() => setView("terminal")}
             reload={load}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
@@ -581,7 +555,6 @@ function FolderPicker(props: {
       <div className="folderActions">
         <button disabled={!props.listing?.parent || props.busy} onClick={() => props.listing?.parent && props.onLoad(props.listing.parent)}><ChevronUp size={16} />Up</button>
         <button disabled={!props.listing?.home || props.busy} onClick={() => props.listing?.home && props.onLoad(props.listing.home)}><Home size={16} />Home</button>
-        <button disabled={!props.listing?.cwd || props.busy} onClick={() => props.listing?.cwd && props.onLoad(props.listing.cwd)}><FolderOpen size={16} />Server cwd</button>
         <button disabled={!props.listing?.path || props.busy} onClick={() => props.listing?.path && props.onSelect(props.listing.path)}><Check size={16} />Use</button>
       </div>
       <form className="folderCreate" onSubmit={(event) => { event.preventDefault(); void createFolder(); }}>
@@ -612,27 +585,17 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
 
 function SessionPane(props: {
   session: Session;
-  view: "terminal" | "logs";
-  logs: string;
   onDetach: () => void;
-  onStop: () => void;
   onDelete: () => void;
-  onLogs: () => void;
-  onTerminal: () => void;
   reload: () => void;
 }) {
   return <div className="terminalBox">
     <div className="terminalTop">
       <div className="sessionTitle"><span>{props.session.name}</span><small>{props.session.cwd}</small></div>
-      <button className={props.view === "terminal" ? "activeDark" : ""} onClick={props.onTerminal}><TerminalIcon size={14} />Attach</button>
-      <button className={props.view === "logs" ? "activeDark" : ""} onClick={props.onLogs}><FileText size={14} />Logs</button>
-      <button onClick={props.onStop}><CircleStop size={14} />Stop</button>
       <button onClick={props.onDetach}><LogOut size={14} />Detach</button>
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
-    {props.view === "terminal"
-      ? <Terminal session={props.session} reload={props.reload} />
-      : <LogView sessionId={props.session.id} logs={props.logs} />}
+    <Terminal session={props.session} reload={props.reload} />
   </div>;
 }
 
@@ -737,33 +700,6 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
       term.dispose();
     };
   }, [session.id]);
-
-  return <div className="xtermHost" ref={ref} />;
-}
-
-function LogView({ sessionId, logs }: { sessionId: string; logs: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    const term = new XTerm({
-      cursorBlink: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-      fontSize: 14,
-      scrollback: 20000
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(ref.current);
-    fit.fit();
-    term.write(logs || "[no logs]", () => term.scrollToBottom());
-    const resizeObserver = new ResizeObserver(() => fit.fit());
-    resizeObserver.observe(ref.current);
-    return () => {
-      resizeObserver.disconnect();
-      term.dispose();
-    };
-  }, [sessionId, logs]);
 
   return <div className="xtermHost" ref={ref} />;
 }
