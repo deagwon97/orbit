@@ -345,7 +345,11 @@ func (m Model) listView() string {
 		}
 		b.WriteString(fmt.Sprintf("%s %-12s %-24s %-12s %-10s %-8s %s\n", prefix, s.ID, truncate(s.Name, 24), s.Tool, s.Status, pid, s.CWD))
 	}
-	b.WriteString("\nenter/a attach | n run | x rm | l logs | tab filter | r refresh | q quit\n")
+	b.WriteString("\n")
+	b.WriteString("Navigation: up/down or k/j move selection | tab toggle running/all | r refresh\n")
+	b.WriteString("Session:    enter/a attach | n create/run | x remove selected | l show last 100 log chunks\n")
+	b.WriteString("Attach:     detach without stopping the session with Ctrl-] or Ctrl-\\\n")
+	b.WriteString("Quit:       q or Ctrl-C\n")
 	return b.String()
 }
 
@@ -364,7 +368,10 @@ func (m Model) createView() string {
 		}
 		b.WriteString(fmt.Sprintf("%s %-8s %s\n", prefix, labels[i], values[i]))
 	}
-	b.WriteString("\narrow/tab move | type edit | space toggle | enter create | esc cancel\n")
+	b.WriteString("\n")
+	b.WriteString("Fields: tool selects codex/claude/opencode/pi | name and cwd are optional | env uses KEY=VALUE pairs\n")
+	b.WriteString("Detach: true creates the session and returns to the list | false attaches immediately\n")
+	b.WriteString("Keys:   tab/up/down move | left/right change tool or detach | type edit | backspace delete | enter on create | esc cancel\n")
 	return b.String()
 }
 
@@ -376,7 +383,7 @@ func (m Model) logsView() string {
 		lines = lines[len(lines)-40:]
 	}
 	b.WriteString(strings.Join(lines, "\n"))
-	b.WriteString("\n\nesc/enter/l back\n")
+	b.WriteString("\n\nesc/enter/l return to sessions\n")
 	return b.String()
 }
 
