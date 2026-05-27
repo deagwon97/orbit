@@ -220,6 +220,7 @@ scrollback_max_bytes = 104857600
 | `pi` | `pi` | _(없음)_ |
 
 기본 목록을 대체하려면 `ORBIT_BACKENDS_CONFIG=/path/to/backends.yaml` 환경 변수나 `~/.config/orbit/config.toml`의 `backends` 키로 YAML 파일을 지정한다.
+이 저장소에는 기본 백엔드와 호환되는 `backends.yaml`이 포함되어 있어 그대로 사용할 수 있다.
 
 ```yaml
 backends:

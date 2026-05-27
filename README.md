@@ -220,6 +220,7 @@ By default, `orbitd` exposes these backend IDs:
 | `pi` | `pi` | _(none)_ |
 
 To replace the defaults, point `orbitd` at a YAML file with either `ORBIT_BACKENDS_CONFIG=/path/to/backends.yaml` or the `backends` key in `~/.config/orbit/config.toml`.
+This repository includes a default-compatible `backends.yaml` you can use directly.
 
 ```yaml
 backends:
