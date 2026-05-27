@@ -21,6 +21,13 @@ type CreateSessionRequest struct {
 	Env  map[string]string `json:"env"`
 }
 
+type AgentBackend struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
 type LogsResponse struct {
 	Lines []LogLine `json:"lines"`
 }

@@ -20,11 +20,17 @@ const (
 	modeLogs
 )
 
-var tools = []string{"codex", "claude", "opencode", "pi"}
+var defaultBackends = []models.AgentBackend{
+	{ID: "codex", Name: "Codex"},
+	{ID: "claude", Name: "Claude Code"},
+	{ID: "opencode", Name: "OpenCode"},
+	{ID: "pi", Name: "pi"},
+}
 
 type Model struct {
 	client   client.Client
 	sessions []models.Session
+	backends []models.AgentBackend
 	cursor   int
 	all      bool
 	mode     mode
@@ -44,6 +50,7 @@ type createForm struct {
 }
 
 type sessionsMsg []models.Session
+type backendsMsg []models.AgentBackend
 type errMsg error
 type statusMsg string
 type createdMsg struct{ session models.Session }
@@ -53,13 +60,14 @@ type attachDoneMsg struct{ err error }
 
 func New(c client.Client) Model {
 	return Model{
-		client: c,
-		form:   createForm{detach: true},
+		client:   c,
+		backends: defaultBackends,
+		form:     createForm{detach: true},
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.load
+	return tea.Batch(m.load, m.loadBackends)
 }
 
 func (m Model) load() tea.Msg {
@@ -70,6 +78,14 @@ func (m Model) load() tea.Msg {
 	return sessionsMsg(sessions)
 }
 
+func (m Model) loadBackends() tea.Msg {
+	backends, err := m.client.Backends()
+	if err != nil {
+		return errMsg(err)
+	}
+	return backendsMsg(backends)
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionsMsg:
@@ -78,6 +94,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.sessions)-1)
 		}
 		m.err = nil
+	case backendsMsg:
+		if len(msg) > 0 {
+			m.backends = msg
+			if m.form.tool >= len(m.backends) {
+				m.form.tool = 0
+			}
+		}
 	case errMsg:
 		m.err = msg
 	case statusMsg:
@@ -127,7 +150,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "r":
-		return m, m.load
+		return m, tea.Batch(m.load, m.loadBackends)
 	case "tab":
 		m.all = !m.all
 		m.status = ""
@@ -179,6 +202,7 @@ func (m Model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form.cursor = (m.form.cursor + 5) % 6
 		return m, nil
 	case "left":
+		tools := m.backendIDs()
 		if m.form.cursor == 0 {
 			m.form.tool = (m.form.tool + len(tools) - 1) % len(tools)
 		} else if m.form.cursor == 4 {
@@ -186,6 +210,7 @@ func (m Model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "right":
+		tools := m.backendIDs()
 		if m.form.cursor == 0 {
 			m.form.tool = (m.form.tool + 1) % len(tools)
 		} else if m.form.cursor == 4 {
@@ -240,6 +265,7 @@ func (f *createForm) backspace() {
 
 func (m Model) createCmd() tea.Cmd {
 	form := m.form
+	tools := m.backendIDs()
 	return func() tea.Msg {
 		req := models.CreateSessionRequest{
 			Tool: tools[form.tool],
@@ -262,6 +288,18 @@ func (m Model) createCmd() tea.Cmd {
 		}
 		return createdMsg{session: session}
 	}
+}
+
+func (m Model) backendIDs() []string {
+	backends := m.backends
+	if len(backends) == 0 {
+		backends = defaultBackends
+	}
+	ids := make([]string, 0, len(backends))
+	for _, backend := range backends {
+		ids = append(ids, backend.ID)
+	}
+	return ids
 }
 
 type attachAfterCreateMsg struct{ session models.Session }
@@ -354,6 +392,7 @@ func (m Model) listView() string {
 }
 
 func (m Model) createView() string {
+	tools := m.backendIDs()
 	labels := []string{"tool", "name", "cwd", "env", "detach", "create"}
 	values := []string{tools[m.form.tool], m.form.name, m.form.cwd, m.form.env, fmt.Sprintf("%t", m.form.detach), "press enter"}
 	var b strings.Builder
@@ -369,7 +408,7 @@ func (m Model) createView() string {
 		b.WriteString(fmt.Sprintf("%s %-8s %s\n", prefix, labels[i], values[i]))
 	}
 	b.WriteString("\n")
-	b.WriteString("Fields: tool selects codex/claude/opencode/pi | name and cwd are optional | env uses KEY=VALUE pairs\n")
+	b.WriteString("Fields: tool is provided by orbitd | name and cwd are optional | env uses KEY=VALUE pairs\n")
 	b.WriteString("Detach: true creates the session and returns to the list | false attaches immediately\n")
 	b.WriteString("Keys:   tab/up/down move | left/right change tool or detach | type edit | backspace delete | enter on create | esc cancel\n")
 	return b.String()

@@ -69,6 +69,16 @@ func (c Client) Sessions(all bool) ([]models.Session, error) {
 	return sessions, json.NewDecoder(res.Body).Decode(&sessions)
 }
 
+func (c Client) Backends() ([]models.AgentBackend, error) {
+	res, err := c.request(http.MethodGet, "/api/v1/backends", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	var backends []models.AgentBackend
+	return backends, json.NewDecoder(res.Body).Decode(&backends)
+}
+
 func (c Client) CreateSession(req models.CreateSessionRequest) (models.Session, error) {
 	res, err := c.request(http.MethodPost, "/api/v1/sessions", nil, req)
 	if err != nil {

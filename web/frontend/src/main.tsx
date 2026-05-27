@@ -20,6 +20,7 @@ type Session = {
 
 type LogLine = { timestamp: string; content: string };
 type LogsResponse = { lines: LogLine[] };
+type AgentBackend = { id: string; name: string; command: string; args: string[] };
 type DirListing = {
   cwd: string;
   home: string;
@@ -28,7 +29,12 @@ type DirListing = {
   dirs: Array<{ name: string; path: string }>;
 };
 
-const tools = ["codex", "claude", "opencode", "pi"];
+const defaultBackends: AgentBackend[] = [
+  { id: "codex", name: "Codex", command: "codex", args: [] },
+  { id: "claude", name: "Claude Code", command: "claude", args: [] },
+  { id: "opencode", name: "OpenCode", command: "opencode", args: [] },
+  { id: "pi", name: "pi", command: "pi", args: [] }
+];
 
 function token() {
   return localStorage.getItem("orbit.token") || "";
@@ -89,6 +95,7 @@ function isDetachInput(data: string) {
 function App() {
   const [authed, setAuthed] = useState(Boolean(token()));
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [backends, setBackends] = useState<AgentBackend[]>(defaultBackends);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [tool, setTool] = useState("codex");
@@ -105,6 +112,15 @@ function App() {
   const [dirBusy, setDirBusy] = useState(false);
 
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId) ?? null, [sessions, selectedId]);
+
+  async function loadBackends() {
+    try {
+      const items = await api("/api/v1/backends") as AgentBackend[];
+      if (items.length > 0) setBackends(items);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function load() {
     try {
@@ -185,10 +201,14 @@ function App() {
     void loadDirs(cwd.trim() || undefined);
   }
 
+  useEffect(() => { if (authed) void loadBackends(); }, [authed]);
   useEffect(() => { if (authed) void load(); }, [authed, showAll]);
   useEffect(() => {
     if (selectedId && !sessions.some((session) => session.id === selectedId)) setSelectedId(null);
   }, [sessions, selectedId]);
+  useEffect(() => {
+    if (!backends.some((backend) => backend.id === tool)) setTool(backends[0]?.id ?? "codex");
+  }, [backends, tool]);
 
   if (!authed) return <Login onLogin={(value) => { localStorage.setItem("orbit.token", value); setAuthed(true); }} />;
 
@@ -196,7 +216,7 @@ function App() {
     <section className="toolbar">
       <strong>Orbit</strong>
       <select value={tool} onChange={(event) => setTool(event.target.value)}>
-        {tools.map((value) => <option value={value} key={value}>{value}</option>)}
+        {backends.map((backend) => <option value={backend.id} key={backend.id}>{backend.name || backend.id}</option>)}
       </select>
       <input className="nameInput" placeholder="name" value={name} onChange={(event) => setName(event.target.value)} />
       <div className="cwdField">

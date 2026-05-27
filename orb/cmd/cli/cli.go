@@ -23,6 +23,8 @@ func Execute(args []string) error {
 
 	c := client.New(baseURL)
 	switch args[0] {
+	case "backends", "tools":
+		return backends(c, args[1:])
 	case "ps", "list":
 		return ps(c, args[1:])
 	case "run":
@@ -57,6 +59,26 @@ func ps(c client.Client, args []string) error {
 	return nil
 }
 
+func backends(c client.Client, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: orb backends")
+	}
+	items, err := c.Backends()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%-16s %-20s %-24s %s\n", "ID", "NAME", "COMMAND", "ARGS")
+	for _, item := range items {
+		fmt.Printf("%-16s %-20s %-24s %s\n",
+			item.ID,
+			truncate(item.Name, 20),
+			truncate(item.Command, 24),
+			strings.Join(item.Args, " "),
+		)
+	}
+	return nil
+}
+
 func run(c client.Client, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -70,7 +92,7 @@ func run(c client.Client, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: orb run [--detach] [--name NAME] [--cwd DIR] [-e KEY=VALUE] <codex|claude|opencode|pi>")
+		return fmt.Errorf("usage: orb run [--detach] [--name NAME] [--cwd DIR] [-e KEY=VALUE] <backend>")
 	}
 
 	req := models.CreateSessionRequest{
@@ -306,12 +328,13 @@ func usage() {
 func usageText() string {
 	return `usage:
   orb                  open TUI
+  orb backends         list available agent backends
   orb ps [-a|--all]    list sessions
-  orb run [opts] <tool> create a session and attach
+  orb run [opts] <backend> create a session and attach
   orb attach <id|name> attach to a session (detach: Ctrl-] or Ctrl-\)
   orb rm <id|name>...   remove sessions
   orb logs [opts] <id>  print session logs
 
-tools: codex, claude, opencode, pi
+tools are provided by orbitd: run "orb backends"
 `
 }

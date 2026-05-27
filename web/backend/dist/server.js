@@ -101,6 +101,10 @@ app.get("/api/v1/sessions", async (req, reply) => {
     const res = await fetch(`${config.orbitd}/api/v1/sessions${queryString(req)}`, { headers: authHeader(req) });
     return forwardJSON(reply, res);
 });
+app.get("/api/v1/backends", async (req, reply) => {
+    const res = await fetch(`${config.orbitd}/api/v1/backends`, { headers: authHeader(req) });
+    return forwardJSON(reply, res);
+});
 app.get("/api/v1/sessions/:id", async (req, reply) => {
     const res = await fetch(`${config.orbitd}/api/v1/sessions/${encodeURIComponent(req.params.id)}`, {
         headers: authHeader(req)
