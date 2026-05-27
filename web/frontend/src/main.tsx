@@ -210,8 +210,10 @@ function App() {
   return <main className="app">
     <section className="toolbar">
       <strong>Orbit</strong>
-      <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
-      <button title="Logout" onClick={() => { localStorage.removeItem("orbit.token"); setAuthed(false); }}><LogOut size={16} /></button>
+      <div className="toolbarActions">
+        <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
+        <button title="Logout" onClick={() => { localStorage.removeItem("orbit.token"); setAuthed(false); }}><LogOut size={16} /></button>
+      </div>
     </section>
     {message && <div className="statusLine">{message}</div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}`}>
