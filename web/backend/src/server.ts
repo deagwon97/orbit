@@ -1,9 +1,6 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
-import { mkdir, readdir, realpath, stat } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { WebSocket } from "ws";
 import { config } from "./config.js";
 
@@ -50,61 +47,42 @@ async function forwardJSON(reply: any, res: Response) {
 app.get("/healthz", async () => ({ ok: true }));
 
 app.get("/api/v1/fs/dirs", async (req: any, reply) => {
-  if (!await isAuthed(req)) {
-    reply.code(401);
-    return { error: "unauthorized" };
-  }
-
-  const fallback = process.env.ORBIT_WORKSPACE ?? process.cwd();
-  const requested = typeof req.query?.path === "string" && req.query.path.trim() ? req.query.path : fallback;
-  const current = await realpath(path.resolve(requested));
-  const currentStat = await stat(current);
-  if (!currentStat.isDirectory()) {
-    reply.code(400);
-    return { error: "path is not a directory" };
-  }
-
-  const entries = await readdir(current, { withFileTypes: true });
-  const dirs = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((name) => !name.startsWith("."))
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ name, path: path.join(current, name) }));
-
-  return {
-    cwd: process.cwd(),
-    home: os.homedir(),
-    path: current,
-    parent: path.dirname(current) === current ? null : path.dirname(current),
-    dirs
-  };
+  const res = await fetch(`${config.orbitd}/api/v1/fs/dirs${queryString(req)}`, {
+    headers: authHeader(req)
+  });
+  return forwardJSON(reply, res);
 });
 
 app.post("/api/v1/fs/dirs", async (req: any, reply) => {
-  if (!await isAuthed(req)) {
-    reply.code(401);
-    return { error: "unauthorized" };
-  }
+  const res = await fetch(`${config.orbitd}/api/v1/fs/dirs`, {
+    method: "POST",
+    headers: { ...authHeader(req), "content-type": "application/json" },
+    body: JSON.stringify(req.body)
+  });
+  return forwardJSON(reply, res);
+});
 
-  const body = req.body ?? {};
-  const parentInput = typeof body.parent === "string" && body.parent.trim() ? body.parent : process.cwd();
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
-    reply.code(400);
-    return { error: "invalid folder name" };
-  }
+app.get("/api/v1/fs/entries", async (req: any, reply) => {
+  const res = await fetch(`${config.orbitd}/api/v1/fs/entries${queryString(req)}`, {
+    headers: authHeader(req)
+  });
+  return forwardJSON(reply, res);
+});
 
-  const parent = await realpath(path.resolve(parentInput));
-  const parentStat = await stat(parent);
-  if (!parentStat.isDirectory()) {
-    reply.code(400);
-    return { error: "parent is not a directory" };
-  }
+app.get("/api/v1/fs/files", async (req: any, reply) => {
+  const res = await fetch(`${config.orbitd}/api/v1/fs/files${queryString(req)}`, {
+    headers: authHeader(req)
+  });
+  return forwardJSON(reply, res);
+});
 
-  const created = path.join(parent, name);
-  await mkdir(created);
-  return { path: await realpath(created) };
+app.put("/api/v1/fs/files", async (req: any, reply) => {
+  const res = await fetch(`${config.orbitd}/api/v1/fs/files`, {
+    method: "PUT",
+    headers: { ...authHeader(req), "content-type": "application/json" },
+    body: JSON.stringify(req.body)
+  });
+  return forwardJSON(reply, res);
 });
 
 app.get("/api/v1/sessions", async (req, reply) => {
