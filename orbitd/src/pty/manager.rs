@@ -29,6 +29,7 @@ impl PtyManager {
     pub fn spawn(
         session_id: String,
         executable: &str,
+        args: &[&str],
         cwd: &Path,
         env: &HashMap<String, String>,
         db: Arc<Db>,
@@ -48,6 +49,7 @@ impl PtyManager {
             .unwrap_or(&config.process_path);
         let resolved_executable = resolve_executable(executable, path_env);
         let mut cmd = CommandBuilder::new(&resolved_executable);
+        cmd.args(args);
         cmd.cwd(cwd);
         apply_default_env(&mut cmd, path_env, env);
         let child = pair

@@ -40,9 +40,11 @@ impl SessionRegistry {
         };
         self.db.create_session(&session)?;
         let executable = adapter::executable_for(&session.tool);
+        let args = adapter::args_for(&session.tool);
         let (pty, pid) = match PtyManager::spawn(
             id.clone(),
             executable,
+            args,
             &cwd,
             &req.env,
             self.db.clone(),
