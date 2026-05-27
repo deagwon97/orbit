@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronRight, ChevronUp, CircleStop, FilePen, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleStop, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -121,6 +121,8 @@ function App() {
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const [fileEditorOpen, setFileEditorOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId) ?? null, [sessions, selectedId]);
 
@@ -152,9 +154,12 @@ function App() {
       setMessage(`created ${session.id} ${session.name}`);
       setName("");
       setEnv("");
+      setCreateOpen(false);
       if (attachAfterRun) {
         setSelectedId(session.id);
         setView("terminal");
+        setFileEditorOpen(false);
+        setDetailOpen(true);
       }
       await load();
     } catch (err) {
@@ -226,52 +231,69 @@ function App() {
   return <main className="app">
     <section className="toolbar">
       <strong>Orbit</strong>
-      <select value={tool} onChange={(event) => setTool(event.target.value)}>
-        {backends.map((backend) => <option value={backend.id} key={backend.id}>{backend.name || backend.id}</option>)}
-      </select>
-      <input className="nameInput" placeholder="name" value={name} onChange={(event) => setName(event.target.value)} />
-      <div className="cwdField">
-        <input className="cwdInput" placeholder="cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} />
-        <button title="Browse folders" onClick={openFolderPicker}><FolderOpen size={16} /></button>
-        <button className={fileEditorOpen ? "activeButton" : ""} title="File explorer" onClick={() => setFileEditorOpen((value) => !value)}><FilePen size={16} /></button>
-      </div>
-      <input className="envInput" placeholder="KEY=VALUE" value={env} onChange={(event) => setEnv(event.target.value)} />
-      <label className="check"><input type="checkbox" checked={attachAfterRun} onChange={(event) => setAttachAfterRun(event.target.checked)} />Attach</label>
-      <button disabled={busy} onClick={runSession}><PlugZap size={16} />Run</button>
+      <button disabled={busy} onClick={() => setCreateOpen(true)}><PlugZap size={16} />New session</button>
       <button className={showAll ? "activeButton" : ""} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
       <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
       <button title="Logout" onClick={() => { localStorage.removeItem("orbit.token"); setAuthed(false); }}><LogOut size={16} /></button>
     </section>
     {message && <div className="statusLine">{message}</div>}
-    <section className="layout">
-      <div className="sessions">
-        <div className="row header"><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
-        {sessions.map((session) => <button className={selectedId === session.id ? "row active" : "row"} key={session.id} onClick={() => { setSelectedId(session.id); setView("terminal"); }}>
-          <span title={session.id}>{session.id}</span>
-          <span title={session.name}>{session.name}</span>
-          <span>{session.tool}</span>
-          <span className={`pill ${session.status}`}>{session.status}</span>
-          <span>{session.pid ?? "-"}</span>
-        </button>)}
-      </div>
-      <div className="workPane">
-        {fileEditorOpen ? <FileWorkspace
+    <section className={`layout${detailOpen ? " showDetail" : ""}`}>
+      {fileEditorOpen ? <FileWorkspace
           initialPath={cwd.trim() || undefined}
-          onUseCwd={(path) => setCwd(path)}
-          onClose={() => setFileEditorOpen(false)}
-        /> : selected ? <SessionPane
-          session={selected}
-          view={view}
-          logs={logs}
-          onDetach={() => setSelectedId(null)}
-          onStop={() => void stopSession(selected)}
-          onDelete={() => void deleteSession(selected)}
-          onLogs={() => void loadLogs(selected)}
-          onTerminal={() => setView("terminal")}
-          reload={load}
-        /> : <div className="empty"><TerminalIcon />Select a session</div>}
-      </div>
+          onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
+          detailOpen={detailOpen}
+          onDetailOpen={() => setDetailOpen(true)}
+          onBack={() => setDetailOpen(false)}
+        /> : <>
+        <div className="masterPane">
+          <div className="paneTabs">
+            <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
+            <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
+          </div>
+          <div className="sessions">
+            <div className="row header"><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
+            {sessions.map((session) => <button className={selectedId === session.id ? "row active" : "row"} key={session.id} onClick={() => { setSelectedId(session.id); setView("terminal"); setDetailOpen(true); }}>
+              <span title={session.id}>{session.id}</span>
+              <span title={session.name}>{session.name}</span>
+              <span>{session.tool}</span>
+              <span className={`pill ${session.status}`}>{session.status}</span>
+              <span>{session.pid ?? "-"}</span>
+            </button>)}
+          </div>
+        </div>
+        <div className="workPane">
+          <button className="mobileBackButton" onClick={() => setDetailOpen(false)}><ChevronLeft size={16} />Sessions</button>
+          {selected ? <SessionPane
+            session={selected}
+            view={view}
+            logs={logs}
+            onDetach={() => { setSelectedId(null); setDetailOpen(false); }}
+            onStop={() => void stopSession(selected)}
+            onDelete={() => void deleteSession(selected)}
+            onLogs={() => void loadLogs(selected)}
+            onTerminal={() => setView("terminal")}
+            reload={load}
+          /> : <div className="empty"><TerminalIcon />Select a session</div>}
+        </div>
+      </>}
     </section>
+    {createOpen && <NewSessionModal
+      backends={backends}
+      tool={tool}
+      name={name}
+      cwd={cwd}
+      env={env}
+      attachAfterRun={attachAfterRun}
+      busy={busy}
+      onTool={setTool}
+      onName={setName}
+      onCwd={setCwd}
+      onEnv={setEnv}
+      onAttachAfterRun={setAttachAfterRun}
+      onBrowse={openFolderPicker}
+      onClose={() => setCreateOpen(false)}
+      onRun={() => void runSession()}
+    />}
     {folderOpen && <FolderPicker
       listing={dirListing}
       busy={dirBusy}
@@ -283,7 +305,67 @@ function App() {
   </main>;
 }
 
-function FileWorkspace({ initialPath, onUseCwd, onClose }: { initialPath?: string; onUseCwd: (path: string) => void; onClose: () => void }) {
+function NewSessionModal(props: {
+  backends: AgentBackend[];
+  tool: string;
+  name: string;
+  cwd: string;
+  env: string;
+  attachAfterRun: boolean;
+  busy: boolean;
+  onTool: (value: string) => void;
+  onName: (value: string) => void;
+  onCwd: (value: string) => void;
+  onEnv: (value: string) => void;
+  onAttachAfterRun: (value: boolean) => void;
+  onBrowse: () => void;
+  onClose: () => void;
+  onRun: () => void;
+}) {
+  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+    <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); props.onRun(); }}>
+      <div className="modalTop">
+        <strong>New session</strong>
+        <button type="button" title="Close" onClick={props.onClose}><X size={16} /></button>
+      </div>
+      <label className="fieldLabel">
+        <span>Backend</span>
+        <select value={props.tool} onChange={(event) => props.onTool(event.target.value)}>
+          {props.backends.map((backend) => <option value={backend.id} key={backend.id}>{backend.name || backend.id}</option>)}
+        </select>
+      </label>
+      <label className="fieldLabel">
+        <span>Name</span>
+        <input placeholder="optional session name" value={props.name} onChange={(event) => props.onName(event.target.value)} />
+      </label>
+      <label className="fieldLabel">
+        <span>Working directory</span>
+        <div className="cwdField">
+          <input placeholder="cwd" value={props.cwd} onChange={(event) => props.onCwd(event.target.value)} />
+          <button type="button" title="Browse folders" onClick={props.onBrowse}><FolderOpen size={16} /></button>
+        </div>
+      </label>
+      <label className="fieldLabel">
+        <span>Environment</span>
+        <input placeholder="KEY=VALUE" value={props.env} onChange={(event) => props.onEnv(event.target.value)} />
+      </label>
+      <label className="check"><input type="checkbox" checked={props.attachAfterRun} onChange={(event) => props.onAttachAfterRun(event.target.checked)} />Attach after run</label>
+      <div className="modalActions">
+        <button type="button" onClick={props.onClose}>Cancel</button>
+        <button disabled={props.busy}><PlugZap size={16} />Run</button>
+      </div>
+    </form>
+  </div>;
+}
+
+function FileWorkspace(props: {
+  initialPath?: string;
+  onSessions: () => void;
+  detailOpen: boolean;
+  onDetailOpen: () => void;
+  onBack: () => void;
+}) {
+  const { initialPath, onSessions, detailOpen, onDetailOpen, onBack } = props;
   const [listing, setListing] = useState<ListEntriesResponse | null>(null);
   const [listBusy, setListBusy] = useState(false);
   const [tree, setTree] = useState<EntryTree>({});
@@ -349,6 +431,7 @@ function FileWorkspace({ initialPath, onUseCwd, onClose }: { initialPath?: strin
       const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`) as { path: string; content: string };
       setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
       setEditContent(result.content);
+      onDetailOpen();
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -403,22 +486,18 @@ function FileWorkspace({ initialPath, onUseCwd, onClose }: { initialPath?: strin
     });
   }
 
-  return <div className="fileWorkspace">
-    <div className="fileActivityBar">
-      <button className="activeDark" title="Explorer"><FolderOpen size={18} /></button>
-    </div>
-    <aside className="fileExplorer">
-      <div className="fileExplorerTop">
-        <strong>Explorer</strong>
-        <button title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
-        <button title="Close files" onClick={onClose}><X size={14} /></button>
+  return <div className={`fileWorkspace${detailOpen ? " showDetail" : ""}`}>
+    <aside className="masterPane fileExplorer">
+      <div className="paneTabs">
+        <button onClick={onSessions}><TerminalIcon size={14} />Sessions</button>
+        <button className="activeButton"><FolderOpen size={14} />Files</button>
       </div>
       {error && <div className="folderError">{error}</div>}
       <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
       <div className="fileExplorerActions">
         <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
         <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
-        <button disabled={!listing?.path || listBusy} onClick={() => listing?.path && onUseCwd(listing.path)}><Check size={14} />Use cwd</button>
+        <button className="fileRefreshButton" title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
       </div>
       <div className="fileExplorerList">
         {listBusy && <div className="folderEmpty">Loading...</div>}
@@ -426,8 +505,9 @@ function FileWorkspace({ initialPath, onUseCwd, onClose }: { initialPath?: strin
         {!listBusy && renderTree(rootEntries)}
       </div>
     </aside>
-    <section className="fileEditorSurface">
+    <section className="workPane fileEditorSurface">
       <div className="fileTabs">
+        <button className="mobileBackButton" onClick={onBack}><ChevronLeft size={16} />Explorer</button>
         {openedFile ? <div className={`fileTab${isDirty ? " dirty" : ""}`} title={openedFile.path}>
           <FileText size={14} />
           <span>{fileName}</span>
