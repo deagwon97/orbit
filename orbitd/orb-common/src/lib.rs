@@ -97,6 +97,66 @@ pub struct LogsResponse {
     pub lines: Vec<LogLine>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FsEntryKind {
+    Dir,
+    File,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub kind: FsEntryKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListEntriesResponse {
+    pub path: PathBuf,
+    pub parent: Option<PathBuf>,
+    pub home: PathBuf,
+    pub entries: Vec<FsEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFileResponse {
+    pub path: PathBuf,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileRequest {
+    pub path: PathBuf,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsDirEntry {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDirsResponse {
+    pub cwd: PathBuf,
+    pub home: PathBuf,
+    pub path: PathBuf,
+    pub parent: Option<PathBuf>,
+    pub dirs: Vec<FsDirEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDirRequest {
+    pub parent: Option<PathBuf>,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDirResponse {
+    pub path: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum WsClientMessage {

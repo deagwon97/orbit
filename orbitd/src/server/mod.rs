@@ -33,6 +33,15 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/sessions/:id/stop", post(api::stop_session))
         .route("/api/v1/sessions/:id/logs", get(api::get_logs))
         .route("/api/v1/sessions/:id/attach", get(ws::attach))
+        .route(
+            "/api/v1/fs/dirs",
+            get(api::list_dirs).post(api::create_dir),
+        )
+        .route("/api/v1/fs/entries", get(api::list_entries))
+        .route(
+            "/api/v1/fs/files",
+            get(api::read_file).put(api::write_file),
+        )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, auth))
 }
