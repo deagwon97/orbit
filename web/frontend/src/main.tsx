@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleStop, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleStop, FileText, FolderOpen, Home, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -231,15 +231,12 @@ function App() {
   return <main className="app">
     <section className="toolbar">
       <strong>Orbit</strong>
-      <button disabled={busy} onClick={() => setCreateOpen(true)}><PlugZap size={16} />New session</button>
-      <button className={showAll ? "activeButton" : ""} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
       <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
       <button title="Logout" onClick={() => { localStorage.removeItem("orbit.token"); setAuthed(false); }}><LogOut size={16} /></button>
     </section>
     {message && <div className="statusLine">{message}</div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}`}>
       {fileEditorOpen ? <FileWorkspace
-          initialPath={cwd.trim() || undefined}
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
           detailOpen={detailOpen}
           onDetailOpen={() => setDetailOpen(true)}
@@ -249,6 +246,8 @@ function App() {
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
+            <button className={`sessionFilterButton${showAll ? " activeButton" : ""}`} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
+            <button className="iconButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} /></button>
           </div>
           <div className="sessions">
             <div className="row header"><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
@@ -391,8 +390,10 @@ function FileWorkspace(props: {
         return next;
       });
       setError("");
+      return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return null;
     } finally {
       if (options.root) setListBusy(false);
       setLoadingPaths((current) => {
@@ -407,6 +408,15 @@ function FileWorkspace(props: {
     setTree({});
     setExpanded(new Set());
     await loadEntries(path, { root: true });
+  }
+
+  async function resetHome() {
+    setTree({});
+    setExpanded(new Set());
+    const response = await loadEntries(undefined, { root: true });
+    if (response?.home && response.home !== response.path) {
+      await resetRoot(response.home);
+    }
   }
 
   async function toggleDir(entry: FsEntry) {
@@ -455,7 +465,7 @@ function FileWorkspace(props: {
     }
   }
 
-  useEffect(() => { void resetRoot(initialPath); }, []);
+  useEffect(() => { initialPath ? void resetRoot(initialPath) : void resetHome(); }, []);
 
   const isDirty = openedFile !== null && editContent !== openedFile.savedContent;
   const fileName = openedFile?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "No file";

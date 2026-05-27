@@ -17,7 +17,7 @@ input { min-width: 0; }
 .toolbar {
   min-height: 52px;
   display: grid;
-  grid-template-columns: auto auto auto auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) 38px 38px;
   gap: 8px;
   align-items: center;
   padding: 8px 14px;
@@ -25,7 +25,7 @@ input { min-width: 0; }
   background: white;
 }
 .toolbar strong { font-size: 16px; }
-.toolbar button:last-child { justify-self: end; }
+.toolbar button { width: 38px; min-height: 34px; padding: 0; }
 .cwdField { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 6px; }
 .cwdField button { padding: 0; }
 .check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -60,6 +60,8 @@ input { min-width: 0; }
   background: #f8fafb;
 }
 .paneTabs button { min-height: 30px; font-size: 13px; }
+.sessionFilterButton { margin-left: auto; }
+.iconButton { width: 32px; padding: 0; }
 .sessions { flex: 1; min-height: 0; background: white; overflow: auto; }
 .row {
   width: 100%;
@@ -377,14 +379,8 @@ button.row { min-height: 42px; justify-content: stretch; }
   color: #65727a;
 }
 
-@media (max-width: 1040px) {
-  .toolbar { grid-template-columns: auto auto auto auto 1fr; }
-}
-
 @media (max-width: 820px) {
-  .toolbar { grid-template-columns: 1fr 1fr; align-items: stretch; }
-  .toolbar strong { grid-column: 1 / -1; }
-  .toolbar button:last-child { justify-self: stretch; }
+  .toolbar { grid-template-columns: auto minmax(0, 1fr) 38px 38px; align-items: center; }
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .masterPane { border-right: 0; }
   .layout.showDetail .masterPane { display: none; }
