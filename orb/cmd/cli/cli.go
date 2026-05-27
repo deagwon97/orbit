@@ -107,10 +107,15 @@ func attach(c client.Client, args []string) error {
 }
 
 func remove(c client.Client, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: orb rm <id|name>")
+	if len(args) == 0 {
+		return fmt.Errorf("usage: orb rm <id|name> [id|name...]")
 	}
-	return c.DeleteSession(args[0])
+	for _, id := range args {
+		if err := c.DeleteSession(id); err != nil {
+			return fmt.Errorf("remove %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func logs(c client.Client, args []string) error {
@@ -304,7 +309,7 @@ func usageText() string {
   orb ps [-a|--all]    list sessions
   orb run [opts] <tool> create a session and attach
   orb attach <id|name> attach to a session (detach: Ctrl-] or Ctrl-\)
-  orb rm <id|name>     remove a session
+  orb rm <id|name>...   remove sessions
   orb logs [opts] <id>  print session logs
 
 tools: codex, claude, opencode, pi
