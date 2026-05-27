@@ -12,8 +12,8 @@ Orbit decouples AI coding agent sessions from your terminal. The `orbitd` daemon
 - **WebSocket attach** — Raw PTY I/O relay with automatic terminal color adaptation (light/dark background detection).
 - **Scrollback + logs** — Sessions keep a configurable scrollback buffer; logs are persisted in-memory and as raw files.
 - **Configurable agent backends** — `orbitd` reads backend command definitions from YAML, while keeping `codex`, `claude`, `opencode`, and `pi` defaults.
-- **REST API + filesystem API** — JSON API for sessions, plus a web backend proxy that adds directory browsing and folder creation.
-- **Web terminal** — Browser-based xterm.js attach with folder picker for working directory selection.
+- **REST API + filesystem API** — JSON API for sessions, directory browsing, folder creation, and text file read/write.
+- **Web terminal + editor** — Browser-based xterm.js attach with folder picker and a lightweight text file editor.
 - **Audit trail** — All session lifecycle events are recorded to `audit.jsonl`.
 
 ## Architecture
@@ -25,8 +25,8 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | WebSocket: attach           | WebSocket: attach (relayed)
        v                             v
    orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/* + /api/v1/backends
-       |                      |  Adds /api/v1/fs/dirs (browse/create dirs)
+       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
+       |                      |  /api/v1/fs/*, and WebSocket attach
        |                      v
        +-------> configured agent backends (child processes)
        |
@@ -35,7 +35,7 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-Only `orbitd` owns the PTY and child processes. The TUI, CLI, and web UI are all API clients. The web backend acts as a reverse proxy, forwarding session and backend API calls to `orbitd` while adding its own filesystem endpoints for directory browsing.
+Only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, and web UI are all API clients. The web backend acts as a reverse proxy, forwarding session, backend, filesystem, and WebSocket attach calls to `orbitd` so the browser talks to a single same-origin API.
 
 ## Quick Start
 
@@ -157,6 +157,11 @@ Base: `http://127.0.0.1:7777` — all endpoints except `/healthz` require `Autho
 | `DELETE` | `/api/v1/sessions/:id` | Delete session (kills process if running) |
 | `GET` | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks |
 | `GET` | `/api/v1/sessions/:id/attach` | WebSocket upgrade for live attach |
+| `GET` | `/api/v1/fs/dirs?path=...` | List visible subdirectories for a path |
+| `POST` | `/api/v1/fs/dirs` | Create a child directory |
+| `GET` | `/api/v1/fs/entries?path=...` | List visible files and directories for a path |
+| `GET` | `/api/v1/fs/files?path=...` | Read a UTF-8 text file, up to 10 MB |
+| `PUT` | `/api/v1/fs/files` | Write UTF-8 text content to a file |
 
 **Create session** request body:
 
@@ -179,6 +184,8 @@ The `tool` field is a backend ID from `/api/v1/backends`.
 → { "type": "detach" }
 ← { "type": "stdout", "data": "<base64>" }
 ```
+
+**Filesystem API** — `path` defaults to `$ORBIT_WORKSPACE` when set, otherwise the `orbitd` process working directory. Hidden entries are omitted. Directory listings return canonical paths plus `parent` and `home` references; file reads reject non-files, non-UTF-8 content, and files larger than 10 MB.
 
 ## Configuration
 
@@ -268,11 +275,14 @@ cd orb    && go test ./... && go build -o orb .
 The web client consists of two parts that run together:
 
 - **Backend** (Fastify/Node.js on port 3001) — reverse proxy to `orbitd`.
-  Proxies `orbitd` session and backend endpoints and adds:
+  Proxies `orbitd` session, backend, filesystem, and attach endpoints:
   - `GET /api/v1/fs/dirs?path=...` — browse server directories
   - `POST /api/v1/fs/dirs` — create a new empty directory
+  - `GET /api/v1/fs/entries?path=...` — browse files and directories
+  - `GET /api/v1/fs/files?path=...` — read a text file
+  - `PUT /api/v1/fs/files` — save a text file
 - **Frontend** (React + xterm.js + Vite) — browser-based session UI with
-  xterm.js terminal, folder picker, session list, log viewer.
+  xterm.js terminal, folder picker, text file editor, session list, log viewer.
 
 ```bash
 cd web/backend   && npm install && npm run dev

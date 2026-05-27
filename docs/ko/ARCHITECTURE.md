@@ -9,8 +9,8 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | WebSocket: attach           | WebSocket: attach (relayed)
        v                             v
    orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/* + /api/v1/backends
-       |                      |  Adds /api/v1/fs/dirs (browse/create dirs)
+       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
+       |                      |  /api/v1/fs/*, and WebSocket attach
        |                      v
        +-------> configured agent backends (child processes)
        |
@@ -19,7 +19,7 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-핵심 원칙: `orbitd`만 PTY와 자식 프로세스를 소유한다. TUI, CLI, 웹 UI는 모두 동일한 API를 호출하는 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션 및 백엔드 API 호출을 `orbitd`에 전달하고, 자체 파일시스템 API를 추가로 제공한다.
+핵심 원칙: `orbitd`만 PTY, 자식 프로세스, 파일시스템 API를 소유한다. TUI, CLI, 웹 UI는 모두 동일한 API를 호출하는 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션, 백엔드, 파일시스템, WebSocket attach 호출을 `orbitd`에 전달한다.
 
 ## 패키지 역할
 
@@ -36,9 +36,9 @@ orb/
 web/
   웹 클라이언트 — 두 부분으로 구성:
   backend/  Fastify (Node.js) 리버스 프록시. orbitd 세션 및 백엔드 API
-            엔드포인트를 프록시한다. /api/v1/fs/dirs 디렉토리 탐색/생성 API를 추가로 제공한다.
+            엔드포인트, 파일시스템 엔드포인트, WebSocket attach를 프록시한다.
   frontend/ React + Vite + xterm.js. 브라우저 기반 세션 UI. 풀 터미널 에뮬레이션,
-            폴더 선택기, 로그 뷰어, 로그인 화면을 포함한다.
+            폴더 선택기, 텍스트 파일 편집기, 로그 뷰어, 로그인 화면을 포함한다.
 ```
 
 ## orbitd 내부 구조
@@ -124,6 +124,11 @@ Base URL: `http://127.0.0.1:7777`
 | `DELETE` | `/api/v1/sessions/:id` | 세션 삭제 (실행 중이면 프로세스 종료) |
 | `GET` | `/api/v1/sessions/:id/logs?tail=N` | base64 인코딩 로그 청크 조회 |
 | `GET` | `/api/v1/sessions/:id/attach` | WebSocket 업그레이드로 라이브 attach |
+| `GET` | `/api/v1/fs/dirs?path=...` | 표시 가능한 하위 디렉토리 조회 |
+| `POST` | `/api/v1/fs/dirs` | 하위 디렉토리 생성 |
+| `GET` | `/api/v1/fs/entries?path=...` | 표시 가능한 파일과 디렉토리 조회 |
+| `GET` | `/api/v1/fs/files?path=...` | UTF-8 텍스트 파일 읽기, 최대 10 MB |
+| `PUT` | `/api/v1/fs/files` | UTF-8 텍스트 내용을 파일에 쓰기 |
 
 ### 세션 생성 요청
 
@@ -164,6 +169,18 @@ JSON 프레임 메시지.
 ### 로그 조회
 
 `GET /api/v1/sessions/:id/logs?tail=N`은 인메모리 `session_logs` 테이블에서 base64 인코딩 청크를 반환한다. `tail=0`이면 전체 로그를 반환한다. 로그는 PTY read 청크(~8KB)당 한 행씩 base64 인코딩되어 저장된다.
+
+### 파일시스템 API
+
+파일시스템 엔드포인트는 `orbitd`에 구현되어 있고 `web/backend`가 프록시한다.
+
+- `GET /api/v1/fs/dirs?path=...`는 표시 가능한 하위 디렉토리 목록을 `{ cwd, home, path, parent, dirs }`로 반환한다.
+- `POST /api/v1/fs/dirs`는 `{ "parent": "...", "name": "..." }`로 하위 디렉토리 하나를 생성한다. `name`은 단일 경로 세그먼트여야 한다.
+- `GET /api/v1/fs/entries?path=...`는 표시 가능한 파일과 디렉토리를 `{ home, path, parent, entries }`로 반환하며, 디렉토리를 먼저 정렬한다.
+- `GET /api/v1/fs/files?path=...`는 UTF-8 텍스트 파일을 읽고, 파일이 아닌 경로, 비 UTF-8 내용, 10 MB 초과 파일을 거부한다.
+- `PUT /api/v1/fs/files`는 `{ "path": "...", "content": "..." }` 내용을 디스크에 쓴다.
+
+디렉토리 또는 엔트리 목록에서 `path`를 생략하면 `$ORBIT_WORKSPACE`가 설정된 경우 그 값을 사용하고, 아니면 `orbitd`의 현재 작업 디렉토리에서 시작한다. 숨김 항목은 제외된다.
 
 ## 세션 라이프사이클
 
@@ -320,11 +337,14 @@ backends:
 Fastify (Node.js)로 구축되었으며 기본적으로 3001번 포트에서 실행된다. 두 가지 역할을 수행한다:
 
 1. **리버스 프록시** — `/api/v1/sessions/*`와 `/api/v1/backends` 요청을 `orbitd`로 전달하며, WebSocket attach 업그레이드도 포함한다. 브라우저는 `orbitd`에 직접 연결하지 않는다.
-2. **파일시스템 API** — `orbitd`에는 없는 두 개의 추가 엔드포인트를 제공한다:
+2. **파일시스템 프록시** — `orbitd`의 파일시스템 엔드포인트를 전달한다:
    - `GET /api/v1/fs/dirs?path=...` — 주어진 경로의 하위 디렉토리 목록과 `parent`(상위 이동), `home`, `cwd` 참조를 반환한다.
    - `POST /api/v1/fs/dirs` — 새 빈 디렉토리를 생성한다 (`{ "parent": "...", "name": "..." }`).
+   - `GET /api/v1/fs/entries?path=...` — 파일 편집기용 파일과 디렉토리 목록을 반환한다.
+   - `GET /api/v1/fs/files?path=...` — 텍스트 파일을 읽는다.
+   - `PUT /api/v1/fs/files` — 텍스트 파일을 저장한다.
 
-웹 백엔드는 `ORBIT_TOKEN` 환경 변수, 요청의 `Authorization` 헤더, 또는 `token` 쿼리 파라미터에서 orbitd 토큰을 읽는다. 각 파일시스템 요청 시 `orbitd`에 인증한다.
+웹 백엔드는 `ORBIT_TOKEN` 환경 변수, 요청의 `Authorization` 헤더, 또는 `token` 쿼리 파라미터에서 orbitd 토큰을 읽고, 프록시 요청마다 `orbitd`로 전달한다.
 
 환경 변수 설정:
 
@@ -340,6 +360,7 @@ React + Vite + xterm.js로 구축된 싱글 페이지 애플리케이션:
 
 - **로그인 화면** — orbitd Bearer 토큰을 입력받아 `localStorage`에 저장한다.
 - **툴바** — `/api/v1/backends`에서 채운 백엔드 선택기, 이름 입력, cwd 입력 + 폴더 선택기, env 입력, Attach 토글, Run 버튼, All/Running 필터, 새로고침, 로그아웃.
+- **파일 편집기** — `/api/v1/fs/entries`로 탐색하고 `/api/v1/fs/files`로 파일을 열며 `PUT /api/v1/fs/files`로 저장하는 모달 텍스트 편집기.
 - **세션 목록** — 클릭 가능한 행: ID, 이름, 도구, 상태(색상 코드 표시), PID.
 - **세션 창** — 두 개의 탭:
   - **Attach** — 백엔드 프록시를 통해 WebSocket으로 연결된 xterm.js 터미널. 자동 리사이즈(ResizeObserver), 스크롤 팔로우, detach 감지(`Ctrl-]`/`Ctrl-\`), 종료 알림, 재연결 기능.
@@ -353,4 +374,4 @@ React + Vite + xterm.js로 구축된 싱글 페이지 애플리케이션:
 - `orbitd`가 재시작되면 모든 세션 메타데이터와 로그가 사라진다(인메모리 SQLite).
 - WebSocket 로그 스트리밍 라우트가 없다 — 로그는 REST pull 전용(`GET /logs?tail=N`).
 - raw 로그 파일과 감사 로그 외에는 세션을 디스크에 저장하지 않는다.
-- 웹 백엔드는 파일시스템 요청에 대해 독립적으로 인증한다 — 프록시 토큰이 없거나 잘못되면 프론트엔드 토큰이 유효해도 디렉토리 탐색이 실패한다.
+- 파일시스템 엔드포인트는 인증된 클라이언트에게 `orbitd` 프로세스의 파일시스템을 노출한다. 웹 UI 접근 권한을 줄 사용자와 같은 신뢰 경계에서 `orbitd`를 실행해야 한다.

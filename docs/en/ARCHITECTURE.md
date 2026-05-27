@@ -9,8 +9,8 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | WebSocket: attach           | WebSocket: attach (relayed)
        v                             v
    orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/* + /api/v1/backends
-       |                      |  Adds /api/v1/fs/dirs (browse/create dirs)
+       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
+       |                      |  /api/v1/fs/*, and WebSocket attach
        |                      v
        +-------> configured agent backends (child processes)
        |
@@ -19,7 +19,7 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-Core principle: only `orbitd` owns the PTY and child processes. The TUI, CLI, and web UI are all API clients. The web backend acts as a reverse proxy, forwarding session and backend API calls to `orbitd` while adding its own filesystem endpoints.
+Core principle: only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, and web UI are all API clients. The web backend is a reverse proxy that forwards session, backend, filesystem, and WebSocket attach calls to `orbitd`.
 
 ## Package Roles
 
@@ -36,9 +36,10 @@ orb/
 web/
   Web client — two parts:
   backend/  Fastify (Node.js) reverse proxy. Proxies orbitd session and backend
-            API endpoints. Adds /api/v1/fs/dirs for directory browsing and creation.
+            API endpoints, filesystem endpoints, and WebSocket attach.
   frontend/ React + Vite + xterm.js. Browser-based session UI with full
-            terminal emulation, folder picker, log viewer, and login screen.
+            terminal emulation, folder picker, text file editor, log viewer,
+            and login screen.
 ```
 
 ## orbitd Internals
@@ -124,6 +125,11 @@ Base: `http://127.0.0.1:7777`
 | `DELETE` | `/api/v1/sessions/:id` | Delete session (kills process if running) |
 | `GET` | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks |
 | `GET` | `/api/v1/sessions/:id/attach` | WebSocket upgrade for live attach |
+| `GET` | `/api/v1/fs/dirs?path=...` | List visible child directories |
+| `POST` | `/api/v1/fs/dirs` | Create a child directory |
+| `GET` | `/api/v1/fs/entries?path=...` | List visible files and directories |
+| `GET` | `/api/v1/fs/files?path=...` | Read a UTF-8 text file, up to 10 MB |
+| `PUT` | `/api/v1/fs/files` | Write UTF-8 text content to a file |
 
 ### Create Session Request
 
@@ -164,6 +170,18 @@ JSON-framed messages over a WebSocket connection.
 ### Log Retrieval
 
 `GET /api/v1/sessions/:id/logs?tail=N` returns base64-encoded chunks from the in-memory `session_logs` table, ordered by insertion. Set `tail=0` for all logs. Logs are stored base64-encoded, one row per PTY read chunk (~8 KB).
+
+### Filesystem API
+
+The filesystem endpoints are implemented in `orbitd` and proxied by `web/backend`.
+
+- `GET /api/v1/fs/dirs?path=...` returns `{ cwd, home, path, parent, dirs }` where `dirs` contains visible child directories.
+- `POST /api/v1/fs/dirs` creates one child directory from `{ "parent": "...", "name": "..." }`. The name must be a single path segment.
+- `GET /api/v1/fs/entries?path=...` returns `{ home, path, parent, entries }` where `entries` contains visible files and directories, sorted with directories first.
+- `GET /api/v1/fs/files?path=...` reads a UTF-8 text file and rejects non-files, non-UTF-8 content, and files larger than 10 MB.
+- `PUT /api/v1/fs/files` writes `{ "path": "...", "content": "..." }` to disk.
+
+When `path` is omitted for directory or entry listing, `orbitd` starts at `$ORBIT_WORKSPACE` if set, otherwise its current working directory. Hidden entries are skipped.
 
 ## Session Lifecycle
 
@@ -320,11 +338,14 @@ Environment setup happens in the PTY spawn path: TERM, COLORTERM, COLORFGBG are 
 Built with Fastify (Node.js) and runs on port 3001 by default. It serves a dual role:
 
 1. **Reverse proxy** — forwards `/api/v1/sessions/*` and `/api/v1/backends` requests to `orbitd`, including WebSocket attach upgrades. The browser never connects directly to `orbitd`.
-2. **Filesystem API** — provides two additional endpoints not present in `orbitd`:
+2. **Filesystem proxy** — forwards the `orbitd` filesystem endpoints:
    - `GET /api/v1/fs/dirs?path=...` — lists subdirectories of the given path, along with `parent` (for "up" navigation), `home`, and `cwd` references.
    - `POST /api/v1/fs/dirs` — creates a new empty directory (`{ "parent": "...", "name": "..." }`).
+   - `GET /api/v1/fs/entries?path=...` — lists files and directories for the file editor.
+   - `GET /api/v1/fs/files?path=...` — reads a text file.
+   - `PUT /api/v1/fs/files` — saves a text file.
 
-The web backend reads the orbitd token from the `ORBIT_TOKEN` environment variable, the request `Authorization` header, or a `token` query parameter. It authenticates against `orbitd` on each filesystem request.
+The web backend reads the orbitd token from the `ORBIT_TOKEN` environment variable, the request `Authorization` header, or a `token` query parameter, then forwards it to `orbitd` on proxied requests.
 
 Configuration via environment variables:
 
@@ -340,6 +361,7 @@ Built with React + Vite + xterm.js. Single-page application with:
 
 - **Login screen** — prompts for the orbitd Bearer token, stored in `localStorage`.
 - **Toolbar** — backend selector populated from `/api/v1/backends`, name input, cwd input + folder picker, env input, Attach toggle, Run button, All/Running filter, Refresh, Logout.
+- **File editor** — modal text editor that browses `/api/v1/fs/entries`, opens `/api/v1/fs/files`, and saves through `PUT /api/v1/fs/files`.
 - **Session list** — clickable rows showing ID, name, tool, status (color-coded pill), PID.
 - **Session pane** — two tabs:
   - **Attach** — xterm.js terminal connected via WebSocket through the backend proxy. Features: automatic resize (ResizeObserver), scroll-follow, detach detection (`Ctrl-]`/`Ctrl-\`), exit notification, reconnection.
@@ -353,4 +375,4 @@ Built with React + Vite + xterm.js. Single-page application with:
 - On `orbitd` restart, all session metadata and logs are lost (in-memory SQLite).
 - No WebSocket log streaming — logs are REST-pull only (`GET /logs?tail=N`).
 - No session persistence to disk (aside from raw log files and the audit trail).
-- The web backend authenticates independently for filesystem requests — if the proxy token is missing or wrong, directory browsing fails even when the frontend token is valid.
+- Filesystem endpoints expose the `orbitd` process filesystem to authenticated clients. Run `orbitd` with the same trust boundary as the users allowed to access the web UI.

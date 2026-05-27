@@ -12,8 +12,8 @@ Orbit은 AI 코딩 에이전트 세션을 터미널 수명과 분리한다. `orb
 - **WebSocket attach** — Raw PTY I/O 중계, 자동 터미널 색상 적응(밝음/어두움 배경 감지)
 - **스크롤백 + 로그** — 설정 가능한 스크롤백 버퍼, 인메모리 + raw 파일 이중 저장
 - **설정 가능한 에이전트 백엔드** — `orbitd`가 YAML의 백엔드 명령 정의를 읽고 실행한다. 기본값으로 `codex`, `claude`, `opencode`, `pi`를 제공한다.
-- **REST API + 파일시스템 API** — 세션용 JSON API와 웹 백엔드의 디렉토리 탐색/생성 API
-- **웹 터미널** — 브라우저 기반 xterm.js attach + 폴더 선택기로 작업 디렉토리 선택 지원
+- **REST API + 파일시스템 API** — 세션, 디렉토리 탐색, 폴더 생성, 텍스트 파일 읽기/쓰기용 JSON API
+- **웹 터미널 + 편집기** — 브라우저 기반 xterm.js attach, 폴더 선택기, 경량 텍스트 파일 편집기
 - **감사 로그** — 모든 세션 생명주기 이벤트가 `audit.jsonl`에 기록
 
 ## 아키텍처
@@ -25,8 +25,8 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | WebSocket: attach           | WebSocket: attach (relayed)
        v                             v
    orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/* + /api/v1/backends
-       |                      |  Adds /api/v1/fs/dirs (browse/create dirs)
+       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
+       |                      |  /api/v1/fs/*, and WebSocket attach
        |                      v
        +-------> configured agent backends (child processes)
        |
@@ -35,7 +35,7 @@ Terminal (orb TUI/CLI)         Browser (web UI)
        | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-`orbitd`만 PTY와 자식 프로세스를 소유한다. TUI, CLI, 웹 UI는 모두 API 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션 및 백엔드 API 호출을 `orbitd`에 전달하고, 자체 파일시스템 엔드포인트를 추가로 제공한다.
+`orbitd`만 PTY, 자식 프로세스, 파일시스템 API를 소유한다. TUI, CLI, 웹 UI는 모두 API 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션, 백엔드, 파일시스템, WebSocket attach 호출을 `orbitd`에 전달하고, 브라우저에는 동일 출처 API를 제공한다.
 
 ## 빠른 시작
 
@@ -157,6 +157,11 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 | `DELETE` | `/api/v1/sessions/:id` | 세션 삭제 (실행 중이면 프로세스 종료) |
 | `GET` | `/api/v1/sessions/:id/logs?tail=N` | base64 인코딩 로그 청크 조회 |
 | `GET` | `/api/v1/sessions/:id/attach` | WebSocket 업그레이드로 라이브 attach |
+| `GET` | `/api/v1/fs/dirs?path=...` | 지정 경로의 표시 가능한 하위 디렉토리 조회 |
+| `POST` | `/api/v1/fs/dirs` | 하위 디렉토리 생성 |
+| `GET` | `/api/v1/fs/entries?path=...` | 지정 경로의 표시 가능한 파일/디렉토리 조회 |
+| `GET` | `/api/v1/fs/files?path=...` | UTF-8 텍스트 파일 읽기, 최대 10 MB |
+| `PUT` | `/api/v1/fs/files` | UTF-8 텍스트 내용을 파일에 쓰기 |
 
 **세션 생성** 요청 본문:
 
@@ -179,6 +184,8 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 → { "type": "detach" }
 ← { "type": "stdout", "data": "<base64>" }
 ```
+
+**파일시스템 API** — `path`를 생략하면 `$ORBIT_WORKSPACE`가 설정된 경우 그 값을 사용하고, 아니면 `orbitd` 프로세스의 작업 디렉토리를 사용한다. 숨김 항목은 제외된다. 디렉토리 목록은 canonical path와 `parent`, `home` 참조를 반환하며, 파일 읽기는 파일이 아닌 경로, 비 UTF-8 내용, 10 MB 초과 파일을 거부한다.
 
 ## 설정
 
@@ -268,11 +275,14 @@ cd orb    && go test ./... && go build -o orb .
 웹 클라이언트는 함께 실행되는 두 부분으로 구성된다:
 
 - **백엔드** (Fastify/Node.js, 3001번 포트) — `orbitd`의 리버스 프록시.
-  `orbitd`의 세션 및 백엔드 엔드포인트를 프록시하며 다음을 추가로 제공:
+  `orbitd`의 세션, 백엔드, 파일시스템, attach 엔드포인트를 프록시한다:
   - `GET /api/v1/fs/dirs?path=...` — 서버 디렉토리 탐색
   - `POST /api/v1/fs/dirs` — 새 빈 디렉토리 생성
+  - `GET /api/v1/fs/entries?path=...` — 파일과 디렉토리 탐색
+  - `GET /api/v1/fs/files?path=...` — 텍스트 파일 읽기
+  - `PUT /api/v1/fs/files` — 텍스트 파일 저장
 - **프론트엔드** (React + xterm.js + Vite) — 브라우저 기반 세션 UI.
-  xterm.js 터미널, 폴더 선택기, 세션 목록, 로그 뷰어 포함.
+  xterm.js 터미널, 폴더 선택기, 텍스트 파일 편집기, 세션 목록, 로그 뷰어 포함.
 
 ```bash
 cd web/backend   && npm install && npm run dev
