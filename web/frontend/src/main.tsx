@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronUp, CircleStop, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronUp, CircleStop, FilePen, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -28,6 +28,15 @@ type DirListing = {
   parent: string | null;
   dirs: Array<{ name: string; path: string }>;
 };
+
+type FsEntry = { name: string; path: string; kind: "dir" | "file" };
+type ListEntriesResponse = {
+  path: string;
+  parent: string | null;
+  home: string;
+  entries: FsEntry[];
+};
+type OpenedFile = { path: string; content: string; savedContent: string };
 
 const defaultBackends: AgentBackend[] = [
   { id: "codex", name: "Codex", command: "codex", args: [] },
@@ -110,6 +119,7 @@ function App() {
   const [folderOpen, setFolderOpen] = useState(false);
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
+  const [fileEditorOpen, setFileEditorOpen] = useState(false);
 
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId) ?? null, [sessions, selectedId]);
 
@@ -222,6 +232,7 @@ function App() {
       <div className="cwdField">
         <input className="cwdInput" placeholder="cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} />
         <button title="Browse folders" onClick={openFolderPicker}><FolderOpen size={16} /></button>
+        <button title="File editor" onClick={() => setFileEditorOpen(true)}><FilePen size={16} /></button>
       </div>
       <input className="envInput" placeholder="KEY=VALUE" value={env} onChange={(event) => setEnv(event.target.value)} />
       <label className="check"><input type="checkbox" checked={attachAfterRun} onChange={(event) => setAttachAfterRun(event.target.checked)} />Attach</label>
@@ -256,6 +267,7 @@ function App() {
         /> : <div className="empty"><TerminalIcon />Select a session</div>}
       </div>
     </section>
+    {fileEditorOpen && <FileEditor onClose={() => setFileEditorOpen(false)} />}
     {folderOpen && <FolderPicker
       listing={dirListing}
       busy={dirBusy}
@@ -265,6 +277,113 @@ function App() {
       onSelect={(path) => { setCwd(path); setFolderOpen(false); }}
     />}
   </main>;
+}
+
+function FileEditor({ onClose }: { onClose: () => void }) {
+  const [listing, setListing] = useState<ListEntriesResponse | null>(null);
+  const [listBusy, setListBusy] = useState(false);
+  const [openedFile, setOpenedFile] = useState<OpenedFile | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadEntries(path?: string) {
+    setListBusy(true);
+    try {
+      const query = path ? `?path=${encodeURIComponent(path)}` : "";
+      setListing(await api(`/api/v1/fs/entries${query}`) as ListEntriesResponse);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setListBusy(false);
+    }
+  }
+
+  async function openFile(path: string) {
+    setListBusy(true);
+    try {
+      const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`) as { path: string; content: string };
+      setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
+      setEditContent(result.content);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setListBusy(false);
+    }
+  }
+
+  async function saveFile() {
+    if (!openedFile) return;
+    setSaving(true);
+    try {
+      await api("/api/v1/fs/files", {
+        method: "PUT",
+        body: JSON.stringify({ path: openedFile.path, content: editContent })
+      });
+      setOpenedFile({ ...openedFile, savedContent: editContent });
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => { void loadEntries(); }, []);
+
+  const isDirty = openedFile !== null && editContent !== openedFile.savedContent;
+
+  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+    <div className="fileEditor">
+      <div className="fileEditorTop">
+        <FilePen size={16} />
+        <strong>Text Editor</strong>
+        <button title="Close" onClick={onClose}><X size={16} /></button>
+      </div>
+      {error && <div className="folderError">{error}</div>}
+      <div className="fileEditorLayout">
+        <div className="fileEditorSidebar">
+          <div className="fileEditorSidebarPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
+          <div className="fileEditorSidebarActions">
+            <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && loadEntries(listing.parent)}><ChevronUp size={14} />Up</button>
+            <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && loadEntries(listing.home)}><Home size={14} />Home</button>
+          </div>
+          <div className="fileEditorSidebarList">
+            {listBusy && <div className="folderEmpty">Loading...</div>}
+            {!listBusy && listing?.entries.length === 0 && <div className="folderEmpty">Empty</div>}
+            {!listBusy && listing?.entries.map((entry) => (
+              <button
+                key={entry.path}
+                className={`fileEntryRow${openedFile?.path === entry.path ? " active" : ""}`}
+                onClick={() => entry.kind === "dir" ? loadEntries(entry.path) : openFile(entry.path)}
+              >
+                {entry.kind === "dir" ? <FolderOpen size={14} /> : <FileText size={14} />}
+                <span>{entry.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="fileEditorContent">
+          {openedFile ? <>
+            <div className="fileEditorContentHeader">
+              <span className="fileEditorFilePath" title={openedFile.path}>{openedFile.path}</span>
+              <button disabled={saving || !isDirty} onClick={saveFile}>
+                <Save size={14} />{saving ? "Saving…" : isDirty ? "Save*" : "Saved"}
+              </button>
+            </div>
+            <textarea
+              className="fileEditorTextarea"
+              value={editContent}
+              onChange={(event) => setEditContent(event.target.value)}
+              spellCheck={false}
+            />
+          </> : <div className="fileEditorEmpty"><FileText size={32} /><span>Select a file to edit</span></div>}
+        </div>
+      </div>
+    </div>
+  </div>;
 }
 
 function FolderPicker(props: {
