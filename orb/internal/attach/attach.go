@@ -85,6 +85,8 @@ func (c *Command) Run() error {
 	}
 	defer cleanupTerminal(c.in, c.out)
 
+	lightBg := detectLightBackground(c.in, c.out)
+
 	done := make(chan error, 2)
 	var closeOnce sync.Once
 	closeConn := func() { closeOnce.Do(func() { _ = ws.Close() }) }
@@ -104,7 +106,7 @@ func (c *Command) Run() error {
 		reportInputError(c.err, err)
 	}()
 	go func() {
-		done <- copyOutput(ws, c.out)
+		done <- copyOutput(ws, c.out, lightBg)
 		closeConn()
 	}()
 
@@ -463,7 +465,90 @@ func sendResize(ws stdinWriter, in io.Reader) {
 	_ = ws.writeText(payload)
 }
 
-func copyOutput(ws *websocket, out io.Writer) error {
+// detectLightBackground sends an OSC 11 terminal background color query and
+// returns true if the terminal has a light background (relative luminance > 0.5).
+// It must be called after enableRaw so the terminal echoes the response immediately.
+// Returns false (dark) when the terminal does not respond within 200 ms.
+func detectLightBackground(in io.Reader, out io.Writer) bool {
+	file, ok := in.(*os.File)
+	if !ok {
+		file = os.Stdin
+	}
+	if file == nil {
+		return false
+	}
+	fd := int(file.Fd())
+	oldFlags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+	if err != nil {
+		return false
+	}
+	if _, err := io.WriteString(out, "\x1b]11;?\a"); err != nil {
+		return false
+	}
+	if err := unix.SetNonblock(fd, true); err != nil {
+		return false
+	}
+	defer func() { _, _ = unix.FcntlInt(uintptr(fd), unix.F_SETFL, oldFlags) }()
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	buf := make([]byte, 0, 64)
+	tmp := make([]byte, 64)
+	for time.Now().Before(deadline) {
+		n, err := file.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			if lum, ok := parseOSC11Luminance(buf); ok {
+				return lum > 0.5
+			}
+		}
+		if err != nil {
+			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			break
+		}
+	}
+	return false
+}
+
+// parseOSC11Luminance parses a terminal background color from an OSC 11 response
+// (\x1b]11;rgb:RRRR/GGGG/BBBB\a) and returns the relative luminance (0–1).
+func parseOSC11Luminance(data []byte) (float64, bool) {
+	s := string(data)
+	const prefix = "\x1b]11;rgb:"
+	idx := strings.Index(s, prefix)
+	if idx < 0 {
+		return 0, false
+	}
+	s = s[idx+len(prefix):]
+	end := strings.IndexAny(s, "\a\x1b")
+	if end < 0 {
+		return 0, false
+	}
+	s = s[:end]
+	parts := strings.Split(s, "/")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	r, err1 := strconv.ParseInt(parts[0], 16, 64)
+	g, err2 := strconv.ParseInt(parts[1], 16, 64)
+	b, err3 := strconv.ParseInt(parts[2], 16, 64)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, false
+	}
+	digits := len(parts[0])
+	if digits == 0 {
+		return 0, false
+	}
+	maxVal := float64(int64(1)<<(4*digits) - 1)
+	rf := float64(r) / maxVal
+	gf := float64(g) / maxVal
+	bf := float64(b) / maxVal
+	return 0.2126*rf + 0.7152*gf + 0.0722*bf, true
+}
+
+func copyOutput(ws *websocket, out io.Writer, lightBg bool) error {
 	for {
 		op, payload, err := ws.readFrame()
 		if err != nil {
@@ -480,7 +565,7 @@ func copyOutput(ws *websocket, out io.Writer) error {
 				if err != nil {
 					return err
 				}
-				bytes = adaptOutputColors(bytes)
+				bytes = adaptOutputColors(bytes, lightBg)
 				if _, err := out.Write(bytes); err != nil {
 					return err
 				}
@@ -493,7 +578,7 @@ func copyOutput(ws *websocket, out io.Writer) error {
 	}
 }
 
-func adaptOutputColors(in []byte) []byte {
+func adaptOutputColors(in []byte, lightBg bool) []byte {
 	out := make([]byte, 0, len(in))
 	for i := 0; i < len(in); {
 		if in[i] != 0x1b || i+1 >= len(in) || in[i+1] != '[' {
@@ -501,7 +586,7 @@ func adaptOutputColors(in []byte) []byte {
 			i++
 			continue
 		}
-		next, replacement, ok := rewriteSGR(in, i)
+		next, replacement, ok := rewriteSGR(in, i, lightBg)
 		if !ok {
 			out = append(out, in[i])
 			i++
@@ -513,7 +598,7 @@ func adaptOutputColors(in []byte) []byte {
 	return out
 }
 
-func rewriteSGR(in []byte, start int) (int, []byte, bool) {
+func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
 	i := start + 2
 	for i < len(in) && in[i] != 'm' {
 		if in[i] < '0' || in[i] > '9' {
@@ -539,17 +624,39 @@ func rewriteSGR(in []byte, start int) (int, []byte, bool) {
 			return start, nil, false
 		}
 		switch {
-		case value == 30:
+		case value == 30 && !lightBg:
+			// Dark terminal: black fg → default (black is invisible on dark bg).
 			rewritten = append(rewritten, "39")
 			changed = true
-		case value == 38 && p+2 < len(parts) && parts[p+1] == "5" && parts[p+2] == "0":
+		case (value == 37 || value == 97) && lightBg:
+			// Light terminal: white/bright-white fg → default (invisible on light bg).
 			rewritten = append(rewritten, "39")
-			p += 2
 			changed = true
-		case value == 38 && p+4 < len(parts) && parts[p+1] == "2" && parts[p+2] == "0" && parts[p+3] == "0" && parts[p+4] == "0":
-			rewritten = append(rewritten, "39")
-			p += 4
-			changed = true
+		case value == 38 && p+2 < len(parts) && parts[p+1] == "5":
+			palIdx, _ := strconv.Atoi(parts[p+2])
+			isBlack := palIdx == 0
+			isWhite := palIdx == 7 || palIdx == 15
+			if (!lightBg && isBlack) || (lightBg && isWhite) {
+				rewritten = append(rewritten, "39")
+				p += 2
+				changed = true
+			} else {
+				rewritten = append(rewritten, parts[p])
+			}
+		case value == 38 && p+4 < len(parts) && parts[p+1] == "2":
+			r, _ := strconv.Atoi(parts[p+2])
+			g, _ := strconv.Atoi(parts[p+3])
+			b, _ := strconv.Atoi(parts[p+4])
+			isBlack := r == 0 && g == 0 && b == 0
+			lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255.0
+			isNearWhite := lum > 0.7
+			if (!lightBg && isBlack) || (lightBg && isNearWhite) {
+				rewritten = append(rewritten, "39")
+				p += 4
+				changed = true
+			} else {
+				rewritten = append(rewritten, parts[p])
+			}
 		default:
 			rewritten = append(rewritten, parts[p])
 		}

@@ -131,7 +131,7 @@ func TestSanitizeReplayStripsKeyboardProtocolQuery(t *testing.T) {
 
 func TestAdaptOutputColorsRewritesBlackForeground(t *testing.T) {
 	in := []byte("a\x1b[30mblack\x1b[0m b\x1b[1;30;4mcombo")
-	out := adaptOutputColors(in)
+	out := adaptOutputColors(in, false)
 	want := "a\x1b[39mblack\x1b[0m b\x1b[1;39;4mcombo"
 	if string(out) != want {
 		t.Fatalf("out = %q, want %q", string(out), want)
@@ -140,7 +140,7 @@ func TestAdaptOutputColorsRewritesBlackForeground(t *testing.T) {
 
 func TestAdaptOutputColorsRewritesIndexedBlackForeground(t *testing.T) {
 	in := []byte("a\x1b[38;5;0mblack")
-	out := adaptOutputColors(in)
+	out := adaptOutputColors(in, false)
 	want := "a\x1b[39mblack"
 	if string(out) != want {
 		t.Fatalf("out = %q, want %q", string(out), want)
@@ -149,7 +149,7 @@ func TestAdaptOutputColorsRewritesIndexedBlackForeground(t *testing.T) {
 
 func TestAdaptOutputColorsRewritesRGBBlackForeground(t *testing.T) {
 	in := []byte("a\x1b[38;2;0;0;0mblack")
-	out := adaptOutputColors(in)
+	out := adaptOutputColors(in, false)
 	want := "a\x1b[39mblack"
 	if string(out) != want {
 		t.Fatalf("out = %q, want %q", string(out), want)
@@ -158,9 +158,107 @@ func TestAdaptOutputColorsRewritesRGBBlackForeground(t *testing.T) {
 
 func TestAdaptOutputColorsLeavesOtherColors(t *testing.T) {
 	in := []byte("a\x1b[31mred\x1b[38;5;8mgray")
-	out := adaptOutputColors(in)
+	out := adaptOutputColors(in, false)
 	if string(out) != string(in) {
 		t.Fatalf("out = %q, want original", string(out))
+	}
+}
+
+func TestAdaptOutputColorsDarkBgLeavesWhiteForeground(t *testing.T) {
+	in := []byte("a\x1b[37mwhite\x1b[97mbright")
+	out := adaptOutputColors(in, false)
+	if string(out) != string(in) {
+		t.Fatalf("dark bg: out = %q, want original (white fg must not be rewritten)", string(out))
+	}
+}
+
+func TestAdaptOutputColorsLightBgRewritesWhiteForeground(t *testing.T) {
+	in := []byte("a\x1b[37mwhite\x1b[0m b\x1b[1;97;4mbright")
+	out := adaptOutputColors(in, true)
+	want := "a\x1b[39mwhite\x1b[0m b\x1b[1;39;4mbright"
+	if string(out) != want {
+		t.Fatalf("light bg: out = %q, want %q", string(out), want)
+	}
+}
+
+func TestAdaptOutputColorsLightBgRewritesIndexedWhiteForeground(t *testing.T) {
+	for _, palIdx := range []string{"7", "15"} {
+		in := []byte("a\x1b[38;5;" + palIdx + "mwhite")
+		out := adaptOutputColors(in, true)
+		want := "a\x1b[39mwhite"
+		if string(out) != want {
+			t.Fatalf("light bg 38;5;%s: out = %q, want %q", palIdx, string(out), want)
+		}
+	}
+}
+
+func TestAdaptOutputColorsLightBgRewritesRGBWhiteForeground(t *testing.T) {
+	in := []byte("a\x1b[38;2;255;255;255mwhite")
+	out := adaptOutputColors(in, true)
+	want := "a\x1b[39mwhite"
+	if string(out) != want {
+		t.Fatalf("light bg RGB white: out = %q, want %q", string(out), want)
+	}
+}
+
+func TestAdaptOutputColorsLightBgLeavesNonWhiteColors(t *testing.T) {
+	in := []byte("a\x1b[31mred\x1b[38;5;9mbright-red\x1b[38;2;0;128;255mblue")
+	out := adaptOutputColors(in, true)
+	if string(out) != string(in) {
+		t.Fatalf("light bg: out = %q, want original (non-white colors must not be rewritten)", string(out))
+	}
+}
+
+func TestAdaptOutputColorsLightBgLeavesBlackForeground(t *testing.T) {
+	in := []byte("a\x1b[30mblack")
+	out := adaptOutputColors(in, true)
+	if string(out) != string(in) {
+		t.Fatalf("light bg: out = %q, want original (black fg must not be rewritten on light bg)", string(out))
+	}
+}
+
+func TestParseOSC11LuminanceWhiteBackground(t *testing.T) {
+	// Mac Terminal default white background
+	data := []byte("\x1b]11;rgb:ffff/ffff/ffff\a")
+	lum, ok := parseOSC11Luminance(data)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if lum < 0.99 {
+		t.Fatalf("lum = %f, want ~1.0 for white", lum)
+	}
+}
+
+func TestParseOSC11LuminanceDarkBackground(t *testing.T) {
+	// Typical VS Code dark background
+	data := []byte("\x1b]11;rgb:1e1e/1e1e/1e1e\a")
+	lum, ok := parseOSC11Luminance(data)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if lum > 0.2 {
+		t.Fatalf("lum = %f, want < 0.2 for dark bg", lum)
+	}
+}
+
+func TestParseOSC11LuminanceSTTerminator(t *testing.T) {
+	// Some terminals use ST (\x1b\\) instead of BEL
+	data := []byte("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+	lum, ok := parseOSC11Luminance(data)
+	if !ok {
+		t.Fatal("expected ok with ST terminator")
+	}
+	if lum < 0.99 {
+		t.Fatalf("lum = %f, want ~1.0", lum)
+	}
+}
+
+func TestParseOSC11LuminanceIncomplete(t *testing.T) {
+	// Partial response (no terminator yet) must return not-ok
+	data := []byte("\x1b]11;rgb:ffff/ffff")
+	_, ok := parseOSC11Luminance(data)
+	if ok {
+		t.Fatal("expected not-ok for incomplete response")
 	}
 }
 
