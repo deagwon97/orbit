@@ -1,3 +1,6 @@
 orbitd/target
 tmp
 node_modules
+.agents
+.claude
+.codex
