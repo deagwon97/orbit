@@ -624,7 +624,8 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
     const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(token())}`);
     let detached = false;
     let autoFollow = true;
-    let userScrolled = false;
+    let userScrollIntent = false;
+    let userScrollTimer: number | undefined;
 
     const send = (payload: unknown) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
@@ -643,22 +644,27 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(ref.current);
 
-    const isAtBottom = () => term.buffer.active.viewportY >= term.buffer.active.baseY;
+    const isAtBottom = () => term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
     const followBottom = () => {
       if (!autoFollow) return;
       requestAnimationFrame(() => term.scrollToBottom());
     };
     const scroll = term.onScroll((viewportY) => {
-      if (viewportY >= term.buffer.active.baseY) {
+      if (term.buffer.active.baseY - viewportY <= 1) {
         autoFollow = true;
-        userScrolled = false;
-      } else if (userScrolled) {
+      } else if (userScrollIntent) {
         autoFollow = false;
       }
     });
-    const markUserScroll = () => { userScrolled = true; };
+    const markUserScroll = (event: Event) => {
+      userScrollIntent = true;
+      if (event instanceof WheelEvent && event.deltaY < 0) autoFollow = false;
+      window.clearTimeout(userScrollTimer);
+      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 300);
+    };
     ref.current.addEventListener("wheel", markUserScroll, { passive: true });
     ref.current.addEventListener("touchstart", markUserScroll, { passive: true });
+    ref.current.addEventListener("pointerdown", markUserScroll, { passive: true });
     const input = term.onData((data) => {
       if (isDetachInput(data)) {
         sendDetach();
@@ -694,7 +700,9 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
     return () => {
       ref.current?.removeEventListener("wheel", markUserScroll);
       ref.current?.removeEventListener("touchstart", markUserScroll);
+      ref.current?.removeEventListener("pointerdown", markUserScroll);
       resizeObserver.disconnect();
+      window.clearTimeout(userScrollTimer);
       input.dispose();
       scroll.dispose();
       sendDetach();
