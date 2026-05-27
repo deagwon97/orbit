@@ -176,39 +176,59 @@ button.row { min-height: 42px; justify-content: stretch; }
   color: #66737b;
 }
 
-.fileEditor {
-  width: min(960px, calc(100vw - 40px));
-  height: min(700px, calc(100vh - 40px));
-  display: flex;
-  flex-direction: column;
+.fileWorkspace {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 44px minmax(220px, 300px) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid #c9d2d8;
   border-radius: 8px;
   background: white;
-  box-shadow: 0 18px 48px rgba(15, 22, 27, .2);
 }
-.fileEditorTop {
-  min-height: 48px;
+.fileActivityBar {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #d8e0e5;
+  padding: 8px 4px;
+  gap: 6px;
+  background: #252c30;
+  border-right: 1px solid #1b2024;
 }
-.fileEditorTop strong { margin-right: auto; }
-.fileEditorLayout {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 220px 1fr;
+.fileActivityBar button {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  color: #dce5e9;
+  background: transparent;
+  border-color: transparent;
+}
+.fileActivityBar button.activeDark { background: #365148; border-color: #5c8375; }
+.fileExplorer {
+  min-width: 0;
   min-height: 0;
-}
-.fileEditorSidebar {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #d8e0e5;
-  min-height: 0;
+  background: #f8fafb;
 }
-.fileEditorSidebarPath {
+.fileExplorerTop {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid #d8e0e5;
+}
+.fileExplorerTop strong {
+  margin-right: auto;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: #41515a;
+}
+.fileExplorerTop button { min-height: 28px; padding: 0 7px; }
+.fileExplorerPath {
   min-height: 34px;
   padding: 8px 10px;
   font-size: 12px;
@@ -220,14 +240,14 @@ button.row { min-height: 42px; justify-content: stretch; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fileEditorSidebarActions {
+.fileExplorerActions {
   display: flex;
   gap: 6px;
   padding: 8px 10px;
   border-bottom: 1px solid #e7ecef;
 }
-.fileEditorSidebarActions button { min-height: 28px; font-size: 12px; padding: 0 8px; }
-.fileEditorSidebarList {
+.fileExplorerActions button { min-height: 28px; font-size: 12px; padding: 0 8px; }
+.fileExplorerList {
   flex: 1;
   overflow: auto;
 }
@@ -235,9 +255,9 @@ button.row { min-height: 42px; justify-content: stretch; }
   width: 100%;
   min-height: 34px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 7px;
-  padding: 0 10px;
+  grid-template-columns: 14px 18px minmax(0, 1fr);
+  gap: 6px;
+  padding: 0 10px 0 8px;
   border: 0;
   border-radius: 0;
   border-bottom: 1px solid #edf1f3;
@@ -247,33 +267,68 @@ button.row { min-height: 42px; justify-content: stretch; }
 }
 .fileEntryRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileEntryRow.active { background: #e7f1ee; }
-.fileEditorContent {
+.fileEntryLoading {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  color: #66737b;
+  font-size: 12px;
+}
+.fileEditorSurface {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: white;
 }
-.fileEditorContentHeader {
-  min-height: 40px;
+.fileTabs {
+  min-height: 38px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 0 8px 0 0;
   border-bottom: 1px solid #d8e0e5;
   background: #f8fafb;
 }
-.fileEditorFilePath {
+.fileTab {
+  align-self: stretch;
+  min-width: 0;
+  max-width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-right: 1px solid #d8e0e5;
+  background: white;
+  font-size: 13px;
+}
+.fileTab span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileTab.dirty::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d6862f;
+}
+.fileTab.muted { color: #66737b; background: #f8fafb; }
+.fileTabSpacer {
   flex: 1;
   min-width: 0;
+}
+.fileTabs button { min-height: 28px; font-size: 12px; padding: 0 10px; }
+.fileBreadcrumb {
+  min-height: 30px;
+  padding: 7px 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #41515a;
+  border-bottom: 1px solid #e7ecef;
 }
-.fileEditorContentHeader button { min-height: 28px; font-size: 12px; padding: 0 10px; }
 .fileEditorTextarea {
   flex: 1;
+  min-height: 0;
   resize: none;
   border: 0;
   border-radius: 0;
@@ -283,6 +338,18 @@ button.row { min-height: 42px; justify-content: stretch; }
   line-height: 1.5;
   outline: none;
   color: #172026;
+}
+.fileStatusBar {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 10px;
+  border-top: 1px solid #d8e0e5;
+  color: #41515a;
+  background: #f8fafb;
+  font-size: 12px;
 }
 .fileEditorEmpty {
   flex: 1;
@@ -306,6 +373,8 @@ button.row { min-height: 42px; justify-content: stretch; }
   .terminalTop { flex-wrap: wrap; }
   .sessionTitle { flex-basis: 100%; }
   .folderCreate { grid-template-columns: 1fr; }
-  .fileEditorLayout { grid-template-columns: 1fr; grid-template-rows: 200px 1fr; }
-  .fileEditorSidebar { border-right: 0; border-bottom: 1px solid #d8e0e5; }
+  .fileWorkspace { grid-template-columns: 40px 1fr; grid-template-rows: 220px minmax(0, 1fr); }
+  .fileActivityBar { grid-row: 1 / -1; }
+  .fileExplorer { border-right: 0; border-bottom: 1px solid #d8e0e5; }
+  .fileEditorSurface { grid-column: 2; }
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronUp, CircleStop, FilePen, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, CircleStop, FilePen, FileText, FolderOpen, Home, LogOut, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -37,6 +37,7 @@ type ListEntriesResponse = {
   entries: FsEntry[];
 };
 type OpenedFile = { path: string; content: string; savedContent: string };
+type EntryTree = Record<string, FsEntry[]>;
 
 const defaultBackends: AgentBackend[] = [
   { id: "codex", name: "Codex", command: "codex", args: [] },
@@ -232,7 +233,7 @@ function App() {
       <div className="cwdField">
         <input className="cwdInput" placeholder="cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} />
         <button title="Browse folders" onClick={openFolderPicker}><FolderOpen size={16} /></button>
-        <button title="File editor" onClick={() => setFileEditorOpen(true)}><FilePen size={16} /></button>
+        <button className={fileEditorOpen ? "activeButton" : ""} title="File explorer" onClick={() => setFileEditorOpen((value) => !value)}><FilePen size={16} /></button>
       </div>
       <input className="envInput" placeholder="KEY=VALUE" value={env} onChange={(event) => setEnv(event.target.value)} />
       <label className="check"><input type="checkbox" checked={attachAfterRun} onChange={(event) => setAttachAfterRun(event.target.checked)} />Attach</label>
@@ -254,7 +255,11 @@ function App() {
         </button>)}
       </div>
       <div className="workPane">
-        {selected ? <SessionPane
+        {fileEditorOpen ? <FileWorkspace
+          initialPath={cwd.trim() || undefined}
+          onUseCwd={(path) => setCwd(path)}
+          onClose={() => setFileEditorOpen(false)}
+        /> : selected ? <SessionPane
           session={selected}
           view={view}
           logs={logs}
@@ -267,7 +272,6 @@ function App() {
         /> : <div className="empty"><TerminalIcon />Select a session</div>}
       </div>
     </section>
-    {fileEditorOpen && <FileEditor onClose={() => setFileEditorOpen(false)} />}
     {folderOpen && <FolderPicker
       listing={dirListing}
       busy={dirBusy}
@@ -279,29 +283,68 @@ function App() {
   </main>;
 }
 
-function FileEditor({ onClose }: { onClose: () => void }) {
+function FileWorkspace({ initialPath, onUseCwd, onClose }: { initialPath?: string; onUseCwd: (path: string) => void; onClose: () => void }) {
   const [listing, setListing] = useState<ListEntriesResponse | null>(null);
   const [listBusy, setListBusy] = useState(false);
+  const [tree, setTree] = useState<EntryTree>({});
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set());
   const [openedFile, setOpenedFile] = useState<OpenedFile | null>(null);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadEntries(path?: string) {
-    setListBusy(true);
+  async function loadEntries(path?: string, options: { root?: boolean } = {}) {
+    const key = path ?? "__root__";
+    if (options.root) setListBusy(true);
+    setLoadingPaths((current) => new Set(current).add(key));
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      setListing(await api(`/api/v1/fs/entries${query}`) as ListEntriesResponse);
+      const response = await api(`/api/v1/fs/entries${query}`) as ListEntriesResponse;
+      if (options.root || !listing) setListing(response);
+      setTree((current) => ({ ...current, [response.path]: response.entries }));
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.add(response.path);
+        return next;
+      });
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setListBusy(false);
+      if (options.root) setListBusy(false);
+      setLoadingPaths((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   }
 
+  async function resetRoot(path?: string) {
+    setTree({});
+    setExpanded(new Set());
+    await loadEntries(path, { root: true });
+  }
+
+  async function toggleDir(entry: FsEntry) {
+    if (expanded.has(entry.path)) {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(entry.path);
+        return next;
+      });
+      return;
+    }
+    if (tree[entry.path]) {
+      setExpanded((current) => new Set(current).add(entry.path));
+      return;
+    }
+    await loadEntries(entry.path);
+  }
+
   async function openFile(path: string) {
-    setListBusy(true);
+    if (openedFile && editContent !== openedFile.savedContent && !window.confirm("Discard unsaved changes?")) return;
     try {
       const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`) as { path: string; content: string };
       setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
@@ -309,8 +352,6 @@ function FileEditor({ onClose }: { onClose: () => void }) {
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setListBusy(false);
     }
   }
 
@@ -331,58 +372,86 @@ function FileEditor({ onClose }: { onClose: () => void }) {
     }
   }
 
-  useEffect(() => { void loadEntries(); }, []);
+  useEffect(() => { void resetRoot(initialPath); }, []);
 
   const isDirty = openedFile !== null && editContent !== openedFile.savedContent;
+  const fileName = openedFile?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "No file";
+  const lineCount = editContent ? editContent.split("\n").length : 0;
+  const rootEntries = listing ? tree[listing.path] ?? [] : [];
 
-  return <div className="modalBackdrop" role="dialog" aria-modal="true">
-    <div className="fileEditor">
-      <div className="fileEditorTop">
-        <FilePen size={16} />
-        <strong>Text Editor</strong>
-        <button title="Close" onClick={onClose}><X size={16} /></button>
+  function renderTree(entries: FsEntry[], depth = 0): React.ReactNode[] {
+    return entries.flatMap((entry) => {
+      const isDir = entry.kind === "dir";
+      const isExpanded = expanded.has(entry.path);
+      const isLoading = loadingPaths.has(entry.path);
+      const children = isDir && isExpanded ? tree[entry.path] ?? [] : [];
+      const row = <button
+        key={entry.path}
+        className={`fileEntryRow${openedFile?.path === entry.path ? " active" : ""}`}
+        style={{ paddingLeft: 8 + depth * 14 }}
+        onClick={() => isDir ? void toggleDir(entry) : void openFile(entry.path)}
+      >
+        {isDir ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
+        {isDir ? <FolderOpen size={14} /> : <FileText size={14} />}
+        <span>{entry.name}</span>
+      </button>;
+      const childRows = isDir && isExpanded ? [
+        ...(isLoading ? [<div key={`${entry.path}:loading`} className="fileEntryLoading" style={{ paddingLeft: 40 + depth * 14 }}>Loading...</div>] : []),
+        ...renderTree(children, depth + 1)
+      ] : [];
+      return [row, ...childRows];
+    });
+  }
+
+  return <div className="fileWorkspace">
+    <div className="fileActivityBar">
+      <button className="activeDark" title="Explorer"><FolderOpen size={18} /></button>
+    </div>
+    <aside className="fileExplorer">
+      <div className="fileExplorerTop">
+        <strong>Explorer</strong>
+        <button title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
+        <button title="Close files" onClick={onClose}><X size={14} /></button>
       </div>
       {error && <div className="folderError">{error}</div>}
-      <div className="fileEditorLayout">
-        <div className="fileEditorSidebar">
-          <div className="fileEditorSidebarPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
-          <div className="fileEditorSidebarActions">
-            <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && loadEntries(listing.parent)}><ChevronUp size={14} />Up</button>
-            <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && loadEntries(listing.home)}><Home size={14} />Home</button>
-          </div>
-          <div className="fileEditorSidebarList">
-            {listBusy && <div className="folderEmpty">Loading...</div>}
-            {!listBusy && listing?.entries.length === 0 && <div className="folderEmpty">Empty</div>}
-            {!listBusy && listing?.entries.map((entry) => (
-              <button
-                key={entry.path}
-                className={`fileEntryRow${openedFile?.path === entry.path ? " active" : ""}`}
-                onClick={() => entry.kind === "dir" ? loadEntries(entry.path) : openFile(entry.path)}
-              >
-                {entry.kind === "dir" ? <FolderOpen size={14} /> : <FileText size={14} />}
-                <span>{entry.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="fileEditorContent">
-          {openedFile ? <>
-            <div className="fileEditorContentHeader">
-              <span className="fileEditorFilePath" title={openedFile.path}>{openedFile.path}</span>
-              <button disabled={saving || !isDirty} onClick={saveFile}>
-                <Save size={14} />{saving ? "Saving…" : isDirty ? "Save*" : "Saved"}
-              </button>
-            </div>
-            <textarea
-              className="fileEditorTextarea"
-              value={editContent}
-              onChange={(event) => setEditContent(event.target.value)}
-              spellCheck={false}
-            />
-          </> : <div className="fileEditorEmpty"><FileText size={32} /><span>Select a file to edit</span></div>}
-        </div>
+      <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
+      <div className="fileExplorerActions">
+        <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
+        <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
+        <button disabled={!listing?.path || listBusy} onClick={() => listing?.path && onUseCwd(listing.path)}><Check size={14} />Use cwd</button>
       </div>
-    </div>
+      <div className="fileExplorerList">
+        {listBusy && <div className="folderEmpty">Loading...</div>}
+        {!listBusy && rootEntries.length === 0 && <div className="folderEmpty">Empty</div>}
+        {!listBusy && renderTree(rootEntries)}
+      </div>
+    </aside>
+    <section className="fileEditorSurface">
+      <div className="fileTabs">
+        {openedFile ? <div className={`fileTab${isDirty ? " dirty" : ""}`} title={openedFile.path}>
+          <FileText size={14} />
+          <span>{fileName}</span>
+        </div> : <div className="fileTab muted">Welcome</div>}
+        <div className="fileTabSpacer" />
+        {openedFile && <button disabled={saving || !isDirty} onClick={saveFile}>
+          <Save size={14} />{saving ? "Saving..." : isDirty ? "Save" : "Saved"}
+        </button>}
+      </div>
+      {openedFile ? <>
+        <div className="fileBreadcrumb" title={openedFile.path}>{openedFile.path}</div>
+        <textarea
+          className="fileEditorTextarea"
+          value={editContent}
+          onChange={(event) => setEditContent(event.target.value)}
+          spellCheck={false}
+        />
+        <div className="fileStatusBar">
+          <span>{isDirty ? "Unsaved" : "Saved"}</span>
+          <span>{lineCount} lines</span>
+          <span>UTF-8</span>
+        </div>
+      </> : <div className="fileEditorEmpty"><FileText size={32} /><span>Select a file from Explorer</span></div>}
+    </section>
   </div>;
 }
 
