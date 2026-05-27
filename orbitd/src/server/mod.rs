@@ -21,6 +21,7 @@ pub struct AppState {
 pub fn routes(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/api/v1/backends", get(api::list_backends))
         .route(
             "/api/v1/sessions",
             post(api::create_session).get(api::list_sessions),

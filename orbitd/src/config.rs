@@ -1,8 +1,9 @@
+use crate::adapter::AgentBackends;
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{fs, path::PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub listen: String,
     pub config_dir: PathBuf,
@@ -13,6 +14,8 @@ pub struct Config {
     pub process_path: String,
     pub scrollback_lines: usize,
     pub scrollback_max_bytes: usize,
+    pub backends_path: PathBuf,
+    pub backends: AgentBackends,
 }
 
 impl Default for Config {
@@ -28,6 +31,10 @@ impl Default for Config {
             audit_path: data_dir.join("audit.jsonl"),
             token_path: config_dir.join("token"),
             process_path: std::env::var("PATH").unwrap_or_default(),
+            backends_path: std::env::var("ORBIT_BACKENDS_CONFIG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| config_dir.join("backends.yaml")),
+            backends: AgentBackends::default(),
             config_dir,
             data_dir,
             session_logs_dir,
@@ -40,6 +47,7 @@ impl Default for Config {
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     listen: Option<String>,
+    backends: Option<PathBuf>,
     pty: Option<PtyConfig>,
 }
 
@@ -58,12 +66,16 @@ impl Config {
             if let Some(listen) = file.listen {
                 cfg.listen = listen;
             }
+            if let Some(backends) = file.backends {
+                cfg.backends_path = backends;
+            }
             if let Some(pty) = file.pty {
                 cfg.scrollback_lines = pty.scrollback_lines.unwrap_or(cfg.scrollback_lines);
                 cfg.scrollback_max_bytes =
                     pty.scrollback_max_bytes.unwrap_or(cfg.scrollback_max_bytes);
             }
         }
+        cfg.backends = AgentBackends::load(&cfg.backends_path)?;
         Ok(cfg)
     }
 

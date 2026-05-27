@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use orb_common::{ListSessionsQuery, LogLine, Session, SessionStatus, ToolType};
+use orb_common::{ListSessionsQuery, LogLine, Session, SessionStatus};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{str::FromStr, sync::Mutex};
 
@@ -177,7 +177,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: row.get(0)?,
         name: row.get(1)?,
-        tool: ToolType::from_str(&tool).unwrap(),
+        tool,
         pid: row.get(3)?,
         cwd: std::path::PathBuf::from(row.get::<_, String>(4)?),
         status: SessionStatus::from_str(&status).unwrap(),

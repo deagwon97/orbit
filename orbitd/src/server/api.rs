@@ -7,6 +7,10 @@ use axum::{
 };
 use orb_common::{CreateSessionRequest, ListSessionsQuery, LogsQuery, LogsResponse, StopRequest};
 
+pub async fn list_backends(State(state): State<AppState>) -> Response {
+    Json(state.registry.backends()).into_response()
+}
+
 pub async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,

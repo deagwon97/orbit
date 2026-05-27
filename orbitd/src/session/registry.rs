@@ -1,4 +1,4 @@
-use crate::{adapter, audit, config::Config, db::Db, pty::manager::PtyManager};
+use crate::{audit, config::Config, db::Db, pty::manager::PtyManager};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use orb_common::{CreateSessionRequest, ListSessionsQuery, Session, SessionStatus};
@@ -39,12 +39,16 @@ impl SessionRegistry {
             exit_code: None,
         };
         self.db.create_session(&session)?;
-        let executable = adapter::executable_for(&session.tool);
-        let args = adapter::args_for(&session.tool);
+        let backend = self
+            .config
+            .backends
+            .get(&session.tool)
+            .with_context(|| format!("unsupported backend: {}", session.tool))?;
+        let args: Vec<&str> = backend.args.iter().map(String::as_str).collect();
         let (pty, pid) = match PtyManager::spawn(
             id.clone(),
-            executable,
-            args,
+            &backend.command,
+            &args,
             &cwd,
             &req.env,
             self.db.clone(),
@@ -67,10 +71,14 @@ impl SessionRegistry {
                 timestamp: String::new(),
                 action: "session.create",
                 session_id: Some(&session.id),
-                detail: Some(executable),
+                detail: Some(&backend.command),
             },
         );
         Ok(session)
+    }
+
+    pub fn backends(&self) -> Vec<orb_common::AgentBackend> {
+        self.config.backends.list()
     }
 
     pub fn list_sessions(&self, filter: ListSessionsQuery) -> Result<Vec<Session>> {

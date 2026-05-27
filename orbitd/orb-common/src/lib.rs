@@ -2,51 +2,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
+pub type ToolType = String;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ToolType {
-    Codex,
-    #[serde(rename = "claude")]
-    ClaudeCode,
-    Opencode,
-    Pi,
-}
-
-impl ToolType {
-    pub fn executable(&self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude",
-            Self::Opencode => "opencode",
-            Self::Pi => "pi",
-        }
-    }
-}
-
-impl std::fmt::Display for ToolType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude",
-            Self::Opencode => "opencode",
-            Self::Pi => "pi",
-        };
-        f.write_str(value)
-    }
-}
-
-impl std::str::FromStr for ToolType {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "codex" => Ok(Self::Codex),
-            "claude" => Ok(Self::ClaudeCode),
-            "opencode" => Ok(Self::Opencode),
-            "pi" => Ok(Self::Pi),
-            other => Err(format!("unsupported tool: {other}")),
-        }
-    }
+pub struct AgentBackend {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
