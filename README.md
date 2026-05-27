@@ -1,191 +1,342 @@
-# Orbit 실행 및 빌드 매뉴얼
+# Orbit
 
-Orbit은 `orbitd` 런타임 서버와 Go 기반 `orb` 클라이언트로 구성됩니다. `orbitd`가 세션, PTY, 프로세스, 로그를 소유하고, `orb`는 `orbitd`의 REST/WebSocket API를 직접 호출합니다. 별도 Rust `orbit` CLI 패키지는 없습니다.
+> A lightweight daemon for managing and multiplexing configurable AI coding agent sessions.
 
-## 구성
+Orbit decouples AI coding agent sessions from your terminal. The `orbitd` daemon owns all PTY processes, sessions, and logs. The `orb` client (TUI or CLI) connects via REST/WebSocket — you can detach, reattach, and inspect sessions independently of your terminal lifetime.
 
-```text
-orbitd/  Rust daemon 서버와 Rust 공용 API 타입
-orb/     Orbit 로컬 클라이언트, 현재 Go Bubble Tea TUI
-web/     웹 UI 실험/개발 영역
+## Features
+
+- **Session management** — Create, list, attach, stop, and delete coding agent sessions.
+- **Detach / reattach** — Start a session, detach with `Ctrl-]`, and reconnect later from any terminal.
+- **Triple client** — Full-featured [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI, a CLI interface, and a **web UI** (React + xterm.js).
+- **WebSocket attach** — Raw PTY I/O relay with automatic terminal color adaptation (light/dark background detection).
+- **Scrollback + logs** — Sessions keep a configurable scrollback buffer; logs are persisted in-memory and as raw files.
+- **Configurable agent backends** — `orbitd` reads backend command definitions from YAML, while keeping `codex`, `claude`, `opencode`, and `pi` defaults.
+- **REST API + filesystem API** — JSON API for sessions, plus a web backend proxy that adds directory browsing and folder creation.
+- **Web terminal** — Browser-based xterm.js attach with folder picker for working directory selection.
+- **Audit trail** — All session lifecycle events are recorded to `audit.jsonl`.
+
+## Architecture
+
+```
+Terminal (orb TUI/CLI)         Browser (web UI)
+       |                             |
+       | REST: sessions CRUD, logs   | REST: sessions CRUD, logs
+       | WebSocket: attach           | WebSocket: attach (relayed)
+       v                             v
+   orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
+       |                      |  Proxies /api/v1/sessions/* + /api/v1/backends
+       |                      |  Adds /api/v1/fs/dirs (browse/create dirs)
+       |                      v
+       +-------> configured agent backends (child processes)
+       |
+       | In-memory SQLite (sessions + logs)
+       | Raw log files (./tmp/<id>.log)
+       | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-`orbitd/orb-common/`은 daemon 내부 Rust 공용 타입 crate이고, `orbitd/API.md`는 현재 REST/WebSocket API 요약입니다.
+Only `orbitd` owns the PTY and child processes. The TUI, CLI, and web UI are all API clients. The web backend acts as a reverse proxy, forwarding session and backend API calls to `orbitd` while adding its own filesystem endpoints for directory browsing.
 
-## 사전 준비
+## Quick Start
 
-- Rust toolchain: `orbitd` 빌드 및 실행에 필요
-- Go 1.23 이상: TUI 실행 또는 빌드에 필요
-- Node.js 및 npm: 웹 프론트엔드/백엔드 실행 또는 빌드에 필요
-- 사용할 도구 바이너리: `codex`, `claude`, `opencode`, `pi` 중 필요한 항목이 PATH에 있어야 함
+### 1. Prerequisites
 
-## 런타임 서버 실행
+- **Rust toolchain** — for building `orbitd`
+- **Go 1.23+** — for building the `orb` client
+- **Node.js + npm** — optional, for the web UI
+- Target backend commands on `PATH`, or absolute command paths in the backend YAML
 
-먼저 `orbitd` 서버를 실행합니다.
+### 2. Build & start the daemon
 
 ```bash
-cd /data/private/orbit/orbitd
+cd orbitd
 cargo run -p orbitd
 ```
 
-서버는 기본적으로 `127.0.0.1:7777`에서 실행됩니다. 최초 실행 시 클라이언트 인증에 필요한 토큰 파일이 `~/.config/orbit/token`에 생성됩니다. 세션 메타데이터와 REST 로그는 파일 DB에 저장하지 않고 `orbitd` 프로세스 메모리에만 유지되며, `orbitd`가 종료되면 모두 사라집니다. 원본 세션 출력 로그는 `orbitd` 실행 위치 기준 `./tmp/<session-id>.log`에 저장됩니다.
+The server starts on `127.0.0.1:7777` by default. It uses these paths:
 
-설정 파일은 `~/.config/orbit/config.toml`에 둘 수 있습니다.
+| Path | Purpose |
+|------|---------|
+| `~/.config/orbit/token` | Bearer token for client auth |
+| `~/.config/orbit/config.toml` | Optional config file |
+| `~/.local/share/orbit/audit.jsonl` | Session audit trail |
+
+Session metadata and logs are stored in an in-memory SQLite database — **everything is lost when `orbitd` exits**. Raw PTY output is also written to `./tmp/<session-id>.log` for offline inspection.
+
+### 3. Build & run the client
+
+```bash
+cd orb
+go run .              # launch the TUI
+```
+
+Or use the CLI:
+
+```bash
+go build -o orb .
+./orb ps              # list running sessions
+./orb backends        # list backends exposed by orbitd
+./orb run codex       # create a session and attach
+```
+
+## Usage
+
+### TUI
+
+```
+┌──────────────────────────────────────────────────┐
+│ Orb Sessions  running                             │
+│                                                   │
+│  ID           NAME           TOOL        STATUS   │
+│ > abc12345    codex-abc12   codex       running   │
+│   def67890    ...           claude      running   │
+│                                                   │
+│ enter/a attach | n create/run | x remove          │
+│ l logs | tab toggle filter | r refresh | q quit   │
+│ Ctrl-]/Ctrl-\ detach (while attached)             │
+└──────────────────────────────────────────────────┘
+```
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or `k`/`j` | Move selection |
+| `enter` or `a` | Attach to selected session |
+| `n` | Open session creation form |
+| `x` | Delete selected session |
+| `l` | Show last 100 log chunks for selected session |
+| `tab` | Toggle between running / all sessions filter |
+| `r` | Refresh session list |
+| `q` or `Ctrl-C` | Quit |
+
+**Session creation form** — navigate with `tab`/`↑`/`↓`, edit with typing, toggle with `←`/`→`:
+
+| Field | Description |
+|-------|-------------|
+| `tool` | Backend ID from `orbitd` (←/→ to cycle) |
+| `name` | Optional session name |
+| `cwd` | Optional working directory (defaults to current dir) |
+| `env` | Space-separated `KEY=VALUE` pairs |
+| `detach` | `true` → return to list; `false` → attach immediately |
+
+**When attached**: press `Ctrl-]` or `Ctrl-\` to detach while keeping the session running. If your terminal intercepts those keys, `Ctrl-G`, `Ctrl-^`, or `Ctrl-_` also work.
+
+### CLI
+
+```bash
+orb                    # launch TUI (no arguments)
+orb backends           # list agent backends available from orbitd
+orb ps                 # list running sessions
+orb ps --all           # list all sessions (including stopped/crashed)
+orb ps -a              # shorthand for --all
+
+orb run codex          # create a session and attach
+orb run --detach codex # create without attaching
+orb run --name my-session --cwd /path/to/project codex
+orb run -e KEY=VALUE -e FOO=bar codex
+
+orb attach <id>        # attach to session by ID or name
+orb logs <id>          # print all logs
+orb logs --tail 50 <id>   # last 50 log chunks
+orb logs --raw <id>    # print raw PTY output (no ANSI filtering)
+
+orb rm <id>...         # delete one or more sessions by ID or name
+```
+
+### API
+
+Base: `http://127.0.0.1:7777` — all endpoints except `/healthz` require `Authorization: Bearer <token>`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/healthz` | Health check (no auth) |
+| `GET` | `/api/v1/backends` | List agent backends available to `orbitd` |
+| `POST` | `/api/v1/sessions` | Create a session |
+| `GET` | `/api/v1/sessions` | List sessions (`?status=running`, `?tool=codex`) |
+| `GET` | `/api/v1/sessions/:id` | Get session by ID or name |
+| `POST` | `/api/v1/sessions/:id/stop` | Stop a running session |
+| `DELETE` | `/api/v1/sessions/:id` | Delete session (kills process if running) |
+| `GET` | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks |
+| `GET` | `/api/v1/sessions/:id/attach` | WebSocket upgrade for live attach |
+
+**Create session** request body:
+
+```json
+{
+  "tool": "codex",
+  "name": "my-session",
+  "cwd": "/home/user/project",
+  "env": { "KEY": "VALUE" }
+}
+```
+
+The `tool` field is a backend ID from `/api/v1/backends`.
+
+**WebSocket attach** — JSON-framed messages:
+
+```
+→ { "type": "stdin",  "data": "<base64>" }
+→ { "type": "resize", "cols": 120, "rows": 40 }
+→ { "type": "detach" }
+← { "type": "stdout", "data": "<base64>" }
+```
+
+## Configuration
+
+`orbitd` reads from `~/.config/orbit/config.toml` if it exists. Example:
 
 ```toml
 listen = "127.0.0.1:7777"
+backends = "/home/user/.config/orbit/backends.yaml"
 
 [pty]
 scrollback_lines = 10000
 scrollback_max_bytes = 104857600
 ```
 
-## TUI 실행
+Default paths and runtime settings:
 
-`orbitd`가 실행 중인 상태에서 다른 터미널을 열고 TUI를 실행합니다.
+| Setting | Default |
+|---------|---------|
+| `listen` | `127.0.0.1:7777` |
+| `config_dir` | `~/.config/orbit` |
+| `data_dir` | `~/.local/share/orbit` |
+| `session_logs_dir` | `./tmp` (relative to `orbitd` working dir) |
+| `audit_path` | `~/.local/share/orbit/audit.jsonl` |
+| `token_path` | `~/.config/orbit/token` |
+| `process_path` | `$PATH` from server environment |
+| `scrollback_lines` | 10,000 |
+| `scrollback_max_bytes` | 100 MB |
+| `backends_path` | `~/.config/orbit/backends.yaml` or `$ORBIT_BACKENDS_CONFIG` |
 
-```bash
-cd /data/private/orbit/orb
-go run .
+## Agent Backends
+
+By default, `orbitd` exposes these backend IDs:
+
+| Backend ID | Command | Extra args |
+|------------|---------|------------|
+| `codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| `claude` | `claude` | `--dangerously-skip-permissions` |
+| `opencode` | `opencode` | _(none)_ |
+| `pi` | `pi` | _(none)_ |
+
+To replace the defaults, point `orbitd` at a YAML file with either `ORBIT_BACKENDS_CONFIG=/path/to/backends.yaml` or the `backends` key in `~/.config/orbit/config.toml`.
+
+```yaml
+backends:
+  - id: aider
+    name: Aider
+    command: aider
+    args:
+      - --yes-always
+  - id: local-agent
+    command: /usr/local/bin/local-agent
+    args: ["--mode", "workspace"]
 ```
 
-빌드된 바이너리를 실행하려면 다음을 사용합니다.
+The TUI, CLI, and web UI read the available backend list from `GET /api/v1/backends`.
+
+## Build from Source
+
+### Daemon (Rust)
 
 ```bash
-cd /data/private/orbit/orb
+cd orbitd
+cargo build --workspace      # full workspace
+cargo build -p orbitd         # daemon only
+cargo build -p orbitd --release
+# Binary: target/debug/orbitd or target/release/orbitd
+```
+
+### Client (Go)
+
+```bash
+cd orb
 go build -o orb .
-./orb
+# Binary: ./orb
 ```
 
-## TUI 기능
-
-```text
-enter/a  attach
-n        run/create session
-x        rm/delete
-l        logs
-tab      running/all filter
-r        refresh
-q        quit
-```
-
-새 세션 생성 화면에서 지원하는 도구 값은 다음과 같습니다.
-
-- `codex`
-- `claude`
-- `opencode`
-- `pi`
-
-`env` 값은 `KEY=VALUE` 형식으로 공백 구분해 입력합니다. `detach=false`로 생성하면 세션 생성 직후 TUI가 직접 WebSocket attach를 시작합니다. attach 중 `Ctrl-]` 또는 `Ctrl-\`를 누르면 세션은 유지한 채 detach합니다. 터미널이 키를 가로채는 경우 `Ctrl-G`, `Ctrl-^`, `Ctrl-_`도 detach로 처리합니다.
-
-## CLI 실행
+### Verification
 
 ```bash
-./orb run codex
+cd orbitd && cargo check --workspace
+cd orb    && go test ./... && go build -o orb .
 ```
 
-`orb run <tool>`은 세션 생성 직후 자동으로 attach합니다. 세션만 만들고 attach하지 않으려면 `--detach`를 사용합니다.
+### Web UI (optional)
 
-## Rust 빌드
+The web client consists of two parts that run together:
 
-전체 Rust 워크스페이스를 빌드합니다.
+- **Backend** (Fastify/Node.js on port 3001) — reverse proxy to `orbitd`.
+  Proxies `orbitd` session and backend endpoints and adds:
+  - `GET /api/v1/fs/dirs?path=...` — browse server directories
+  - `POST /api/v1/fs/dirs` — create a new empty directory
+- **Frontend** (React + xterm.js + Vite) — browser-based session UI with
+  xterm.js terminal, folder picker, session list, log viewer.
 
 ```bash
-cd /data/private/orbit/orbitd
-cargo build --workspace
+cd web/backend   && npm install && npm run dev
+cd web/frontend  && npm install && npm run dev
 ```
 
-런타임 서버만 dev 프로파일로 빌드합니다.
+The web backend accepts the following environment variables:
 
-```bash
-cargo build -p orbitd
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3001` | Web backend listen port |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | Upstream orbitd URL |
+| `ORBIT_TOKEN` | `""` | Bearer token for orbitd auth |
+
+## systemd Deployment
+
+Create a service file at `/etc/systemd/system/orbitd.service`:
+
+```ini
+[Unit]
+Description=Orbit daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/orbit/orbitd
+Restart=on-failure
+Environment=PATH=/usr/local/bin:/usr/bin:/home/your-user/.local/bin
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-release 바이너리가 필요하면 `--release`를 붙입니다.
+Then:
 
 ```bash
 cargo build -p orbitd --release
-```
-
-빌드 결과는 프로파일에 따라 다음 위치에 생성됩니다.
-
-```bash
-target/debug/orbitd    # cargo build -p orbitd
-target/release/orbitd  # cargo build -p orbitd --release
-```
-
-## 검증
-
-```bash
-cd /data/private/orbit/orbitd
-cargo check --workspace
-
-cd /data/private/orbit/orb
-go test ./...
-go build -o orb .
-```
-
-## 웹 백엔드 실행 및 빌드
-
-```bash
-cd /data/private/orbit/web/backend
-npm install
-npm run dev
-```
-
-```bash
-npm run build
-npm run start
-```
-
-## 웹 프론트엔드 실행 및 빌드
-
-```bash
-cd /data/private/orbit/web/frontend
-npm install
-npm run dev
-```
-
-```bash
-npm run build
-npm run preview
-```
-
-## 일반적인 실행 순서
-
-터미널 1:
-
-```bash
-cd /data/private/orbit/orbitd
-cargo run -p orbitd
-```
-
-터미널 2:
-
-```bash
-cd /data/private/orbit/orb
-go run .
-```
-
-## 문제 해결
-
-TUI에서 인증에 실패하면 `orbitd`를 한 번 먼저 실행해 `~/.config/orbit/token`이 생성되어 있는지 확인합니다.
-
-`orbitd`가 이미 실행 중인데 TUI 연결이 실패하면 `127.0.0.1:7777` 포트와 서버 로그를 확인합니다.
-
-새 세션 생성이 실패하면 선택한 도구 바이너리가 PATH에 있는지 확인합니다.
-
-## systemd 실행
-
-systemd로 `orbitd`를 실행할 때는 `codex`, `claude`, `opencode`, `pi`가 있는 경로를 `PATH`에 명시해야 합니다. 예시는 `deploy/orbitd.service`에 있습니다.
-
-```bash
-cd /data/private/orbit
-cargo build -p orbitd --release --manifest-path orbitd/Cargo.toml
-sudo install -m 0755 orbitd/target/release/orbitd /opt/orbit/orbitd
-sudo install -m 0644 deploy/orbitd.service /etc/systemd/system/orbitd.service
+sudo install -m 0755 target/release/orbitd /opt/orbit/orbitd
 sudo systemctl daemon-reload
-sudo systemctl restart orbitd
+sudo systemctl enable --now orbitd
 ```
 
-서비스 파일의 `Environment=PATH=...` 값은 `orbitd`가 도구 프로세스를 만들 때 그대로 사용됩니다.
+> The `PATH` environment variable is critical when backend commands are not absolute paths. `orbitd` uses it to locate configured backend commands when spawning sessions.
+
+## Session Lifecycle
+
+```
+created  →  running  →  stopped    (normal exit)
+                      →  crashed    (non-zero exit / error)
+                      →  removed    (DELETE API / TUI rm)
+```
+
+Sessions are stored in an in-memory SQLite database and are **not persisted** across `orbitd` restarts. Raw PTY output files (`./tmp/<id>.log`) survive a restart but cannot be reattached.
+
+## Troubleshooting
+
+| Problem | Check |
+|---------|-------|
+| TUI auth failure | Ensure `~/.config/orbit/token` exists — start `orbitd` once to generate it |
+| Connection refused | Is `orbitd` running on `127.0.0.1:7777`? Check server logs |
+| Web UI can't connect | Is the web backend running on port 3001? Is `ORBITD_URL` correct? Is the token set via `ORBIT_TOKEN` env or entered in the login screen? |
+| Session creation fails | Is the backend ID listed by `orb backends`? Is its command on `PATH`, or configured as an absolute path? |
+| "Cannot attach" | Session may have already exited and been cleaned up |
+| Build errors (Rust) | Ensure `pkg-config` and `libdbus-1-dev` are installed (`portable-pty` dependency) |
+
+## License
+
+MIT
