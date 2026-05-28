@@ -19,41 +19,67 @@ Orbit decouples AI coding agent sessions from your terminal. The `orbitd` daemon
 ## Architecture
 
 ```
-Terminal (orb TUI/CLI)         Browser (web UI)
-       |                             |
-       | REST: sessions CRUD, logs   | REST: sessions CRUD, logs
-       | WebSocket: attach           | WebSocket: attach (relayed)
-       v                             v
-   orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
-       |                      |  /api/v1/fs/*, and WebSocket attach
-       |                      v
-       +-------> configured agent backends (child processes)
-       |
-       | In-memory SQLite (sessions + logs)
-       | Raw log files (./tmp/<id>.log)
-       | JSONL audit log (~/.local/share/orbit/audit.jsonl)
+Terminal                    Browser (web UI)
+(orb TUI/CLI)                      |
+       |                   web/backend (Fastify)
+       |                   (same-origin reverse proxy)
+       |                           |
+       |  REST: sessions CRUD, logs, filesystem
+       |  WebSocket: attach
+       v
+       orbitd (Rust + axum)
+              |
+              +-------> configured agent backends (child processes)
+              |
+              | In-memory SQLite (sessions + logs)
+              | Raw log files (./tmp/<id>.log)
+              | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-Only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, and web UI are all API clients. The web backend acts as a reverse proxy, forwarding session, backend, filesystem, and WebSocket attach calls to `orbitd` so the browser talks to a single same-origin API.
+Only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, and web UI are all API clients — `orb` and `web/backend` both call `orbitd` directly via the same REST/WebSocket API. The web backend acts as a same-origin reverse proxy so the browser can reach `orbitd` without cross-origin issues.
 
 ## Quick Start
 
-### 1. Prerequisites
+The install script requires root to write to `/usr/local/bin` and register the
+systemd service — run it with `sudo`.
 
-- **Rust toolchain** — for building `orbitd`
-- **Go 1.23+** — for building the `orb` client
-- **Node.js + npm** — optional, for the web UI
-- Target backend commands on `PATH`, or absolute command paths in the backend YAML
-
-### 2. Build & start the daemon
+### Option A — Pre-built binaries (fastest)
 
 ```bash
-cd orbitd
-cargo run -p orbitd
+git clone https://github.com/deagwon97/orbit.git
+cd orbit
+sudo bash install/install.sh --prebuilt
 ```
 
-The server starts on `127.0.0.1:7777` by default. It uses these paths:
+Downloads the latest release binaries for your architecture, installs them to
+`/usr/local/bin`, and registers `orbitd` as a systemd service that starts on boot.
+
+### Option B — Build from source
+
+Requires **Rust** ([rustup.rs](https://rustup.rs)) and **Go 1.23+** ([go.dev/dl](https://go.dev/dl/))
+installed for your user account.
+
+```bash
+git clone https://github.com/deagwon97/orbit.git
+cd orbit
+sudo bash install/install.sh
+```
+
+The build runs as the original user (via `SUDO_USER`) so your `cargo` and `go`
+installations are found correctly. Binaries are then installed to `/usr/local/bin`
+and the systemd service is registered.
+
+### After install
+
+`orbitd` is already running as a system service. Connect with the client:
+
+```bash
+orb            # launch the TUI
+orb ps         # list running sessions
+orb run codex  # create a session and attach
+```
+
+`orbitd` listens on `127.0.0.1:7777` and writes these files:
 
 | Path | Purpose |
 |------|---------|
@@ -61,22 +87,17 @@ The server starts on `127.0.0.1:7777` by default. It uses these paths:
 | `~/.config/orbit/config.toml` | Optional config file |
 | `~/.local/share/orbit/audit.jsonl` | Session audit trail |
 
-Session metadata and logs are stored in an in-memory SQLite database — **everything is lost when `orbitd` exits**. Raw PTY output is also written to `./tmp/<session-id>.log` for offline inspection.
+### Install script options
 
-### 3. Build & run the client
-
-```bash
-cd orb
-go run .              # launch the TUI
 ```
+sudo bash install/install.sh [OPTIONS]
 
-Or use the CLI:
-
-```bash
-go build -o orb .
-./orb ps              # list running sessions
-./orb backends        # list backends exposed by orbitd
-./orb run codex       # create a session and attach
+  -p, --prebuilt          Download pre-built binaries from GitHub releases
+  -b, --build             Build from source (default)
+  -v, --version VERSION   Specific release tag, e.g. v0.2.0 (default: latest)
+      --install-dir DIR   Override install directory (default: /usr/local/bin)
+      --no-systemd        Skip systemd service registration
+  -h, --help              Show all options
 ```
 
 ## Usage
@@ -84,7 +105,7 @@ go build -o orb .
 ### TUI
 
 ```
-┌──────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────┐
 │ Orb Sessions  running                             │
 │                                                   │
 │  ID           NAME           TOOL        STATUS   │
@@ -94,7 +115,7 @@ go build -o orb .
 │ enter/a attach | n create/run | x remove          │
 │ l logs | tab toggle filter | r refresh | q quit   │
 │ Ctrl-]/Ctrl-\ detach (while attached)             │
-└──────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────┘
 ```
 
 | Key | Action |
@@ -297,35 +318,47 @@ The web backend accepts the following environment variables:
 | `ORBITD_URL` | `http://127.0.0.1:7777` | Upstream orbitd URL |
 | `ORBIT_TOKEN` | `""` | Bearer token for orbitd auth |
 
-## systemd Deployment
+## systemd Service
 
-Create a service file at `/etc/systemd/system/orbitd.service`:
+`install/install.sh` registers `orbitd` as a system service automatically.
+The generated unit file (`/etc/systemd/system/orbitd.service`) looks like:
 
 ```ini
 [Unit]
-Description=Orbit daemon
+Description=AI Agent Orbit
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/orbit/orbitd
+User=ubuntu
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/orbitd
 Restart=on-failure
-Environment=PATH=/usr/local/bin:/usr/bin:/home/your-user/.local/bin
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Then:
+`User` is set to the invoking user (not root, even when `sudo` is used).
+Backend commands that live outside the standard `PATH` (e.g. under `~/.nvm`)
+should use absolute paths in `backends.yaml` — see [Agent Backends](#agent-backends).
+
+**Common service commands:**
 
 ```bash
-cargo build -p orbitd --release
-sudo install -m 0755 target/release/orbitd /opt/orbit/orbitd
-sudo systemctl daemon-reload
-sudo systemctl enable --now orbitd
+sudo systemctl status orbitd      # check status
+sudo systemctl restart orbitd     # restart after config change
+sudo systemctl stop orbitd        # stop the daemon
+sudo systemctl disable orbitd     # remove from autostart
+journalctl -u orbitd -f           # follow logs
 ```
 
-> The `PATH` environment variable is critical when backend commands are not absolute paths. `orbitd` uses it to locate configured backend commands when spawning sessions.
+To skip service registration during install, pass `--no-systemd`:
+
+```bash
+bash install/install.sh --no-systemd
+```
 
 ## Session Lifecycle
 
@@ -350,4 +383,4 @@ Sessions are stored in an in-memory SQLite database and are **not persisted** ac
 
 ## License
 
-MIT
+Apache 2.0
