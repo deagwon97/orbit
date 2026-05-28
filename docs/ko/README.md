@@ -19,23 +19,24 @@ Orbit은 AI 코딩 에이전트 세션을 터미널 수명과 분리한다. `orb
 ## 아키텍처
 
 ```
-Terminal (orb TUI/CLI)         Browser (web UI)
-       |                             |
-       | REST: sessions CRUD, logs   | REST: sessions CRUD, logs
-       | WebSocket: attach           | WebSocket: attach (relayed)
-       v                             v
-   orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
-       |                      |  /api/v1/fs/*, and WebSocket attach
-       |                      v
-       +-------> configured agent backends (child processes)
-       |
-       | In-memory SQLite (sessions + logs)
-       | Raw log files (./tmp/<id>.log)
-       | JSONL audit log (~/.local/share/orbit/audit.jsonl)
+Terminal                    Browser (web UI)
+(orb TUI/CLI)                      |
+       |                   web/backend (Fastify)
+       |                   (동일 출처 리버스 프록시)
+       |                           |
+       |  REST: sessions CRUD, logs, filesystem
+       |  WebSocket: attach
+       v
+       orbitd (Rust + axum)
+              |
+              +-------> configured agent backends (child processes)
+              |
+              | In-memory SQLite (sessions + logs)
+              | Raw log files (./tmp/<id>.log)
+              | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
-`orbitd`만 PTY, 자식 프로세스, 파일시스템 API를 소유한다. TUI, CLI, 웹 UI는 모두 API 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션, 백엔드, 파일시스템, WebSocket attach 호출을 `orbitd`에 전달하고, 브라우저에는 동일 출처 API를 제공한다.
+`orbitd`만 PTY, 자식 프로세스, 파일시스템 API를 소유한다. TUI, CLI, 웹 UI는 모두 API 클라이언트다 — `orb`와 `web/backend` 모두 동일한 REST/WebSocket API로 `orbitd`를 직접 호출한다. 웹 백엔드는 브라우저가 cross-origin 문제 없이 `orbitd`에 접근할 수 있도록 동일 출처 리버스 프록시 역할을 한다.
 
 ## 빠른 시작
 
@@ -84,7 +85,7 @@ go build -o orb .
 ### TUI
 
 ```
-┌──────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────┐
 │ Orb Sessions  running                             │
 │                                                   │
 │  ID           NAME           TOOL        STATUS   │
@@ -94,7 +95,7 @@ go build -o orb .
 │ enter/a attach | n create/run | x remove          │
 │ l logs | tab toggle filter | r refresh | q quit   │
 │ Ctrl-]/Ctrl-\ detach (while attached)             │
-└──────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────┘
 ```
 
 | 키 | 동작 |
@@ -350,4 +351,4 @@ created  →  running  →  stopped    (정상 종료)
 
 ## 라이선스
 
-MIT
+Apache 2.0

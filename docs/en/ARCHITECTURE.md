@@ -3,20 +3,21 @@
 Orbit consists of a central runtime server `orbitd` (Rust) and a Go client `orb` (TUI + CLI). The TUI implements session CRUD, log retrieval, and WebSocket attach directly.
 
 ```
-Terminal (orb TUI/CLI)         Browser (web UI)
-       |                             |
-       | REST: sessions CRUD, logs   | REST: sessions CRUD, logs
-       | WebSocket: attach           | WebSocket: attach (relayed)
-       v                             v
-   orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
-       |                      |  /api/v1/fs/*, and WebSocket attach
-       |                      v
-       +-------> configured agent backends (child processes)
-       |
-       | In-memory SQLite (sessions + logs)
-       | Raw log files (./tmp/<session-id>.log)
-       | JSONL audit log (~/.local/share/orbit/audit.jsonl)
+Terminal                    Browser (web UI)
+(orb TUI/CLI)                      |
+       |                   web/backend (Fastify)
+       |                   (same-origin reverse proxy)
+       |                           |
+       |  REST: sessions CRUD, logs, filesystem
+       |  WebSocket: attach
+       v
+       orbitd (Rust + axum)
+              |
+              +-------> configured agent backends (child processes)
+              |
+              | In-memory SQLite (sessions + logs)
+              | Raw log files (./tmp/<session-id>.log)
+              | JSONL audit log (~/.local/share/orbit/audit.jsonl)
 ```
 
 Core principle: only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, and web UI are all API clients. The web backend is a reverse proxy that forwards session, backend, filesystem, and WebSocket attach calls to `orbitd`.

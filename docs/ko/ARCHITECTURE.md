@@ -3,20 +3,21 @@
 Orbit은 중앙 런타임 서버 `orbitd`(Rust)와 Go 클라이언트 `orb`(TUI + CLI)로 구성된다. TUI가 세션 CRUD, 로그 조회, WebSocket attach를 모두 직접 구현한다.
 
 ```
-Terminal (orb TUI/CLI)         Browser (web UI)
-       |                             |
-       | REST: sessions CRUD, logs   | REST: sessions CRUD, logs
-       | WebSocket: attach           | WebSocket: attach (relayed)
-       v                             v
-   orbitd (Rust + axum)    web/backend (Fastify reverse proxy)
-       |                      |  Proxies /api/v1/sessions/*, /api/v1/backends,
-       |                      |  /api/v1/fs/*, and WebSocket attach
-       |                      v
-       +-------> configured agent backends (child processes)
-       |
-       | In-memory SQLite (sessions + logs)
-       | Raw log files (./tmp/<session-id>.log)
-       | JSONL audit log (~/.local/share/orbit/audit.jsonl)
+터미널                      브라우저 (web UI)
+(orb TUI/CLI)                      |
+       |                   web/backend (Fastify)
+       |                   (동일 출처 리버스 프록시)
+       |                           |
+       |  REST: sessions CRUD, logs, filesystem
+       |  WebSocket: attach
+       v
+       orbitd (Rust + axum)
+              |
+              +-------> 설정된 에이전트 백엔드 (자식 프로세스)
+              |
+              | 인메모리 SQLite (세션 + 로그)
+              | Raw 로그 파일 (./tmp/<session-id>.log)
+              | JSONL 감사 로그 (~/.local/share/orbit/audit.jsonl)
 ```
 
 핵심 원칙: `orbitd`만 PTY, 자식 프로세스, 파일시스템 API를 소유한다. TUI, CLI, 웹 UI는 모두 동일한 API를 호출하는 클라이언트다. 웹 백엔드는 리버스 프록시 역할을 하여 세션, 백엔드, 파일시스템, WebSocket attach 호출을 `orbitd`에 전달한다.
