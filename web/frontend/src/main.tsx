@@ -1269,8 +1269,10 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     if (!term) return;
     const rect = target.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-    term.scrollToLine(Math.round(term.buffer.active.baseY * ratio));
-    autoFollowRef.current = term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
+    const maxLine = term.buffer.active.baseY;
+    const targetLine = Math.round(maxLine * ratio);
+    term.scrollToLine(targetLine);
+    autoFollowRef.current = maxLine - targetLine <= 1;
     updateScrollInfo(term);
   }
 
@@ -1427,11 +1429,13 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
         className="terminalScrollRail"
         onPointerDown={(event) => {
           if (!scrollInfo.scrollable) return;
+          event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
           scrollToRatio(event.clientY, event.currentTarget);
         }}
         onPointerMove={(event) => {
           if (!scrollInfo.scrollable || event.buttons !== 1) return;
+          event.preventDefault();
           scrollToRatio(event.clientY, event.currentTarget);
         }}
       >
