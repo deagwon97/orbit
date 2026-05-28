@@ -1253,6 +1253,7 @@ function SessionPane(props: {
 function Terminal({ session, reload }: { session: ConnectedSession; reload: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
+  const autoFollowRef = useRef(true);
   const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
 
   function updateScrollInfo(term: XTerm) {
@@ -1269,6 +1270,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const rect = target.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
     term.scrollToLine(Math.round(term.buffer.active.baseY * ratio));
+    autoFollowRef.current = term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
     updateScrollInfo(term);
   }
 
@@ -1294,7 +1296,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`);
     let detached = false;
-    let autoFollow = true;
+    autoFollowRef.current = true;
     let userScrollIntent = false;
     let userScrollTimer: number | undefined;
 
@@ -1309,7 +1311,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const sendResize = () => send({ type: "resize", cols: term.cols, rows: term.rows });
     const resize = () => {
       fit.fit();
-      if (autoFollow) term.scrollToBottom();
+      if (autoFollowRef.current) term.scrollToBottom();
       sendResize();
       updateScrollInfo(term);
     };
@@ -1318,22 +1320,22 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
 
     const isAtBottom = () => term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
     const followBottom = () => {
-      if (!autoFollow) return;
+      if (!autoFollowRef.current) return;
       requestAnimationFrame(() => term.scrollToBottom());
     };
     const scroll = term.onScroll((viewportY) => {
       updateScrollInfo(term);
       if (term.buffer.active.baseY - viewportY <= 1) {
-        autoFollow = true;
+        autoFollowRef.current = true;
       } else if (userScrollIntent) {
-        autoFollow = false;
+        autoFollowRef.current = false;
       }
     });
     const markUserScroll = (event: Event) => {
       userScrollIntent = true;
-      if (event instanceof WheelEvent && event.deltaY < 0) autoFollow = false;
+      if (event instanceof WheelEvent && event.deltaY < 0) autoFollowRef.current = false;
       window.clearTimeout(userScrollTimer);
-      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 300);
+      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 800);
     };
     let touchLastY = 0;
     let touchScrollRemainder = 0;
@@ -1357,11 +1359,11 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       if (lines !== 0) {
         term.scrollLines(lines);
         touchScrollRemainder -= lines;
-        if (lines < 0) autoFollow = false;
+        if (!isAtBottom()) autoFollowRef.current = false;
         updateScrollInfo(term);
       }
       window.clearTimeout(userScrollTimer);
-      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 300);
+      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 800);
     };
     host.addEventListener("wheel", markUserScroll, { passive: true });
     host.addEventListener("touchstart", onTerminalTouchStart, { passive: true });
@@ -1384,7 +1386,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       try {
         const msg = JSON.parse(await websocketText(event.data));
         if (msg.type === "stdout") {
-          if (isAtBottom()) autoFollow = true;
+          if (isAtBottom()) autoFollowRef.current = true;
           term.write(decodeBytes(msg.data), () => {
             followBottom();
             updateScrollInfo(term);
