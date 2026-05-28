@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { marked } from "marked";
@@ -33,6 +33,15 @@ import { csharp, kotlin } from "@codemirror/legacy-modes/mode/clike";
 import "xterm/css/xterm.css";
 import "./styles/app.css";
 
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch((err) => {
+      console.warn("service worker registration failed", err);
+    });
+  });
+}
+
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "ico", "avif", "tiff", "tif"]);
 const MARKDOWN_EXTS = new Set(["md", "mdx", "markdown"]);
 
@@ -49,8 +58,8 @@ function getFileViewKind(path: string): FileViewKind {
   return "code";
 }
 
-function rawFileUrl(path: string): string {
-  return `/api/v1/fs/raw?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token())}`;
+function rawFileUrl(path: string, connection: OrbitConnection): string {
+  return `/api/v1/fs/raw?path=${encodeURIComponent(path)}&token=${encodeURIComponent(connection.token)}&orbitd=${encodeURIComponent(connection.url)}`;
 }
 
 const EXT_LANG: Record<string, string> = {
@@ -228,6 +237,8 @@ type Session = {
 };
 
 type AgentBackend = { id: string; name: string; command: string; args: string[] };
+type OrbitConnection = { id: string; label: string; url: string; token: string };
+type ConnectedSession = Session & { connection: OrbitConnection; key: string };
 type DirListing = {
   cwd: string;
   home: string;
@@ -253,13 +264,48 @@ const defaultBackends: AgentBackend[] = [
   { id: "pi", name: "pi", command: "pi", args: [] }
 ];
 
-function token() {
-  return localStorage.getItem("orbit.token") || "";
+function normalizeOrbitdUrl(value: string) {
+  return value.trim().replace(/\/+$/, "");
 }
 
-async function api(path: string, init: RequestInit = {}) {
+function makeId() {
+  return crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function connectionKey(connectionId: string, sessionId: string) {
+  return `${connectionId}:${sessionId}`;
+}
+
+function savedConnections() {
+  const raw = localStorage.getItem("orbit.connections");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as OrbitConnection[];
+      return parsed.filter((item) => item.id && item.url && typeof item.token === "string");
+    } catch {
+      return [];
+    }
+  }
+  const token = localStorage.getItem("orbit.token") || "";
+  if (!token) return [];
+  return [{
+    id: makeId(),
+    label: "Default",
+    url: "http://127.0.0.1:7777",
+    token
+  }];
+}
+
+function persistConnections(connections: OrbitConnection[]) {
+  localStorage.setItem("orbit.connections", JSON.stringify(connections));
+  localStorage.removeItem("orbit.token");
+}
+
+async function api(path: string, init: RequestInit = {}, connection?: OrbitConnection) {
+  if (!connection) throw new Error("No orbitd connection selected");
   const headers = {
-    Authorization: `Bearer ${token()}`,
+    Authorization: `Bearer ${connection.token}`,
+    "x-orbitd-url": connection.url,
     ...(init.body ? { "content-type": "application/json" } : {}),
     ...(init.headers || {})
   };
@@ -313,11 +359,89 @@ function isDetachInput(data: string) {
     || data === "\x1b[27;5;92~";
 }
 
+function findScrollableParent(target: EventTarget | null) {
+  let node = target instanceof Element ? target : null;
+  while (node && node !== document.documentElement) {
+    const style = window.getComputedStyle(node);
+    const canScroll = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+    if (canScroll) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function isCoarsePointer() {
+  return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+}
+
+function useMobileViewportGuards() {
+  useEffect(() => {
+    let startX = 0;
+    let startY = 0;
+
+    const updateViewport = () => {
+      const viewport = window.visualViewport;
+      const height = viewport?.height ?? window.innerHeight;
+      const keyboardInset = Math.max(0, window.innerHeight - height - (viewport?.offsetTop ?? 0));
+      document.documentElement.style.setProperty("--visual-viewport-height", `${height}px`);
+      document.documentElement.style.setProperty("--visual-viewport-top", `${viewport?.offsetTop ?? 0}px`);
+      document.documentElement.style.setProperty("--keyboard-inset", `${keyboardInset}px`);
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      startX = event.touches[0]?.clientX ?? 0;
+      startY = event.touches[0]?.clientY ?? 0;
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.target instanceof Element && event.target.closest(".xtermHost")) return;
+
+      const touch = event.touches[0];
+      if (!touch) return;
+
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
+
+      const scrollable = findScrollableParent(event.target);
+      if (!scrollable) {
+        event.preventDefault();
+        return;
+      }
+
+      const atTop = scrollable.scrollTop <= 0;
+      const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1;
+      if ((atTop && deltaY > 0) || (atBottom && deltaY < 0)) event.preventDefault();
+    };
+
+    updateViewport();
+    window.visualViewport?.addEventListener("resize", updateViewport);
+    window.visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateViewport);
+      window.visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchmove", onTouchMove);
+      document.documentElement.style.removeProperty("--visual-viewport-height");
+      document.documentElement.style.removeProperty("--visual-viewport-top");
+      document.documentElement.style.removeProperty("--keyboard-inset");
+    };
+  }, []);
+}
+
 function App() {
-  const [authed, setAuthed] = useState(Boolean(token()));
-  const [sessions, setSessions] = useState<Session[]>([]);
+  useMobileViewportGuards();
+
+  const [connections, setConnections] = useState<OrbitConnection[]>(() => savedConnections());
+  const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
+  const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backends, setBackends] = useState<AgentBackend[]>(defaultBackends);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [tool, setTool] = useState("codex");
   const [name, setName] = useState("");
@@ -330,14 +454,61 @@ function App() {
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const [fileEditorOpen, setFileEditorOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [mobileChromeOpen, setMobileChromeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [connectionOpen, setConnectionOpen] = useState(false);
 
-  const selected = useMemo(() => sessions.find((session) => session.id === selectedId) ?? null, [sessions, selectedId]);
+  const authed = connections.length > 0;
+  const detailOpenRef = useRef(detailOpen);
+  const mobileDetailHistoryRef = useRef(false);
+  const activeConnection = useMemo(() => {
+    return connections.find((connection) => connection.id === activeConnectionId) ?? connections[0] ?? null;
+  }, [connections, activeConnectionId]);
+  const selected = useMemo(() => sessions.find((session) => session.key === selectedKey) ?? null, [sessions, selectedKey]);
+
+  function saveConnectionList(next: OrbitConnection[]) {
+    setConnections(next);
+    persistConnections(next);
+    const nextActive = next.find((connection) => connection.id === activeConnectionId)?.id ?? next[0]?.id ?? "";
+    setActiveConnectionId(nextActive);
+    if (nextActive) localStorage.setItem("orbit.activeConnection", nextActive);
+    else localStorage.removeItem("orbit.activeConnection");
+  }
+
+  async function addConnection(input: { label: string; url: string; token: string }) {
+    const connection: OrbitConnection = {
+      id: makeId(),
+      label: input.label.trim() || normalizeOrbitdUrl(input.url),
+      url: normalizeOrbitdUrl(input.url),
+      token: input.token
+    };
+    await api("/api/v1/auth/check", {}, connection);
+    const next = [...connections, connection];
+    setConnections(next);
+    persistConnections(next);
+    setActiveConnectionId(connection.id);
+    localStorage.setItem("orbit.activeConnection", connection.id);
+  }
+
+  function removeConnection(id: string) {
+    const next = connections.filter((connection) => connection.id !== id);
+    saveConnectionList(next);
+    setSessions((current) => current.filter((session) => session.connection.id !== id));
+    if (selected?.connection.id === id) setSelectedKey(null);
+    if (next.length === 0) setConnectionsOpen(false);
+  }
+
+  function selectActiveConnection(id: string) {
+    setActiveConnectionId(id);
+    if (id) localStorage.setItem("orbit.activeConnection", id);
+  }
 
   async function loadBackends() {
+    if (!activeConnection) return;
     try {
-      const items = await api("/api/v1/backends") as AgentBackend[];
+      const items = await api("/api/v1/backends", {}, activeConnection) as AgentBackend[];
       if (items.length > 0) setBackends(items);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -345,27 +516,53 @@ function App() {
   }
 
   async function load() {
+    if (connections.length === 0) return;
     try {
       const query = showAll ? "" : "?status=running";
-      setSessions(await api(`/api/v1/sessions${query}`));
+      const results = await Promise.allSettled(connections.map(async (connection) => {
+        try {
+          const items = await api(`/api/v1/sessions${query}`, {}, connection) as Session[];
+          return {
+            connection,
+            sessions: items.map((session) => ({
+              ...session,
+              connection,
+              key: connectionKey(connection.id, session.id)
+            }))
+          };
+        } catch (err) {
+          return {
+            connection,
+            sessions: [] as ConnectedSession[],
+            error: err instanceof Error ? err.message : String(err)
+          };
+        }
+      }));
+      const loaded = results
+        .filter((result): result is PromiseFulfilledResult<{ connection: OrbitConnection; sessions: ConnectedSession[]; error?: string }> => result.status === "fulfilled")
+        .map((result) => result.value);
+      setSessions(loaded.flatMap((result) => result.sessions));
+      const failures = loaded.filter((result) => result.error);
+      if (failures.length > 0) setMessage(`${failures.length} orbitd connection failed`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
   async function runSession() {
+    if (!activeConnection) return;
     setBusy(true);
     try {
       const body: Record<string, unknown> = { tool, env: parseEnv(env) };
       if (name.trim()) body.name = name.trim();
       if (cwd.trim()) body.cwd = cwd.trim();
-      const session = await api("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }) as Session;
+      const session = await api("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }, activeConnection) as Session;
       setMessage(`created ${session.id} ${session.name}`);
       setName("");
       setEnv("");
       setCreateOpen(false);
       if (attachAfterRun) {
-        setSelectedId(session.id);
+        setSelectedKey(connectionKey(activeConnection.id, session.id));
         setFileEditorOpen(false);
         setDetailOpen(true);
       }
@@ -377,11 +574,11 @@ function App() {
     }
   }
 
-  async function deleteSession(session: Session) {
+  async function deleteSession(session: ConnectedSession) {
     try {
-      await api(`/api/v1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      await api(`/api/v1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" }, session.connection);
       setMessage(`removed ${session.id}`);
-      if (selectedId === session.id) setSelectedId(null);
+      if (selectedKey === session.key) setSelectedKey(null);
       await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -389,10 +586,11 @@ function App() {
   }
 
   async function loadDirs(path?: string) {
+    if (!activeConnection) return;
     setDirBusy(true);
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      setDirListing(await api(`/api/v1/fs/dirs${query}`) as DirListing);
+      setDirListing(await api(`/api/v1/fs/dirs${query}`, {}, activeConnection) as DirListing);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -405,29 +603,68 @@ function App() {
     void loadDirs(cwd.trim() || undefined);
   }
 
-  useEffect(() => { if (authed) void loadBackends(); }, [authed]);
-  useEffect(() => { if (authed) void load(); }, [authed, showAll]);
   useEffect(() => {
-    if (selectedId && !sessions.some((session) => session.id === selectedId)) setSelectedId(null);
-  }, [sessions, selectedId]);
+    if (!activeConnectionId && connections[0]) setActiveConnectionId(connections[0].id);
+  }, [activeConnectionId, connections]);
+  useEffect(() => { if (authed) void loadBackends(); }, [authed, activeConnection?.id]);
+  useEffect(() => { if (authed) void load(); }, [authed, showAll, connections]);
+  useEffect(() => {
+    if (selectedKey && !sessions.some((session) => session.key === selectedKey)) setSelectedKey(null);
+  }, [sessions, selectedKey]);
   useEffect(() => {
     if (!backends.some((backend) => backend.id === tool)) setTool(backends[0]?.id ?? "codex");
   }, [backends, tool]);
+  useEffect(() => {
+    if (detailOpen) setMobileChromeOpen(false);
+  }, [detailOpen, selectedKey, fileEditorOpen]);
+  useEffect(() => {
+    detailOpenRef.current = detailOpen;
+  }, [detailOpen]);
+  useEffect(() => {
+    const isMobile = () => window.matchMedia("(max-width: 820px), (pointer: coarse)").matches;
+    if (detailOpen && isMobile() && !mobileDetailHistoryRef.current) {
+      history.pushState({ orbitDetail: true }, "", location.href);
+      mobileDetailHistoryRef.current = true;
+    }
+    if (!detailOpen) mobileDetailHistoryRef.current = false;
+  }, [detailOpen]);
+  useEffect(() => {
+    const onPopState = () => {
+      if (!detailOpenRef.current || !window.matchMedia("(max-width: 820px), (pointer: coarse)").matches) return;
+      mobileDetailHistoryRef.current = false;
+      setDetailOpen(false);
+      setMobileChromeOpen(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
-  if (!authed) return <Login onLogin={(value) => { localStorage.setItem("orbit.token", value); setAuthed(true); }} />;
+  if (!authed) return <Login onLogin={addConnection} />;
 
-  return <main className="app">
+  return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}${mobileChromeOpen ? " mobileChromeOpen" : ""}`}>
+    {detailOpen && <button className="mobileChromeToggle" title="Show navigation" onClick={() => setMobileChromeOpen((value) => !value)}>
+      {mobileChromeOpen ? <X size={18} /> : <Menu size={18} />}
+    </button>}
     <section className="toolbar">
       <strong>Orbit</strong>
       <div className="toolbarActions">
         <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
-        <button title="Logout" onClick={() => { localStorage.removeItem("orbit.token"); setAuthed(false); }}><LogOut size={16} /></button>
       </div>
     </section>
     {message && <div className="statusLine">{message}</div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}`}>
-      {fileEditorOpen ? <FileWorkspace
+      {connectionsOpen ? <ConnectionsWorkspace
+          connections={connections}
+          activeConnectionId={activeConnection?.id ?? ""}
+          onSelect={selectActiveConnection}
+          onRemove={removeConnection}
+          onAdd={() => setConnectionOpen(true)}
+          onSessions={() => { setConnectionsOpen(false); setFileEditorOpen(false); setDetailOpen(false); }}
+          onFiles={() => { setConnectionsOpen(false); setFileEditorOpen(true); setDetailOpen(false); }}
+        /> : fileEditorOpen && activeConnection ? <FileWorkspace
+          connection={activeConnection}
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
+          onConnections={() => { setConnectionsOpen(true); setDetailOpen(false); }}
           detailOpen={detailOpen}
           onDetailOpen={() => setDetailOpen(true)}
           onBack={() => setDetailOpen(false)}
@@ -436,12 +673,14 @@ function App() {
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
+            <button onClick={() => { setConnectionsOpen(true); setDetailOpen(false); }}><Server size={14} />Orbitd</button>
             <button className={`sessionFilterButton${showAll ? " activeButton" : ""}`} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
             <button className="iconButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} /></button>
           </div>
           <div className="sessions">
-            <div className="row header"><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
-            {sessions.map((session) => <button className={selectedId === session.id ? "row active" : "row"} key={session.id} onClick={() => { setSelectedId(session.id); setDetailOpen(true); }}>
+            <div className="row header"><span>Server</span><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
+            {sessions.map((session) => <button className={selectedKey === session.key ? "row active" : "row"} key={session.key} onClick={() => { setSelectedKey(session.key); setDetailOpen(true); }}>
+              <span title={session.connection.label}>{session.connection.label}</span>
               <span title={session.id}>{session.id}</span>
               <span title={session.name}>{session.name}</span>
               <span>{session.tool}</span>
@@ -454,14 +693,15 @@ function App() {
           <button className="mobileBackButton" onClick={() => setDetailOpen(false)}><ChevronLeft size={16} />Sessions</button>
           {selected ? <SessionPane
             session={selected}
-            onDetach={() => { setSelectedId(null); setDetailOpen(false); }}
+            onDetach={() => { setSelectedKey(null); setDetailOpen(false); }}
             onDelete={() => void deleteSession(selected)}
             reload={load}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
       </>}
     </section>
-    {createOpen && <NewSessionModal
+    {createOpen && activeConnection && <NewSessionModal
+      connection={activeConnection}
       backends={backends}
       tool={tool}
       name={name}
@@ -478,7 +718,8 @@ function App() {
       onClose={() => setCreateOpen(false)}
       onRun={() => void runSession()}
     />}
-    {folderOpen && <FolderPicker
+    {folderOpen && activeConnection && <FolderPicker
+      connection={activeConnection}
       listing={dirListing}
       busy={dirBusy}
       selected={cwd}
@@ -486,10 +727,57 @@ function App() {
       onLoad={loadDirs}
       onSelect={(path) => { setCwd(path); setFolderOpen(false); }}
     />}
+    {connectionOpen && <ConnectionModal
+      onClose={() => setConnectionOpen(false)}
+      onConnect={async (input) => {
+        await addConnection(input);
+        setConnectionOpen(false);
+        setMessage(`connected ${input.label || input.url}`);
+      }}
+    />}
   </main>;
 }
 
+function ConnectionsWorkspace(props: {
+  connections: OrbitConnection[];
+  activeConnectionId: string;
+  onSelect: (id: string) => void;
+  onRemove: (id: string) => void;
+  onAdd: () => void;
+  onSessions: () => void;
+  onFiles: () => void;
+}) {
+  return <div className="connectionWorkspace">
+    <div className="paneTabs">
+      <button onClick={props.onSessions}><TerminalIcon size={14} />Sessions</button>
+      <button onClick={props.onFiles}><FolderOpen size={14} />Files</button>
+      <button className="activeButton"><Server size={14} />Orbitd</button>
+      <button className="iconButton connectionAddButton" title="Add orbitd" onClick={props.onAdd}><Plus size={16} /></button>
+    </div>
+    <div className="connectionList">
+      <div className="connectionRow connectionHeader">
+        <span>Name</span>
+        <span>URL</span>
+        <span>Status</span>
+        <span />
+      </div>
+      {props.connections.map((connection) => {
+        const active = connection.id === props.activeConnectionId;
+        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id}>
+          <button className="connectionSelectButton" onClick={() => props.onSelect(connection.id)}>
+            <span title={connection.label}>{connection.label}</span>
+          </button>
+          <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>
+          <span className={`pill ${active ? "running" : ""}`}>{active ? "active" : "saved"}</span>
+          <button className="iconButton" title="Remove orbitd" onClick={() => props.onRemove(connection.id)}><Trash2 size={16} /></button>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
 function NewSessionModal(props: {
+  connection: OrbitConnection;
   backends: AgentBackend[];
   tool: string;
   name: string;
@@ -512,6 +800,7 @@ function NewSessionModal(props: {
         <strong>New session</strong>
         <button type="button" title="Close" onClick={props.onClose}><X size={16} /></button>
       </div>
+      <div className="modalContext" title={props.connection.url}>{props.connection.label} · {props.connection.url}</div>
       <label className="fieldLabel">
         <span>Backend</span>
         <select value={props.tool} onChange={(event) => props.onTool(event.target.value)}>
@@ -543,13 +832,15 @@ function NewSessionModal(props: {
 }
 
 function FileWorkspace(props: {
+  connection: OrbitConnection;
   initialPath?: string;
   onSessions: () => void;
+  onConnections: () => void;
   detailOpen: boolean;
   onDetailOpen: () => void;
   onBack: () => void;
 }) {
-  const { initialPath, onSessions, detailOpen, onDetailOpen, onBack } = props;
+  const { connection, initialPath, onSessions, onConnections, detailOpen, onDetailOpen, onBack } = props;
   const [listing, setListing] = useState<ListEntriesResponse | null>(null);
   const [listBusy, setListBusy] = useState(false);
   const [tree, setTree] = useState<EntryTree>({});
@@ -567,7 +858,7 @@ function FileWorkspace(props: {
     setLoadingPaths((current) => new Set(current).add(key));
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      const response = await api(`/api/v1/fs/entries${query}`) as ListEntriesResponse;
+      const response = await api(`/api/v1/fs/entries${query}`, {}, connection) as ListEntriesResponse;
       if (options.root || !listing) setListing(response);
       setTree((current) => ({ ...current, [response.path]: response.entries }));
       setExpanded((current) => {
@@ -633,7 +924,7 @@ function FileWorkspace(props: {
       return;
     }
     try {
-      const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`) as { path: string; content: string };
+      const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`, {}, connection) as { path: string; content: string };
       setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
       setEditContent(result.content);
       setViewMode("edit");
@@ -651,7 +942,7 @@ function FileWorkspace(props: {
       await api("/api/v1/fs/files", {
         method: "PUT",
         body: JSON.stringify({ path: openedFile.path, content: editContent })
-      });
+      }, connection);
       setOpenedFile({ ...openedFile, savedContent: editContent });
       setError("");
     } catch (err) {
@@ -708,6 +999,7 @@ function FileWorkspace(props: {
       <div className="paneTabs">
         <button onClick={onSessions}><TerminalIcon size={14} />Sessions</button>
         <button className="activeButton"><FolderOpen size={14} />Files</button>
+        <button onClick={onConnections}><Server size={14} />Orbitd</button>
       </div>
       {error && <div className="folderError">{error}</div>}
       <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
@@ -742,7 +1034,7 @@ function FileWorkspace(props: {
         <div className="fileBreadcrumb" title={openedFile.path}>{openedFile.path}</div>
         {viewKind === "image" ? (
           <div className="fileImageViewer">
-            <img src={rawFileUrl(openedFile.path)} alt={fileName} />
+            <img src={rawFileUrl(openedFile.path, connection)} alt={fileName} />
           </div>
         ) : viewKind === "markdown" && viewMode === "view" ? (
           <div className="fileMarkdownPreview" dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
@@ -813,6 +1105,7 @@ function CodeEditor({ value, path, onChange }: {
 }
 
 function FolderPicker(props: {
+  connection: OrbitConnection;
   listing: DirListing | null;
   busy: boolean;
   selected: string;
@@ -829,7 +1122,7 @@ function FolderPicker(props: {
       const created = await api("/api/v1/fs/dirs", {
         method: "POST",
         body: JSON.stringify({ parent: props.listing.path, name: newFolder.trim() })
-      }) as { path: string };
+      }, props.connection) as { path: string };
       setNewFolder("");
       setError("");
       props.onSelect(created.path);
@@ -867,17 +1160,82 @@ function FolderPicker(props: {
   </div>;
 }
 
-function Login({ onLogin }: { onLogin: (token: string) => void }) {
-  const [value, setValue] = useState("");
-  return <main className="login"><form onSubmit={(event) => { event.preventDefault(); onLogin(value); }}>
+function Login({ onLogin }: { onLogin: (input: { label: string; url: string; token: string }) => Promise<void> }) {
+  const [label, setLabel] = useState("Local orbitd");
+  const [url, setUrl] = useState("http://127.0.0.1:7777");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    setBusy(true);
+    try {
+      await onLogin({ label, url, token });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <main className="login"><form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     <h1>Orbit</h1>
-    <input autoFocus placeholder="Bearer token" value={value} onChange={(event) => setValue(event.target.value)} />
-    <button>Connect</button>
+    <input autoFocus placeholder="Name" value={label} onChange={(event) => setLabel(event.target.value)} />
+    <input placeholder="orbitd URL" value={url} onChange={(event) => setUrl(event.target.value)} />
+    <input placeholder="Bearer token" value={token} onChange={(event) => setToken(event.target.value)} />
+    {error && <div className="loginError">{error}</div>}
+    <button disabled={busy || !url.trim()}>{busy ? "Connecting..." : "Connect"}</button>
   </form></main>;
 }
 
+function ConnectionModal(props: {
+  onClose: () => void;
+  onConnect: (input: { label: string; url: string; token: string }) => Promise<void>;
+}) {
+  const [label, setLabel] = useState("");
+  const [url, setUrl] = useState("http://127.0.0.1:7777");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    setBusy(true);
+    try {
+      await props.onConnect({ label, url, token });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+    <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <div className="modalTop">
+        <strong>Add orbitd</strong>
+        <button type="button" title="Close" onClick={props.onClose}><X size={16} /></button>
+      </div>
+      <label className="fieldLabel">
+        <span>Name</span>
+        <input autoFocus placeholder="server name" value={label} onChange={(event) => setLabel(event.target.value)} />
+      </label>
+      <label className="fieldLabel">
+        <span>URL</span>
+        <input placeholder="http://host:7777" value={url} onChange={(event) => setUrl(event.target.value)} />
+      </label>
+      <label className="fieldLabel">
+        <span>Token</span>
+        <input placeholder="Bearer token" value={token} onChange={(event) => setToken(event.target.value)} />
+      </label>
+      {error && <div className="folderError">{error}</div>}
+      <div className="modalActions">
+        <button type="button" onClick={props.onClose}>Cancel</button>
+        <button disabled={busy || !url.trim()}><PlugZap size={16} />{busy ? "Connecting..." : "Connect"}</button>
+      </div>
+    </form>
+  </div>;
+}
+
 function SessionPane(props: {
-  session: Session;
+  session: ConnectedSession;
   onDetach: () => void;
   onDelete: () => void;
   reload: () => void;
@@ -892,27 +1250,49 @@ function SessionPane(props: {
   </div>;
 }
 
-function Terminal({ session, reload }: { session: Session; reload: () => void }) {
+function Terminal({ session, reload }: { session: ConnectedSession; reload: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
+
+  function updateScrollInfo(term: XTerm) {
+    const totalRows = term.buffer.active.baseY + term.rows;
+    const scrollable = term.buffer.active.baseY > 0;
+    const top = scrollable ? term.buffer.active.viewportY / term.buffer.active.baseY : 1;
+    const size = scrollable ? Math.max(0.12, Math.min(1, term.rows / totalRows)) : 1;
+    setScrollInfo({ top: Math.max(0, Math.min(1, top)), size, scrollable });
+  }
+
+  function scrollToRatio(clientY: number, target: HTMLElement) {
+    const term = termRef.current;
+    if (!term) return;
+    const rect = target.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    term.scrollToLine(Math.round(term.buffer.active.baseY * ratio));
+    updateScrollInfo(term);
+  }
 
   useEffect(() => {
     if (!ref.current) return;
+    const host = ref.current;
+    const coarsePointer = isCoarsePointer();
     const term = new XTerm({
-      cursorBlink: true,
+      cursorBlink: !coarsePointer,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       fontSize: 14,
       convertEol: false,
       scrollback: 10000,
       allowProposedApi: false
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(ref.current);
+    term.open(host);
     fit.fit();
     term.focus();
 
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(token())}`);
+    const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`);
     let detached = false;
     let autoFollow = true;
     let userScrollIntent = false;
@@ -931,9 +1311,10 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
       fit.fit();
       if (autoFollow) term.scrollToBottom();
       sendResize();
+      updateScrollInfo(term);
     };
     const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(ref.current);
+    resizeObserver.observe(host);
 
     const isAtBottom = () => term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
     const followBottom = () => {
@@ -941,6 +1322,7 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
       requestAnimationFrame(() => term.scrollToBottom());
     };
     const scroll = term.onScroll((viewportY) => {
+      updateScrollInfo(term);
       if (term.buffer.active.baseY - viewportY <= 1) {
         autoFollow = true;
       } else if (userScrollIntent) {
@@ -953,9 +1335,38 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
       window.clearTimeout(userScrollTimer);
       userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 300);
     };
-    ref.current.addEventListener("wheel", markUserScroll, { passive: true });
-    ref.current.addEventListener("touchstart", markUserScroll, { passive: true });
-    ref.current.addEventListener("pointerdown", markUserScroll, { passive: true });
+    let touchLastY = 0;
+    let touchScrollRemainder = 0;
+    const onTerminalTouchStart = (event: TouchEvent) => {
+      touchLastY = event.touches[0]?.clientY ?? 0;
+      touchScrollRemainder = 0;
+      markUserScroll(event);
+    };
+    const onTerminalTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY ?? touchLastY;
+      const delta = touchLastY - currentY;
+      if (Math.abs(delta) < 1) return;
+
+      event.preventDefault();
+      userScrollIntent = true;
+      touchLastY = currentY;
+
+      const rowHeight = host.clientHeight > 0 && term.rows > 0 ? host.clientHeight / term.rows : 16;
+      touchScrollRemainder += delta / Math.max(1, rowHeight);
+      const lines = Math.trunc(touchScrollRemainder);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        touchScrollRemainder -= lines;
+        if (lines < 0) autoFollow = false;
+        updateScrollInfo(term);
+      }
+      window.clearTimeout(userScrollTimer);
+      userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 300);
+    };
+    host.addEventListener("wheel", markUserScroll, { passive: true });
+    host.addEventListener("touchstart", onTerminalTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTerminalTouchMove, { passive: false });
+    host.addEventListener("pointerdown", markUserScroll, { passive: true });
     const input = term.onData((data) => {
       if (isDetachInput(data)) {
         sendDetach();
@@ -974,7 +1385,10 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
         const msg = JSON.parse(await websocketText(event.data));
         if (msg.type === "stdout") {
           if (isAtBottom()) autoFollow = true;
-          term.write(decodeBytes(msg.data), followBottom);
+          term.write(decodeBytes(msg.data), () => {
+            followBottom();
+            updateScrollInfo(term);
+          });
         }
         if (msg.type === "exit") void reload();
         if (msg.type === "error") term.write(`\r\n[${msg.code}] ${msg.message}\r\n`);
@@ -989,9 +1403,10 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
     });
 
     return () => {
-      ref.current?.removeEventListener("wheel", markUserScroll);
-      ref.current?.removeEventListener("touchstart", markUserScroll);
-      ref.current?.removeEventListener("pointerdown", markUserScroll);
+      host.removeEventListener("wheel", markUserScroll);
+      host.removeEventListener("touchstart", onTerminalTouchStart);
+      host.removeEventListener("touchmove", onTerminalTouchMove);
+      host.removeEventListener("pointerdown", markUserScroll);
       resizeObserver.disconnect();
       window.clearTimeout(userScrollTimer);
       input.dispose();
@@ -999,10 +1414,36 @@ function Terminal({ session, reload }: { session: Session; reload: () => void })
       sendDetach();
       ws.close();
       term.dispose();
+      termRef.current = null;
     };
   }, [session.id]);
 
-  return <div className="xtermHost" ref={ref} />;
+  return <div className="xtermShell">
+    <div className="xtermHost" ref={ref} />
+    <div className={`terminalScrollOverlay${scrollInfo.scrollable ? "" : " disabled"}`} aria-hidden={!scrollInfo.scrollable}>
+      <div
+        className="terminalScrollRail"
+        onPointerDown={(event) => {
+          if (!scrollInfo.scrollable) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          scrollToRatio(event.clientY, event.currentTarget);
+        }}
+        onPointerMove={(event) => {
+          if (!scrollInfo.scrollable || event.buttons !== 1) return;
+          scrollToRatio(event.clientY, event.currentTarget);
+        }}
+      >
+        <div
+          className="terminalScrollThumb"
+          style={{
+            height: `${scrollInfo.size * 100}%`,
+            top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
+          }}
+        />
+      </div>
+    </div>
+  </div>;
 }
 
+registerServiceWorker();
 createRoot(document.getElementById("root")!).render(<App />);
