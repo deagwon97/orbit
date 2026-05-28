@@ -339,34 +339,36 @@ Fastify (Node.js)로 구축되었으며 기본적으로 3001번 포트에서 실
 
 1. **리버스 프록시** — `/api/v1/sessions/*`와 `/api/v1/backends` 요청을 `orbitd`로 전달하며, WebSocket attach 업그레이드도 포함한다. 브라우저는 `orbitd`에 직접 연결하지 않는다.
 2. **파일시스템 프록시** — `orbitd`의 파일시스템 엔드포인트를 전달한다:
+   - `GET /api/v1/auth/check` — 설정된 `orbitd` URL/token 조합을 검증한다.
    - `GET /api/v1/fs/dirs?path=...` — 주어진 경로의 하위 디렉토리 목록과 `parent`(상위 이동), `home`, `cwd` 참조를 반환한다.
    - `POST /api/v1/fs/dirs` — 새 빈 디렉토리를 생성한다 (`{ "parent": "...", "name": "..." }`).
    - `GET /api/v1/fs/entries?path=...` — 파일 편집기용 파일과 디렉토리 목록을 반환한다.
    - `GET /api/v1/fs/files?path=...` — 텍스트 파일을 읽는다.
    - `PUT /api/v1/fs/files` — 텍스트 파일을 저장한다.
 
-웹 백엔드는 `ORBIT_TOKEN` 환경 변수, 요청의 `Authorization` 헤더, 또는 `token` 쿼리 파라미터에서 orbitd 토큰을 읽고, 프록시 요청마다 `orbitd`로 전달한다.
+웹 백엔드는 `ORBIT_TOKEN` 환경 변수, 요청의 `Authorization` 헤더, 또는 `token` 쿼리 파라미터에서 orbitd 토큰을 읽고, 프록시 요청마다 `orbitd`로 전달한다. 업스트림 `orbitd` URL은 기본적으로 `ORBITD_URL`을 사용하지만, 요청의 `x-orbitd-url` 헤더 또는 `orbitd` 쿼리 파라미터로 다른 HTTP(S) 업스트림을 선택할 수 있다. 백엔드는 전달 전에 URL의 query/hash를 제거하고 HTTP(S)가 아닌 프로토콜은 거부한다.
 
 환경 변수 설정:
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `PORT` | `3001` | 웹 백엔드 수신 포트 |
-| `ORBITD_URL` | `http://127.0.0.1:7777` | 업스트림 orbitd URL |
-| `ORBIT_TOKEN` | `""` | orbitd 인증용 Bearer 토큰 |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | fallback 업스트림 orbitd URL |
+| `ORBIT_TOKEN` | `""` | fallback orbitd 인증용 Bearer 토큰 |
 
 ### 웹 프론트엔드 (`web/frontend/`)
 
 React + Vite + xterm.js로 구축된 싱글 페이지 애플리케이션:
 
-- **로그인 화면** — orbitd Bearer 토큰을 입력받아 `localStorage`에 저장한다.
-- **툴바** — `/api/v1/backends`에서 채운 백엔드 선택기, 이름 입력, cwd 입력 + 폴더 선택기, env 입력, Attach 토글, Run 버튼, All/Running 필터, 새로고침, 로그아웃.
+- **연결 화면** — orbitd label, URL, Bearer token을 입력받는다. 연결 정보는 `localStorage`에 저장되며 활성 연결은 프록시 요청마다 백엔드로 전달된다.
+- **툴바** — `/api/v1/backends`에서 채운 백엔드 선택기, 이름 입력, cwd 입력 + 폴더 선택기, env 입력, Attach 토글, Run 버튼, 고정 폭 Running/All 필터, 새로고침, 연결 관리 이동.
 - **파일 편집기** — `/api/v1/fs/entries`로 탐색하고 `/api/v1/fs/files`로 파일을 열며 `PUT /api/v1/fs/files`로 저장하는 모달 텍스트 편집기.
-- **세션 목록** — 클릭 가능한 행: ID, 이름, 도구, 상태(색상 코드 표시), PID.
-- **세션 창** — 두 개의 탭:
-  - **Attach** — 백엔드 프록시를 통해 WebSocket으로 연결된 xterm.js 터미널. 자동 리사이즈(ResizeObserver), 스크롤 팔로우, detach 감지(`Ctrl-]`/`Ctrl-\`), 종료 알림, 재연결 기능.
-  - **Logs** — 읽기 전용 xterm.js에 base64 디코딩된 출력 표시(마지막 500개 청크).
+- **Orbitd 화면** — 여러 orbitd 연결 프로필을 추가, 선택, 삭제한다.
+- **세션 목록** — 클릭 가능한 행: 서버, ID, 이름, 도구, 상태(색상 코드 표시), PID.
+- **세션 창** — 백엔드 프록시를 통해 WebSocket으로 연결된 xterm.js 터미널. 자동 리사이즈(ResizeObserver), detach 감지(`Ctrl-]`/`Ctrl-\`), 종료 알림, 재연결 기능.
 - **폴더 선택기** — 서버 파일시스템을 탐색하는 모달 다이얼로그. 상위/홈/서버-cwd로 이동, 새 폴더 생성, 작업 디렉토리 선택. `/api/v1/fs/dirs` 엔드포인트를 사용한다.
+- **모바일 레이아웃** — 세션 attach 화면은 viewport를 넓게 쓰고, 기본 toolbar/chrome은 숨기며, 오른쪽 상단 메뉴에서 이동 및 삭제 같은 제어를 노출한다.
+- **설치형 웹 앱 메타데이터** — 모바일 웹앱 설치를 위한 `manifest.json`, 앱 아이콘, 작은 service worker를 포함한다.
 
 ## 현재 제한 사항
 

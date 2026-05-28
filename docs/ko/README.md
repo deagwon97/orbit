@@ -277,26 +277,45 @@ cd orb    && go test ./... && go build -o orb .
 
 - **백엔드** (Fastify/Node.js, 3001번 포트) — `orbitd`의 리버스 프록시.
   `orbitd`의 세션, 백엔드, 파일시스템, attach 엔드포인트를 프록시한다:
+  - `GET /api/v1/auth/check` — 설정된 `orbitd` URL/token 조합 검증
   - `GET /api/v1/fs/dirs?path=...` — 서버 디렉토리 탐색
   - `POST /api/v1/fs/dirs` — 새 빈 디렉토리 생성
   - `GET /api/v1/fs/entries?path=...` — 파일과 디렉토리 탐색
   - `GET /api/v1/fs/files?path=...` — 텍스트 파일 읽기
   - `PUT /api/v1/fs/files` — 텍스트 파일 저장
 - **프론트엔드** (React + xterm.js + Vite) — 브라우저 기반 세션 UI.
-  xterm.js 터미널, 폴더 선택기, 텍스트 파일 편집기, 세션 목록, 로그 뷰어 포함.
+  xterm.js 터미널, 폴더 선택기, 텍스트 파일 편집기, 세션 목록, 여러 `orbitd` 연결 관리 포함.
 
 ```bash
 cd web/backend   && npm install && npm run dev
 cd web/frontend  && npm install && npm run dev
 ```
 
+단일 로컬 데몬을 사용할 때 가장 단순한 설정:
+
+```bash
+export ORBITD_URL=http://127.0.0.1:7777
+export ORBIT_TOKEN="$(cat ~/.config/orbit/token)"
+cd web/backend && npm run dev
+```
+
+이후 Vite 프론트엔드를 열고 Orbitd 연결을 추가한다:
+
+| 필드 | 예시 | 설명 |
+|------|------|------|
+| Name | `local` | 웹 UI에 표시할 이름 |
+| URL | `http://127.0.0.1:7777` | 웹 백엔드에서 접근 가능한 `orbitd` HTTP 엔드포인트 |
+| Token | `~/.config/orbit/token` 내용 | `orbitd`가 생성한 Bearer token |
+
 웹 백엔드는 다음 환경 변수를 지원한다:
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `PORT` | `3001` | 웹 백엔드 수신 포트 |
-| `ORBITD_URL` | `http://127.0.0.1:7777` | 업스트림 orbitd URL |
-| `ORBIT_TOKEN` | `""` | orbitd 인증용 Bearer 토큰 |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | fallback 업스트림 orbitd URL |
+| `ORBIT_TOKEN` | `""` | fallback orbitd 인증용 Bearer 토큰 |
+
+브라우저의 Orbitd 연결은 label, URL, Bearer token으로 구성되며 `localStorage`에 저장된다. 각 프록시 요청은 선택된 업스트림 URL을 웹 백엔드로 전달하고, 백엔드는 HTTP(S) URL인지 검증한 뒤 `orbitd`로 전달한다. 따라서 하나의 웹 UI에서 여러 `orbitd` 인스턴스의 세션을 조회하고 attach할 수 있다.
 
 ## systemd 배포
 

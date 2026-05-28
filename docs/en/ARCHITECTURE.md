@@ -340,34 +340,36 @@ Built with Fastify (Node.js) and runs on port 3001 by default. It serves a dual 
 
 1. **Reverse proxy** — forwards `/api/v1/sessions/*` and `/api/v1/backends` requests to `orbitd`, including WebSocket attach upgrades. The browser never connects directly to `orbitd`.
 2. **Filesystem proxy** — forwards the `orbitd` filesystem endpoints:
+   - `GET /api/v1/auth/check` — validates a configured `orbitd` URL/token pair.
    - `GET /api/v1/fs/dirs?path=...` — lists subdirectories of the given path, along with `parent` (for "up" navigation), `home`, and `cwd` references.
    - `POST /api/v1/fs/dirs` — creates a new empty directory (`{ "parent": "...", "name": "..." }`).
    - `GET /api/v1/fs/entries?path=...` — lists files and directories for the file editor.
    - `GET /api/v1/fs/files?path=...` — reads a text file.
    - `PUT /api/v1/fs/files` — saves a text file.
 
-The web backend reads the orbitd token from the `ORBIT_TOKEN` environment variable, the request `Authorization` header, or a `token` query parameter, then forwards it to `orbitd` on proxied requests.
+The web backend reads the orbitd token from the `ORBIT_TOKEN` environment variable, the request `Authorization` header, or a `token` query parameter, then forwards it to `orbitd` on proxied requests. The upstream orbitd URL defaults to `ORBITD_URL`, but a request may select another HTTP(S) upstream through the `x-orbitd-url` header or `orbitd` query parameter. The backend strips the upstream URL query/hash and rejects non-HTTP(S) protocols before forwarding.
 
 Configuration via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3001` | Web backend listen port |
-| `ORBITD_URL` | `http://127.0.0.1:7777` | Upstream orbitd URL |
-| `ORBIT_TOKEN` | `""` | Bearer token for orbitd auth |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | Fallback upstream orbitd URL |
+| `ORBIT_TOKEN` | `""` | Fallback Bearer token for orbitd auth |
 
 ### Web Frontend (`web/frontend/`)
 
 Built with React + Vite + xterm.js. Single-page application with:
 
-- **Login screen** — prompts for the orbitd Bearer token, stored in `localStorage`.
-- **Toolbar** — backend selector populated from `/api/v1/backends`, name input, cwd input + folder picker, env input, Attach toggle, Run button, All/Running filter, Refresh, Logout.
+- **Connection screen** — prompts for an orbitd label, URL, and Bearer token. Connections are stored in `localStorage`, and the active connection is sent to the backend on proxied requests.
+- **Toolbar** — backend selector populated from `/api/v1/backends`, name input, cwd input + folder picker, env input, Attach toggle, Run button, fixed-width Running/All filter, Refresh, and connection navigation.
 - **File editor** — modal text editor that browses `/api/v1/fs/entries`, opens `/api/v1/fs/files`, and saves through `PUT /api/v1/fs/files`.
-- **Session list** — clickable rows showing ID, name, tool, status (color-coded pill), PID.
-- **Session pane** — two tabs:
-  - **Attach** — xterm.js terminal connected via WebSocket through the backend proxy. Features: automatic resize (ResizeObserver), scroll-follow, detach detection (`Ctrl-]`/`Ctrl-\`), exit notification, reconnection.
-  - **Logs** — read-only xterm.js showing base64-decoded output (last 500 chunks).
+- **Orbitd view** — add, select, and remove multiple orbitd connection profiles.
+- **Session list** — clickable rows showing server, ID, name, tool, status (color-coded pill), and PID.
+- **Session pane** — xterm.js terminal connected via WebSocket through the backend proxy. Features: automatic resize (ResizeObserver), detach detection (`Ctrl-]`/`Ctrl-\`), exit notification, and reconnection.
 - **Folder picker** — modal dialog for browsing the server filesystem. Navigate up/home/server-cwd, create new folders, select a working directory. Uses the `/api/v1/fs/dirs` endpoints.
+- **Mobile layout** — session attach uses the full viewport, hides toolbar/chrome by default, and exposes navigation plus destructive controls from the top-right menu.
+- **Installable web app metadata** — `manifest.json`, an app icon, and a small service worker are included for mobile web-app installation.
 
 ## Current Limitations
 
