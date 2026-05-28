@@ -1,4 +1,11 @@
-orbitd/target
+orbitd/target/debug
+orbitd/target/release/.fingerprint
+orbitd/target/release/build
+orbitd/target/release/deps
+orbitd/target/release/examples
+orbitd/target/release/incremental
+orbitd/target/release/.cargo-lock
+orbitd/target/release/orbitd.d
 tmp
 node_modules
 .agents
