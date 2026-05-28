@@ -17,3 +17,8 @@ backends:
     name: pi
     command: pi
     args: []
+  - id: shell
+    name: Shell
+    command: bash
+    args:
+      - -l

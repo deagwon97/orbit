@@ -1,10 +1,219 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Plus, PlugZap, RefreshCcw, Save, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { marked } from "marked";
+import { basicSetup, EditorView } from "codemirror";
+import { search } from "@codemirror/search";
+import { HighlightStyle, syntaxHighlighting, StreamLanguage } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
+import { javascript } from "@codemirror/lang-javascript";
+import { python } from "@codemirror/lang-python";
+import { rust } from "@codemirror/lang-rust";
+import { go } from "@codemirror/lang-go";
+import { java } from "@codemirror/lang-java";
+import { cpp } from "@codemirror/lang-cpp";
+import { css as langCss } from "@codemirror/lang-css";
+import { html as langHtml } from "@codemirror/lang-html";
+import { json as langJson } from "@codemirror/lang-json";
+import { markdown as langMarkdown } from "@codemirror/lang-markdown";
+import { sql as langSql } from "@codemirror/lang-sql";
+import { xml as langXml } from "@codemirror/lang-xml";
+import { sass as langSass } from "@codemirror/lang-sass";
+import { yaml } from "@codemirror/legacy-modes/mode/yaml";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { ruby } from "@codemirror/legacy-modes/mode/ruby";
+import { lua } from "@codemirror/legacy-modes/mode/lua";
+import { r as rMode } from "@codemirror/legacy-modes/mode/r";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
+import { swift } from "@codemirror/legacy-modes/mode/swift";
+import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { csharp, kotlin } from "@codemirror/legacy-modes/mode/clike";
 import "xterm/css/xterm.css";
 import "./styles/app.css";
+
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "ico", "avif", "tiff", "tif"]);
+const MARKDOWN_EXTS = new Set(["md", "mdx", "markdown"]);
+
+function fileExt(path: string): string {
+  return path.split(".").pop()?.toLowerCase() ?? "";
+}
+
+type FileViewKind = "image" | "markdown" | "code";
+
+function getFileViewKind(path: string): FileViewKind {
+  const ext = fileExt(path);
+  if (IMAGE_EXTS.has(ext)) return "image";
+  if (MARKDOWN_EXTS.has(ext)) return "markdown";
+  return "code";
+}
+
+function rawFileUrl(path: string): string {
+  return `/api/v1/fs/raw?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token())}`;
+}
+
+const EXT_LANG: Record<string, string> = {
+  ts: "typescript", tsx: "typescript",
+  js: "javascript", jsx: "javascript",
+  mjs: "javascript", cjs: "javascript",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  rb: "ruby",
+  java: "java",
+  c: "c", h: "c",
+  cpp: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp",
+  cs: "csharp",
+  php: "php",
+  swift: "swift",
+  kt: "kotlin", kts: "kotlin",
+  sh: "bash", zsh: "bash", bash: "bash",
+  yaml: "yaml", yml: "yaml",
+  json: "json",
+  toml: "toml",
+  html: "xml", htm: "xml",
+  xml: "xml",
+  css: "css",
+  scss: "scss",
+  sql: "sql",
+  md: "markdown",
+  dockerfile: "dockerfile",
+  lua: "lua",
+  r: "r",
+};
+
+function getLang(path: string): string | undefined {
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if (name === "dockerfile") return "dockerfile";
+  return EXT_LANG[fileExt(path)];
+}
+
+
+function getCmLanguage(path: string) {
+  const lang = getLang(path);
+  switch (lang) {
+    case "typescript": return javascript({ typescript: true, jsx: path.endsWith(".tsx") });
+    case "javascript": return javascript({ jsx: path.endsWith(".jsx") });
+    case "python":     return python();
+    case "rust":       return rust();
+    case "go":         return go();
+    case "java":       return java();
+    case "c":
+    case "cpp":        return cpp();
+    case "css":        return langCss();
+    case "scss":       return langSass({ indented: false });
+    case "html":       return langHtml();
+    case "xml":        return langXml();
+    case "json":       return langJson();
+    case "sql":        return langSql();
+    case "markdown":   return langMarkdown();
+    case "yaml":       return StreamLanguage.define(yaml);
+    case "bash":       return StreamLanguage.define(shell);
+    case "ruby":       return StreamLanguage.define(ruby);
+    case "lua":        return StreamLanguage.define(lua);
+    case "r":          return StreamLanguage.define(rMode);
+    case "toml":       return StreamLanguage.define(toml);
+    case "swift":      return StreamLanguage.define(swift);
+    case "kotlin":     return StreamLanguage.define(kotlin);
+    case "csharp":     return StreamLanguage.define(csharp);
+    case "dockerfile": return StreamLanguage.define(dockerFile);
+    default:           return [];
+  }
+}
+
+const cmTheme = EditorView.theme({
+  "&": { height: "100%", backgroundColor: "#fff", fontSize: "13px" },
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    lineHeight: "1.5",
+    overflow: "auto",
+  },
+  ".cm-content": { caretColor: "#172026", padding: "0" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#172026" },
+  "&.cm-focused": { outline: "none" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "#add6ff" },
+  ".cm-gutters": {
+    backgroundColor: "#f8fafb",
+    color: "#858585",
+    border: "none",
+    borderRight: "1px solid #e7ecef",
+    userSelect: "none",
+  },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 10px 0 6px", minWidth: "36px", textAlign: "right" },
+  ".cm-activeLine": { backgroundColor: "#f4f9f7" },
+  ".cm-activeLineGutter": { backgroundColor: "#eaf2ef", color: "#567a6e" },
+  ".cm-foldPlaceholder": { backgroundColor: "#e7ecef", border: "1px solid #c9d2d8", color: "#41515a", borderRadius: "3px", padding: "0 4px", margin: "0 2px" },
+  ".cm-panels": { backgroundColor: "#f8fafb", zIndex: "10" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid #d8e0e5" },
+  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid #d8e0e5" },
+  ".cm-search": { display: "flex", gap: "6px", alignItems: "center", padding: "5px 10px", flexWrap: "wrap" },
+  ".cm-search input[type=text]": {
+    height: "24px", padding: "0 6px",
+    border: "1px solid #c9d2d8", borderRadius: "3px",
+    outline: "none",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    fontSize: "12px", minWidth: "150px",
+  },
+  ".cm-search input[type=text]:focus": { borderColor: "#8db7a9", boxShadow: "0 0 0 2px #d4ede7" },
+  ".cm-search input[type=checkbox]": { margin: "0", width: "14px", height: "14px", cursor: "pointer" },
+  ".cm-search button": {
+    height: "24px", padding: "0 8px",
+    border: "1px solid #c9d2d8", borderRadius: "3px",
+    cursor: "pointer", backgroundColor: "white",
+    fontSize: "12px", fontFamily: "system-ui, sans-serif", whiteSpace: "nowrap",
+  },
+  ".cm-search button:hover": { backgroundColor: "#eef6f3", borderColor: "#8db7a9" },
+  ".cm-search button[name=close]": { border: "none", background: "none", padding: "0 4px", fontSize: "16px", color: "#66737b" },
+  ".cm-search label": { display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "12px", color: "#41515a", cursor: "pointer", userSelect: "none" },
+  ".cm-searchMatch": { backgroundColor: "#fff3a3", outline: "1px solid #f9c200", borderRadius: "2px" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "#ff9632", outline: "1px solid #f36d10" },
+  ".cm-tooltip": { border: "1px solid #c9d2d8", borderRadius: "4px", backgroundColor: "#fff", boxShadow: "0 4px 12px rgba(15,22,27,.12)" },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": { backgroundColor: "#e7f1ee", color: "inherit" },
+}, { dark: false });
+
+const cmHighlight = HighlightStyle.define([
+  { tag: tags.keyword,                   color: "#0000ff" },
+  { tag: tags.controlKeyword,            color: "#af00db" },
+  { tag: tags.operatorKeyword,           color: "#0000ff" },
+  { tag: tags.definitionKeyword,         color: "#0000ff" },
+  { tag: tags.moduleKeyword,             color: "#0000ff" },
+  { tag: tags.comment,                   color: "#008000" },
+  { tag: tags.lineComment,               color: "#008000" },
+  { tag: tags.blockComment,              color: "#008000" },
+  { tag: tags.docComment,                color: "#008000" },
+  { tag: tags.string,                    color: "#a31515" },
+  { tag: tags.special(tags.string),      color: "#e07400" },
+  { tag: tags.regexp,                    color: "#811f3f" },
+  { tag: tags.number,                    color: "#098658" },
+  { tag: tags.bool,                      color: "#0000ff" },
+  { tag: tags.null,                      color: "#0000ff" },
+  { tag: tags.typeName,                  color: "#267f99" },
+  { tag: tags.className,                 color: "#267f99" },
+  { tag: tags.typeOperator,              color: "#0000ff" },
+  { tag: tags.function(tags.variableName), color: "#795e26" },
+  { tag: tags.function(tags.propertyName), color: "#795e26" },
+  { tag: tags.definition(tags.variableName), color: "#001080" },
+  { tag: tags.definition(tags.propertyName), color: "#001080" },
+  { tag: tags.propertyName,              color: "#001080" },
+  { tag: tags.variableName,              color: "#001080" },
+  { tag: tags.namespace,                 color: "#267f99" },
+  { tag: tags.operator,                  color: "#000000" },
+  { tag: tags.punctuation,               color: "#000000" },
+  { tag: tags.bracket,                   color: "#000000" },
+  { tag: tags.tagName,                   color: "#800000" },
+  { tag: tags.attributeName,             color: "#e50000" },
+  { tag: tags.attributeValue,            color: "#0000ff" },
+  { tag: tags.meta,                      color: "#808080" },
+  { tag: tags.heading,                   color: "#800000", fontWeight: "bold" },
+  { tag: tags.strong,                    fontWeight: "bold" },
+  { tag: tags.emphasis,                  fontStyle: "italic" },
+  { tag: tags.link,                      color: "#0563c1", textDecoration: "underline" },
+  { tag: tags.strikethrough,             textDecoration: "line-through" },
+  { tag: tags.inserted,                  color: "#22863a" },
+  { tag: tags.deleted,                   color: "#b31d28" },
+  { tag: tags.invalid,                   textDecoration: "underline wavy red" },
+]);
 
 type Session = {
   id: string;
@@ -350,6 +559,7 @@ function FileWorkspace(props: {
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [viewMode, setViewMode] = useState<"edit" | "view">("edit");
 
   async function loadEntries(path?: string, options: { root?: boolean } = {}) {
     const key = path ?? "__root__";
@@ -413,10 +623,20 @@ function FileWorkspace(props: {
 
   async function openFile(path: string) {
     if (openedFile && editContent !== openedFile.savedContent && !window.confirm("Discard unsaved changes?")) return;
+    const kind = getFileViewKind(path);
+    if (kind === "image") {
+      setOpenedFile({ path, content: "", savedContent: "" });
+      setEditContent("");
+      setViewMode("edit");
+      onDetailOpen();
+      setError("");
+      return;
+    }
     try {
       const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`) as { path: string; content: string };
       setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
       setEditContent(result.content);
+      setViewMode("edit");
       onDetailOpen();
       setError("");
     } catch (err) {
@@ -447,6 +667,12 @@ function FileWorkspace(props: {
   const fileName = openedFile?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "No file";
   const lineCount = editContent ? editContent.split("\n").length : 0;
   const rootEntries = listing ? tree[listing.path] ?? [] : [];
+  const viewKind = openedFile ? getFileViewKind(openedFile.path) : null;
+
+  const renderedMarkdown = useMemo(() => {
+    if (!openedFile || viewKind !== "markdown" || viewMode !== "view") return "";
+    return marked(editContent) as string;
+  }, [editContent, openedFile?.path, viewMode, viewKind]);
 
   function renderTree(entries: FsEntry[], depth = 0): React.ReactNode[] {
     return entries.flatMap((entry) => {
@@ -454,6 +680,11 @@ function FileWorkspace(props: {
       const isExpanded = expanded.has(entry.path);
       const isLoading = loadingPaths.has(entry.path);
       const children = isDir && isExpanded ? tree[entry.path] ?? [] : [];
+      const entryIcon = isDir
+        ? <FolderOpen size={14} />
+        : getFileViewKind(entry.path) === "image"
+          ? <ImageIcon size={14} />
+          : <FileText size={14} />;
       const row = <button
         key={entry.path}
         className={`fileEntryRow${openedFile?.path === entry.path ? " active" : ""}`}
@@ -461,7 +692,7 @@ function FileWorkspace(props: {
         onClick={() => isDir ? void toggleDir(entry) : void openFile(entry.path)}
       >
         {isDir ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
-        {isDir ? <FolderOpen size={14} /> : <FileText size={14} />}
+        {entryIcon}
         <span>{entry.name}</span>
       </button>;
       const childRows = isDir && isExpanded ? [
@@ -495,30 +726,90 @@ function FileWorkspace(props: {
       <div className="fileTabs">
         <button className="mobileBackButton" onClick={onBack}><ChevronLeft size={16} />Explorer</button>
         {openedFile ? <div className={`fileTab${isDirty ? " dirty" : ""}`} title={openedFile.path}>
-          <FileText size={14} />
+          {viewKind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
           <span>{fileName}</span>
         </div> : <div className="fileTab muted">Welcome</div>}
         <div className="fileTabSpacer" />
-        {openedFile && <button disabled={saving || !isDirty} onClick={saveFile}>
+        {openedFile && viewKind === "markdown" && <>
+          <button className={viewMode === "edit" ? "activeButton" : ""} onClick={() => setViewMode("edit")}>Edit</button>
+          <button className={viewMode === "view" ? "activeButton" : ""} onClick={() => setViewMode("view")}>Preview</button>
+        </>}
+        {openedFile && viewKind !== "image" && <button disabled={saving || !isDirty} onClick={saveFile}>
           <Save size={14} />{saving ? "Saving..." : isDirty ? "Save" : "Saved"}
         </button>}
       </div>
       {openedFile ? <>
         <div className="fileBreadcrumb" title={openedFile.path}>{openedFile.path}</div>
-        <textarea
-          className="fileEditorTextarea"
-          value={editContent}
-          onChange={(event) => setEditContent(event.target.value)}
-          spellCheck={false}
-        />
+        {viewKind === "image" ? (
+          <div className="fileImageViewer">
+            <img src={rawFileUrl(openedFile.path)} alt={fileName} />
+          </div>
+        ) : viewKind === "markdown" && viewMode === "view" ? (
+          <div className="fileMarkdownPreview" dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
+        ) : viewKind === "code" ? (
+          <CodeEditor value={editContent} path={openedFile.path} onChange={setEditContent} />
+        ) : (
+          <textarea
+            className="fileEditorTextarea"
+            value={editContent}
+            onChange={(event) => setEditContent(event.target.value)}
+            spellCheck={false}
+          />
+        )}
         <div className="fileStatusBar">
-          <span>{isDirty ? "Unsaved" : "Saved"}</span>
-          <span>{lineCount} lines</span>
-          <span>UTF-8</span>
+          {viewKind !== "image" && <span>{isDirty ? "Unsaved" : "Saved"}</span>}
+          {viewKind !== "image" && <span>{lineCount} lines</span>}
+          <span className="fileStatusLang">{viewKind === "image" ? "Image" : viewKind === "markdown" ? "Markdown" : (getLang(openedFile.path) ?? "Text")}</span>
         </div>
       </> : <div className="fileEditorEmpty"><FileText size={32} /><span>Select a file from Explorer</span></div>}
     </section>
   </div>;
+}
+
+function CodeEditor({ value, path, onChange }: {
+  value: string;
+  path: string;
+  onChange: (v: string) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const skipRef = useRef(false);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; });
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const view = new EditorView({
+      doc: value,
+      extensions: [
+        basicSetup,
+        getCmLanguage(path),
+        cmTheme,
+        syntaxHighlighting(cmHighlight, { fallback: false }),
+        search({ top: true }),
+        EditorView.contentAttributes.of({ autocorrect: "off", autocapitalize: "off", spellcheck: "false" }),
+        EditorView.updateListener.of((u) => {
+          if (u.docChanged && !skipRef.current) onChangeRef.current(u.state.doc.toString());
+        }),
+      ],
+      parent: hostRef.current,
+    });
+    viewRef.current = view;
+    view.focus();
+    return () => { view.destroy(); viewRef.current = null; };
+  }, [path]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (current === value) return;
+    skipRef.current = true;
+    view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    skipRef.current = false;
+  }, [value]);
+
+  return <div ref={hostRef} className="codeEditorWrapper" />;
 }
 
 function FolderPicker(props: {

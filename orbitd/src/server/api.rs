@@ -1,7 +1,8 @@
 use super::AppState;
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -280,6 +281,54 @@ pub async fn read_file(
         })
         .into_response(),
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
+}
+
+pub async fn read_raw_file(
+    State(_state): State<AppState>,
+    Query(query): Query<FilePathQuery>,
+) -> Response {
+    let path = PathBuf::from(&query.path);
+
+    let meta = match fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(err) => return (StatusCode::NOT_FOUND, err.to_string()).into_response(),
+    };
+
+    if !meta.is_file() {
+        return (StatusCode::BAD_REQUEST, "path is not a file").into_response();
+    }
+
+    if meta.len() > MAX_FILE_SIZE {
+        return (StatusCode::BAD_REQUEST, "file too large (max 10 MB)").into_response();
+    }
+
+    let bytes = match fs::read(&path).await {
+        Ok(b) => b,
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    };
+
+    let content_type = mime_for_path(&path);
+    Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(bytes))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn mime_for_path(path: &PathBuf) -> &'static str {
+    let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase());
+    match ext.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
+        Some("avif") => "image/avif",
+        Some("tiff") | Some("tif") => "image/tiff",
+        _ => "application/octet-stream",
     }
 }
 

@@ -76,6 +76,19 @@ app.get("/api/v1/fs/files", async (req: any, reply) => {
   return forwardJSON(reply, res);
 });
 
+app.get("/api/v1/fs/raw", async (req: any, reply) => {
+  const res = await fetch(`${config.orbitd}/api/v1/fs/raw${queryString(req)}`, {
+    headers: authHeader(req)
+  });
+  if (!res.ok) {
+    reply.code(res.status);
+    return { error: await res.text() };
+  }
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  reply.header("content-type", contentType);
+  return reply.send(Buffer.from(await res.arrayBuffer()));
+});
+
 app.put("/api/v1/fs/files", async (req: any, reply) => {
   const res = await fetch(`${config.orbitd}/api/v1/fs/files`, {
     method: "PUT",

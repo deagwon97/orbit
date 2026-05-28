@@ -42,6 +42,7 @@ pub fn routes(state: AppState) -> Router {
             "/api/v1/fs/files",
             get(api::read_file).put(api::write_file),
         )
+        .route("/api/v1/fs/raw", get(api::read_raw_file))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, auth))
 }
