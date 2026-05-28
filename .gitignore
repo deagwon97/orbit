@@ -11,3 +11,9 @@ node_modules
 .agents
 .claude
 .codex
+
+# Local deployment/proxy files
+docker-compose.yaml
+docker-compose.yml
+nginx/
+web/backend/Dockerfile
