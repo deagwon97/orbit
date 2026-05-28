@@ -1,3 +1,11 @@
+# Default backend definitions.
+#
+# orbitd resolves commands via its own PATH (set in config.toml or the systemd
+# service Environment=). If a backend command is not on that PATH (e.g. it is
+# installed under ~/.nvm or ~/.local/bin), use an absolute path instead:
+#
+#   command: /home/ubuntu/.nvm/versions/node/v24.16.0/bin/codex
+#
 backends:
   - id: codex
     name: Codex
@@ -19,6 +27,6 @@ backends:
     args: []
   - id: shell
     name: Shell
-    command: bash
+    command: /usr/bin/bash
     args:
       - -l
