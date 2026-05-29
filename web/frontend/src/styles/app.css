@@ -3,6 +3,7 @@
   --keyboard-inset: 0px;
   --visual-viewport-height: 100vh;
   --visual-viewport-top: 0px;
+  --master-pane-width: 600px;
 }
 html, body, #root {
   width: 100%;
@@ -65,7 +66,7 @@ input { min-width: 0; }
   white-space: nowrap;
 }
 
-.layout { flex: 1; display: grid; grid-template-columns: minmax(380px, 520px) 1fr; min-height: 0; overflow: hidden; }
+.layout { flex: 1; display: grid; grid-template-columns: minmax(600px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .masterPane {
   min-width: 0;
   min-height: 0;
@@ -73,6 +74,42 @@ input { min-width: 0; }
   flex-direction: column;
   border-right: 1px solid #d8e0e5;
   background: white;
+}
+.paneResizer {
+  min-width: 8px;
+  min-height: 0;
+  align-self: stretch;
+  position: relative;
+  z-index: 3;
+  cursor: col-resize;
+  background: #f8fafb;
+  border-right: 1px solid #d8e0e5;
+  touch-action: none;
+}
+.paneResizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: #c9d2d8;
+}
+.paneResizer:hover::before,
+.paneResizer:focus-visible::before {
+  background: #5f8f80;
+}
+.paneResizer:focus-visible {
+  outline: 2px solid #8db7a9;
+  outline-offset: -2px;
+}
+.paneResizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.paneResizing iframe,
+.paneResizing .xtermHost {
+  pointer-events: none;
 }
 .paneTabs {
   min-height: 46px;
@@ -433,7 +470,7 @@ button.row { min-height: 42px; justify-content: stretch; }
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(380px, 520px) 1fr;
+  grid-template-columns: minmax(600px, var(--master-pane-width)) 8px minmax(0, 1fr);
   grid-column: 1 / -1;
   overflow: hidden;
   background: white;
@@ -749,6 +786,7 @@ button.row { min-height: 42px; justify-content: stretch; }
   }
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .masterPane { border-right: 0; }
+  .paneResizer { display: none; }
   .layout.showDetail .masterPane { display: none; }
   .layout:not(.showDetail) .workPane { display: none; }
   .workPane { padding: 8px; }

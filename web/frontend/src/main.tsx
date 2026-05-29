@@ -264,6 +264,11 @@ type ListEntriesResponse = {
 type OpenedFile = { path: string; content: string; savedContent: string };
 type EntryTree = Record<string, FsEntry[]>;
 
+const DEFAULT_MASTER_PANE_WIDTH = 600;
+const MIN_MASTER_PANE_WIDTH = 600;
+const MAX_MASTER_PANE_WIDTH = 860;
+const MASTER_PANE_WIDTH_KEY = "orbit.masterPaneWidth";
+
 const defaultBackends: AgentBackend[] = [
   { id: "codex", name: "Codex", command: "codex", args: [] },
   { id: "claude", name: "Claude Code", command: "claude", args: [] },
@@ -381,6 +386,16 @@ function isCoarsePointer() {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
 }
 
+function clampMasterPaneWidth(value: number, containerWidth = window.innerWidth) {
+  const maxByViewport = Math.max(MIN_MASTER_PANE_WIDTH, containerWidth - 360);
+  return Math.round(Math.max(MIN_MASTER_PANE_WIDTH, Math.min(value, MAX_MASTER_PANE_WIDTH, maxByViewport)));
+}
+
+function savedMasterPaneWidth() {
+  const value = Number(localStorage.getItem(MASTER_PANE_WIDTH_KEY));
+  return Number.isFinite(value) ? clampMasterPaneWidth(value) : DEFAULT_MASTER_PANE_WIDTH;
+}
+
 function useMobileViewportGuards() {
   useEffect(() => {
     let startX = 0;
@@ -445,6 +460,7 @@ function App() {
   useMobileViewportGuards();
 
   const [connections, setConnections] = useState<OrbitConnection[]>(() => savedConnections());
+  const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
   const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backends, setBackends] = useState<AgentBackend[]>(defaultBackends);
@@ -474,6 +490,7 @@ function App() {
     return connections.find((connection) => connection.id === activeConnectionId) ?? connections[0] ?? null;
   }, [connections, activeConnectionId]);
   const selected = useMemo(() => sessions.find((session) => session.key === selectedKey) ?? null, [sessions, selectedKey]);
+  const layoutStyle = { "--master-pane-width": `${masterPaneWidth}px` } as React.CSSProperties;
 
   function saveConnectionList(next: OrbitConnection[]) {
     setConnections(next);
@@ -645,6 +662,16 @@ function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+  useEffect(() => {
+    localStorage.setItem(MASTER_PANE_WIDTH_KEY, String(masterPaneWidth));
+  }, [masterPaneWidth]);
+  useEffect(() => {
+    const onResize = () => {
+      setMasterPaneWidth((width) => clampMasterPaneWidth(width));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   if (!authed) return <Login onLogin={addConnection} />;
 
@@ -659,7 +686,7 @@ function App() {
       </div>
     </section>
     {message && <div className="statusLine">{message}</div>}
-    <section className={`layout${detailOpen ? " showDetail" : ""}`}>
+    <section className={`layout${detailOpen ? " showDetail" : ""}`} style={layoutStyle}>
       {connectionsOpen ? <ConnectionsWorkspace
           connections={connections}
           activeConnectionId={activeConnection?.id ?? ""}
@@ -673,6 +700,8 @@ function App() {
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
           onConnections={() => { setConnectionsOpen(true); setDetailOpen(false); }}
           detailOpen={detailOpen}
+          masterPaneWidth={masterPaneWidth}
+          onMasterPaneWidth={setMasterPaneWidth}
           onDetailOpen={() => setDetailOpen(true)}
           onBack={() => setDetailOpen(false)}
         /> : <>
@@ -696,6 +725,7 @@ function App() {
             </button>)}
           </div>
         </div>
+        <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} />
         <div className="workPane">
           <button className="mobileBackButton" onClick={() => setDetailOpen(false)}><ChevronLeft size={16} />Sessions</button>
           {selected ? <SessionPane
@@ -743,6 +773,72 @@ function App() {
       }}
     />}
   </main>;
+}
+
+function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (width: number) => void }) {
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove("paneResizing");
+    };
+  }, []);
+
+  function commitWidth(value: number) {
+    onWidthChange(clampMasterPaneWidth(value));
+  }
+
+  return <div
+    className="paneResizer"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize panes"
+    aria-valuemin={MIN_MASTER_PANE_WIDTH}
+    aria-valuemax={MAX_MASTER_PANE_WIDTH}
+    aria-valuenow={width}
+    tabIndex={0}
+    onKeyDown={(event) => {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        commitWidth(width - (event.shiftKey ? 80 : 20));
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        commitWidth(width + (event.shiftKey ? 80 : 20));
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        commitWidth(MIN_MASTER_PANE_WIDTH);
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        commitWidth(MAX_MASTER_PANE_WIDTH);
+      }
+    }}
+    onPointerDown={(event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      document.body.classList.add("paneResizing");
+    }}
+    onPointerMove={(event) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      commitWidth(drag.startWidth + event.clientX - drag.startX);
+    }}
+    onPointerUp={(event) => {
+      const drag = dragRef.current;
+      if (drag?.pointerId === event.pointerId) {
+        dragRef.current = null;
+        document.body.classList.remove("paneResizing");
+      }
+    }}
+    onPointerCancel={() => {
+      dragRef.current = null;
+      document.body.classList.remove("paneResizing");
+    }}
+  />;
 }
 
 function ConnectionsWorkspace(props: {
@@ -844,10 +940,12 @@ function FileWorkspace(props: {
   onSessions: () => void;
   onConnections: () => void;
   detailOpen: boolean;
+  masterPaneWidth: number;
+  onMasterPaneWidth: (width: number) => void;
   onDetailOpen: () => void;
   onBack: () => void;
 }) {
-  const { connection, initialPath, onSessions, onConnections, detailOpen, onDetailOpen, onBack } = props;
+  const { connection, initialPath, onSessions, onConnections, detailOpen, masterPaneWidth, onMasterPaneWidth, onDetailOpen, onBack } = props;
   const [listing, setListing] = useState<ListEntriesResponse | null>(null);
   const [listBusy, setListBusy] = useState(false);
   const [tree, setTree] = useState<EntryTree>({});
@@ -1021,6 +1119,7 @@ function FileWorkspace(props: {
         {!listBusy && renderTree(rootEntries)}
       </div>
     </aside>
+    <PaneResizer width={masterPaneWidth} onWidthChange={onMasterPaneWidth} />
     <section className="workPane fileEditorSurface">
       <div className="fileTabs">
         <button className="mobileBackButton" onClick={onBack}><ChevronLeft size={16} />Explorer</button>
