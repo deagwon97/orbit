@@ -324,6 +324,16 @@ func TestAdaptOutputColorsRewritesAmbientDarkBackground(t *testing.T) {
 			want: "a\x1b[49;37mtext",
 		},
 		{
+			name: "indexed medium gray (244) bg on dark terminal",
+			in:   "a\x1b[48;5;244;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+		{
+			name: "indexed bright-black (8) bg on dark terminal",
+			in:   "a\x1b[48;5;8;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+		{
 			name: "rgb near-black bg on dark terminal",
 			in:   "a\x1b[48;2;40;44;52;37mtext",
 			want: "a\x1b[49;37mtext",

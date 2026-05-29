@@ -878,8 +878,11 @@ func isHarshPaletteBackground(index int, lightBg bool) bool {
 		return true
 	}
 	if !lightBg {
-		// 0 = black; 232-238 = very dark gray ramp used by dark-theme TUIs
-		return index == 0 || (index >= 232 && index <= 238)
+		// On dark terminals strip the full 256-colour grayscale ramp (232-255),
+		// plus palette 0 (black) and 8 (bright-black / dark-gray). All of these
+		// are near-achromatic and create a visible "patch" against the terminal's
+		// own dark background.
+		return index == 0 || index == 8 || index >= 232
 	}
 	// 15 = white; 252-255 = near-white gray ramp
 	return index == 15 || index >= 252
@@ -902,10 +905,9 @@ func isHarshRGBBackground(r, g, b int, lightBg bool) bool {
 		saturation = float64(max(r,g,b)-min(r,g,b)) / float64(maxC)
 	}
 	if !lightBg {
-		// Dark terminal: strip dark near-gray backgrounds (e.g. #282c34, #3c3c3c).
-		// Uses the same simplified (non-gamma) luminance formula as OSC 11 detection,
-		// so 0.25 corresponds roughly to rgb(60,60,60).
-		return lum < 0.25 && saturation < 0.30
+		// Dark terminal: strip any near-achromatic background regardless of
+		// lightness — even a medium gray is visibly wrong on a dark terminal.
+		return saturation < 0.30
 	}
 	// Light terminal: strip bright near-gray backgrounds
 	return lum > 0.75 && saturation < 0.30
