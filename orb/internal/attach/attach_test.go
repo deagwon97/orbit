@@ -307,6 +307,73 @@ func TestAdaptOutputColorsLeavesForegroundInInverseMode(t *testing.T) {
 	}
 }
 
+func TestAdaptOutputColorsRewritesAmbientDarkBackground(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "ansi black bg on dark terminal",
+			in:   "a\x1b[40;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+		{
+			name: "indexed dark gray (235) bg on dark terminal",
+			in:   "a\x1b[48;5;235;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+		{
+			name: "rgb near-black bg on dark terminal",
+			in:   "a\x1b[48;2;40;44;52;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+		{
+			name: "rgb dark gray bg on dark terminal",
+			in:   "a\x1b[48;2;60;60;60;37mtext",
+			want: "a\x1b[49;37mtext",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := adaptOutputColors([]byte(tc.in), false)
+			if string(out) != tc.want {
+				t.Fatalf("out = %q, want %q", string(out), tc.want)
+			}
+		})
+	}
+}
+
+func TestAdaptOutputColorsRewritesAmbientLightBackground(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "ansi white bg on light terminal",
+			in:   "a\x1b[47;30mtext",
+			want: "a\x1b[49;30mtext",
+		},
+		{
+			name: "indexed near-white (253) bg on light terminal",
+			in:   "a\x1b[48;5;253;30mtext",
+			want: "a\x1b[49;30mtext",
+		},
+		{
+			name: "rgb near-white bg on light terminal",
+			in:   "a\x1b[48;2;240;240;240;30mtext",
+			want: "a\x1b[49;30mtext",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := adaptOutputColors([]byte(tc.in), true)
+			if string(out) != tc.want {
+				t.Fatalf("out = %q, want %q", string(out), tc.want)
+			}
+		})
+	}
+}
+
 func TestAdaptOutputColorsRewritesHarshYellowBackground(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

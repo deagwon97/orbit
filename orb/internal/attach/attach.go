@@ -795,7 +795,8 @@ func (a *colorAdapter) rewriteSGR(in []byte, start int) (int, []byte, bool) {
 				p += 2
 				changed = true
 			} else {
-				rewritten = append(rewritten, parts[p])
+				rewritten = append(rewritten, parts[p:p+3]...)
+				p += 2
 			}
 		case value == 38 && p+4 < len(parts) && parts[p+1] == "2":
 			r, _ := strconv.Atoi(parts[p+2])
@@ -809,30 +810,33 @@ func (a *colorAdapter) rewriteSGR(in []byte, start int) (int, []byte, bool) {
 				p += 4
 				changed = true
 			} else {
-				rewritten = append(rewritten, parts[p])
+				rewritten = append(rewritten, parts[p:p+5]...)
+				p += 4
 			}
-		case isHarshANSIBackground(value):
+		case isHarshANSIBackground(value, a.lightBg):
 			rewritten = append(rewritten, "49")
 			changed = true
 		case value == 48 && p+2 < len(parts) && parts[p+1] == "5":
 			palIdx, _ := strconv.Atoi(parts[p+2])
-			if isHarshPaletteBackground(palIdx) {
+			if isHarshPaletteBackground(palIdx, a.lightBg) {
 				rewritten = append(rewritten, "49")
 				p += 2
 				changed = true
 			} else {
-				rewritten = append(rewritten, parts[p])
+				rewritten = append(rewritten, parts[p:p+3]...)
+				p += 2
 			}
 		case value == 48 && p+4 < len(parts) && parts[p+1] == "2":
 			r, _ := strconv.Atoi(parts[p+2])
 			g, _ := strconv.Atoi(parts[p+3])
 			b, _ := strconv.Atoi(parts[p+4])
-			if isHarshRGBBackground(r, g, b) {
+			if isHarshRGBBackground(r, g, b, a.lightBg) {
 				rewritten = append(rewritten, "49")
 				p += 4
 				changed = true
 			} else {
-				rewritten = append(rewritten, parts[p])
+				rewritten = append(rewritten, parts[p:p+5]...)
+				p += 4
 			}
 		default:
 			rewritten = append(rewritten, parts[p])
@@ -849,25 +853,62 @@ func (a *colorAdapter) rewriteSGR(in []byte, start int) (int, []byte, bool) {
 	return i + 1, []byte("\x1b[" + strings.Join(rewritten, ";") + "m"), true
 }
 
-func isHarshANSIBackground(value int) bool {
-	return value == 43 || value == 103
-}
-
-func isHarshPaletteBackground(index int) bool {
-	switch index {
-	case 3, 11, 220, 221, 222, 226, 227, 228, 229, 230:
+// isHarshANSIBackground reports whether the ANSI background SGR value should
+// be stripped on a terminal with the given background tone.
+// Always strips harsh yellows; additionally strips black on dark terminals
+// and white on light terminals because those blend with the terminal's own
+// background and create a "patchy" appearance.
+func isHarshANSIBackground(value int, lightBg bool) bool {
+	switch value {
+	case 43, 103: // harsh yellow — always strip
 		return true
-	default:
-		return false
+	case 40: // black bg — invisible noise on dark terminals
+		return !lightBg
+	case 47, 107: // white/bright-white bg — invisible noise on light terminals
+		return lightBg
 	}
+	return false
 }
 
-func isHarshRGBBackground(r, g, b int) bool {
+// isHarshPaletteBackground reports whether palette index N used as a
+// background should be stripped for the given terminal background tone.
+func isHarshPaletteBackground(index int, lightBg bool) bool {
+	switch index {
+	case 3, 11, 220, 221, 222, 226, 227, 228, 229, 230: // harsh yellows
+		return true
+	}
+	if !lightBg {
+		// 0 = black; 232-238 = very dark gray ramp used by dark-theme TUIs
+		return index == 0 || (index >= 232 && index <= 238)
+	}
+	// 15 = white; 252-255 = near-white gray ramp
+	return index == 15 || index >= 252
+}
+
+// isHarshRGBBackground reports whether an RGB background should be stripped.
+func isHarshRGBBackground(r, g, b int, lightBg bool) bool {
 	if r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255 {
 		return false
 	}
 	lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255.0
-	return lum > 0.72 && r > 170 && g > 140 && b < 220 && r >= b+25
+	// Harsh bright yellow — always strip
+	if lum > 0.72 && r > 170 && g > 140 && b < 220 && r >= b+25 {
+		return true
+	}
+	// Near-achromatic (low saturation) check
+	maxC := max(r, g, b)
+	saturation := 0.0
+	if maxC > 0 {
+		saturation = float64(max(r,g,b)-min(r,g,b)) / float64(maxC)
+	}
+	if !lightBg {
+		// Dark terminal: strip dark near-gray backgrounds (e.g. #282c34, #3c3c3c).
+		// Uses the same simplified (non-gamma) luminance formula as OSC 11 detection,
+		// so 0.25 corresponds roughly to rgb(60,60,60).
+		return lum < 0.25 && saturation < 0.30
+	}
+	// Light terminal: strip bright near-gray backgrounds
+	return lum > 0.75 && saturation < 0.30
 }
 
 func (a *colorAdapter) previewSGR(parts []string) colorAdapter {
@@ -885,25 +926,27 @@ func (a *colorAdapter) previewEffectiveSGR(parts []string) colorAdapter {
 			continue
 		}
 		switch {
-		case isHarshANSIBackground(value):
+		case isHarshANSIBackground(value, a.lightBg):
 			normalized = append(normalized, "49")
 		case value == 48 && p+2 < len(parts) && parts[p+1] == "5":
 			palIdx, _ := strconv.Atoi(parts[p+2])
-			if isHarshPaletteBackground(palIdx) {
+			if isHarshPaletteBackground(palIdx, a.lightBg) {
 				normalized = append(normalized, "49")
 				p += 2
 			} else {
-				normalized = append(normalized, parts[p])
+				normalized = append(normalized, parts[p:p+3]...)
+				p += 2
 			}
 		case value == 48 && p+4 < len(parts) && parts[p+1] == "2":
 			r, _ := strconv.Atoi(parts[p+2])
 			g, _ := strconv.Atoi(parts[p+3])
 			b, _ := strconv.Atoi(parts[p+4])
-			if isHarshRGBBackground(r, g, b) {
+			if isHarshRGBBackground(r, g, b, a.lightBg) {
 				normalized = append(normalized, "49")
 				p += 4
 			} else {
-				normalized = append(normalized, parts[p])
+				normalized = append(normalized, parts[p:p+5]...)
+				p += 4
 			}
 		default:
 			normalized = append(normalized, parts[p])
