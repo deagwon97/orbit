@@ -76,10 +76,15 @@ func (c *Command) Run() error {
 		return err
 	}
 	defer ws.Close()
-	if _, err := io.WriteString(c.out, clearScreenSeq); err != nil {
+	// Exit any leftover alternate screen first, then reset SGR and clear.
+	// Sending localScrollbackSeq (which includes ?1049l) before the SGR
+	// reset is important: ?1049l can restore a saved cursor/attribute state
+	// that includes a stale background color. The explicit \x1b[0m after it
+	// ensures the screen is always cleared with the default background.
+	if _, err := io.WriteString(c.out, localScrollbackSeq); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(c.out, localScrollbackSeq); err != nil {
+	if _, err := io.WriteString(c.out, "\x1b[0m"+clearScreenSeq); err != nil {
 		return err
 	}
 
@@ -477,6 +482,17 @@ func detectLightBackground(in io.Reader, out io.Writer) bool {
 	if light, ok := configuredLightBackground(); ok {
 		return light
 	}
+	// /dev/tty is the controlling terminal regardless of whether stdin/stdout
+	// are redirected. Opening it directly means the OSC 11 query reaches the
+	// real terminal even inside tmux, screen, or an SSH pipeline.
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		defer tty.Close()
+		if lum, ok := queryOSC11Luminance(tty, tty); ok {
+			return lum > 0.5
+		}
+		return fallbackLightBackground()
+	}
+	// /dev/tty unavailable: fall back to the caller-supplied in/out pair.
 	file, ok := in.(*os.File)
 	if !ok {
 		file = os.Stdin
@@ -484,16 +500,26 @@ func detectLightBackground(in io.Reader, out io.Writer) bool {
 	if file == nil {
 		return fallbackLightBackground()
 	}
-	fd := int(file.Fd())
+	if lum, ok := queryOSC11Luminance(file, out); ok {
+		return lum > 0.5
+	}
+	return fallbackLightBackground()
+}
+
+// queryOSC11Luminance sends an OSC 11 background-color query to w, reads the
+// terminal's response from r, and returns the relative luminance (0–1).
+// r must already be in raw mode so the terminal echoes each byte immediately.
+func queryOSC11Luminance(r *os.File, w io.Writer) (float64, bool) {
+	fd := int(r.Fd())
 	oldFlags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
-		return fallbackLightBackground()
+		return 0, false
 	}
-	if _, err := io.WriteString(out, "\x1b]11;?\a"); err != nil {
-		return fallbackLightBackground()
+	if _, err := io.WriteString(w, "\x1b]11;?\a"); err != nil {
+		return 0, false
 	}
 	if err := unix.SetNonblock(fd, true); err != nil {
-		return fallbackLightBackground()
+		return 0, false
 	}
 	defer func() { _, _ = unix.FcntlInt(uintptr(fd), unix.F_SETFL, oldFlags) }()
 
@@ -501,11 +527,11 @@ func detectLightBackground(in io.Reader, out io.Writer) bool {
 	buf := make([]byte, 0, 64)
 	tmp := make([]byte, 64)
 	for time.Now().Before(deadline) {
-		n, err := file.Read(tmp)
+		n, err := r.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
 			if lum, ok := parseOSC11Luminance(buf); ok {
-				return lum > 0.5
+				return lum, true
 			}
 		}
 		if err != nil {
@@ -516,7 +542,7 @@ func detectLightBackground(in io.Reader, out io.Writer) bool {
 			break
 		}
 	}
-	return fallbackLightBackground()
+	return 0, false
 }
 
 func configuredLightBackground() (bool, bool) {
