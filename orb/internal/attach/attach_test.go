@@ -249,52 +249,62 @@ func TestAdaptOutputColorsLightBgLeavesBlackForeground(t *testing.T) {
 	}
 }
 
-func TestAdaptOutputColorsLeavesForegroundOnExplicitBackground(t *testing.T) {
+func TestAdaptOutputColorsStripsAllExplicitBackgrounds(t *testing.T) {
+	// All explicit backgrounds are stripped because keepLocalScrollback forces
+	// session content onto the normal screen; any background from the TUI app
+	// clashes with the user's terminal theme regardless of colour.
 	for _, tc := range []struct {
 		name    string
 		in      string
 		lightBg bool
+		want    string
 	}{
 		{
-			name:    "dark black on green background",
+			name:    "dark: black fg on green background — bg stripped, fg remapped",
 			in:      "a\x1b[42;30mblack-on-green",
 			lightBg: false,
+			want:    "a\x1b[49;39mblack-on-green",
 		},
 		{
-			name:    "dark black then red background",
+			name:    "dark: black fg then red background — bg stripped, fg remapped",
 			in:      "a\x1b[30;41mblack-on-red",
 			lightBg: false,
+			want:    "a\x1b[39;49mblack-on-red",
 		},
 		{
-			name:    "light white on red background",
+			name:    "light: white fg on red background — bg stripped, fg remapped",
 			in:      "a\x1b[41;37mwhite-on-red",
 			lightBg: true,
+			want:    "a\x1b[49;39mwhite-on-red",
 		},
 		{
-			name:    "light indexed white on indexed background",
+			name:    "light: indexed white on indexed green background — both stripped",
 			in:      "a\x1b[48;5;2;38;5;15mwhite-on-green",
 			lightBg: true,
+			want:    "a\x1b[49;39mwhite-on-green",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := adaptOutputColors([]byte(tc.in), tc.lightBg)
-			if string(out) != tc.in {
-				t.Fatalf("out = %q, want original", string(out))
+			if string(out) != tc.want {
+				t.Fatalf("out = %q, want %q", string(out), tc.want)
 			}
 		})
 	}
 }
 
-func TestAdaptOutputColorsTracksExplicitBackgroundAcrossChunks(t *testing.T) {
+func TestAdaptOutputColorsStripsExplicitBackgroundAcrossChunks(t *testing.T) {
+	// Even after stripping, the state update ensures fg is remapped in later chunks.
 	adapter := newColorAdapter(false)
-	if out := adapter.adapt([]byte("\x1b[42m")); string(out) != "\x1b[42m" {
-		t.Fatalf("background chunk out = %q", string(out))
+	if out := adapter.adapt([]byte("\x1b[42m")); string(out) != "\x1b[49m" {
+		t.Fatalf("background chunk out = %q, want stripped to default", string(out))
 	}
-	if out := adapter.adapt([]byte("\x1b[30mtext")); string(out) != "\x1b[30mtext" {
-		t.Fatalf("foreground chunk out = %q, want black preserved on explicit background", string(out))
+	// bg was stripped → explicitBg=false → black fg is remapped immediately
+	if out := adapter.adapt([]byte("\x1b[30mtext")); string(out) != "\x1b[39mtext" {
+		t.Fatalf("foreground chunk out = %q, want black rewritten (no explicit bg)", string(out))
 	}
 	if out := adapter.adapt([]byte("\x1b[49m\x1b[30mtext")); string(out) != "\x1b[49m\x1b[39mtext" {
-		t.Fatalf("reset background chunk out = %q, want black rewritten after default background returns", string(out))
+		t.Fatalf("reset chunk out = %q", string(out))
 	}
 }
 
