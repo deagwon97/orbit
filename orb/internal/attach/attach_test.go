@@ -129,6 +129,38 @@ func TestSanitizeReplayStripsKeyboardProtocolQuery(t *testing.T) {
 	}
 }
 
+func TestKeepLocalScrollbackStripsMouseTrackingEnable(t *testing.T) {
+	in := []byte("a\x1b[?1000hb\x1b[?1002;1005;1006;1015hc\x1b[?1007hd")
+	out := keepLocalScrollback(in)
+	if string(out) != "abcd" {
+		t.Fatalf("out = %q, want mouse enable stripped", string(out))
+	}
+}
+
+func TestKeepLocalScrollbackKeepsMouseTrackingDisable(t *testing.T) {
+	in := []byte("a\x1b[?1000lb")
+	out := keepLocalScrollback(in)
+	if string(out) != string(in) {
+		t.Fatalf("out = %q, want original", string(out))
+	}
+}
+
+func TestKeepLocalScrollbackStripsAlternateScreen(t *testing.T) {
+	in := []byte("a\x1b[?1049hb\x1b[?1049lc")
+	out := keepLocalScrollback(in)
+	if string(out) != "abc" {
+		t.Fatalf("out = %q, want alternate screen stripped", string(out))
+	}
+}
+
+func TestKeepLocalScrollbackLeavesOtherCSI(t *testing.T) {
+	in := []byte("a\x1b[31mred\x1b[?25lb")
+	out := keepLocalScrollback(in)
+	if string(out) != string(in) {
+		t.Fatalf("out = %q, want original", string(out))
+	}
+}
+
 func TestAdaptOutputColorsRewritesBlackForeground(t *testing.T) {
 	in := []byte("a\x1b[30mblack\x1b[0m b\x1b[1;30;4mcombo")
 	out := adaptOutputColors(in, false)
@@ -217,6 +249,105 @@ func TestAdaptOutputColorsLightBgLeavesBlackForeground(t *testing.T) {
 	}
 }
 
+func TestAdaptOutputColorsLeavesForegroundOnExplicitBackground(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      string
+		lightBg bool
+	}{
+		{
+			name:    "dark black on green background",
+			in:      "a\x1b[42;30mblack-on-green",
+			lightBg: false,
+		},
+		{
+			name:    "dark black then red background",
+			in:      "a\x1b[30;41mblack-on-red",
+			lightBg: false,
+		},
+		{
+			name:    "light white on red background",
+			in:      "a\x1b[41;37mwhite-on-red",
+			lightBg: true,
+		},
+		{
+			name:    "light indexed white on indexed background",
+			in:      "a\x1b[48;5;2;38;5;15mwhite-on-green",
+			lightBg: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := adaptOutputColors([]byte(tc.in), tc.lightBg)
+			if string(out) != tc.in {
+				t.Fatalf("out = %q, want original", string(out))
+			}
+		})
+	}
+}
+
+func TestAdaptOutputColorsTracksExplicitBackgroundAcrossChunks(t *testing.T) {
+	adapter := newColorAdapter(false)
+	if out := adapter.adapt([]byte("\x1b[42m")); string(out) != "\x1b[42m" {
+		t.Fatalf("background chunk out = %q", string(out))
+	}
+	if out := adapter.adapt([]byte("\x1b[30mtext")); string(out) != "\x1b[30mtext" {
+		t.Fatalf("foreground chunk out = %q, want black preserved on explicit background", string(out))
+	}
+	if out := adapter.adapt([]byte("\x1b[49m\x1b[30mtext")); string(out) != "\x1b[49m\x1b[39mtext" {
+		t.Fatalf("reset background chunk out = %q, want black rewritten after default background returns", string(out))
+	}
+}
+
+func TestAdaptOutputColorsLeavesForegroundInInverseMode(t *testing.T) {
+	in := []byte("a\x1b[7;30minverse\x1b[27m\x1b[30mnormal")
+	out := adaptOutputColors(in, false)
+	want := "a\x1b[7;30minverse\x1b[27m\x1b[39mnormal"
+	if string(out) != want {
+		t.Fatalf("out = %q, want %q", string(out), want)
+	}
+}
+
+func TestAdaptOutputColorsRewritesHarshYellowBackground(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      string
+		lightBg bool
+		want    string
+	}{
+		{
+			name:    "ansi yellow with black on dark terminal",
+			in:      "a\x1b[43;30myellow",
+			lightBg: false,
+			want:    "a\x1b[49;39myellow",
+		},
+		{
+			name:    "ansi bright yellow with white on light terminal",
+			in:      "a\x1b[103;37myellow",
+			lightBg: true,
+			want:    "a\x1b[49;39myellow",
+		},
+		{
+			name:    "indexed yellow",
+			in:      "a\x1b[48;5;11;30myellow",
+			lightBg: false,
+			want:    "a\x1b[49;39myellow",
+		},
+		{
+			name:    "rgb yellow",
+			in:      "a\x1b[48;2;246;226;183;30myellow",
+			lightBg: false,
+			want:    "a\x1b[49;39myellow",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := adaptOutputColors([]byte(tc.in), tc.lightBg)
+			if string(out) != tc.want {
+				t.Fatalf("out = %q, want %q", string(out), tc.want)
+			}
+		})
+	}
+}
+
 func TestParseOSC11LuminanceWhiteBackground(t *testing.T) {
 	// Mac Terminal default white background
 	data := []byte("\x1b]11;rgb:ffff/ffff/ffff\a")
@@ -259,6 +390,46 @@ func TestParseOSC11LuminanceIncomplete(t *testing.T) {
 	_, ok := parseOSC11Luminance(data)
 	if ok {
 		t.Fatal("expected not-ok for incomplete response")
+	}
+}
+
+func TestConfiguredLightBackgroundOverride(t *testing.T) {
+	t.Setenv("ORB_ATTACH_BACKGROUND", "light")
+	light, ok := configuredLightBackground()
+	if !ok || !light {
+		t.Fatalf("configuredLightBackground() = %v, %v; want true, true", light, ok)
+	}
+
+	t.Setenv("ORB_ATTACH_BACKGROUND", "dark")
+	light, ok = configuredLightBackground()
+	if !ok || light {
+		t.Fatalf("configuredLightBackground() = %v, %v; want false, true", light, ok)
+	}
+}
+
+func TestColorFGBGLightBackground(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{value: "15;0", want: false},
+		{value: "0;15", want: true},
+		{value: "0;7", want: true},
+		{value: "7;8", want: false},
+	} {
+		light, ok := colorFGBGLightBackground(tc.value)
+		if !ok || light != tc.want {
+			t.Fatalf("COLORFGBG %q = %v, %v; want %v, true", tc.value, light, ok, tc.want)
+		}
+	}
+}
+
+func TestColorFGBGLightBackgroundRejectsInvalidValue(t *testing.T) {
+	for _, value := range []string{"", "x", "0;99"} {
+		_, ok := colorFGBGLightBackground(value)
+		if ok {
+			t.Fatalf("COLORFGBG %q unexpectedly parsed", value)
+		}
 	}
 }
 

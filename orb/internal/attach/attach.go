@@ -28,7 +28,8 @@ import (
 
 const (
 	clearScreenSeq     = "\x1b[2J\x1b[H"
-	restoreTerminalSeq = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[0m"
+	localScrollbackSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1047l\x1b[?1048l\x1b[?1049l"
+	restoreTerminalSeq = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[0m"
 )
 
 var detachTokens = [][]byte{
@@ -76,6 +77,9 @@ func (c *Command) Run() error {
 	}
 	defer ws.Close()
 	if _, err := io.WriteString(c.out, clearScreenSeq); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(c.out, localScrollbackSeq); err != nil {
 		return err
 	}
 
@@ -470,23 +474,26 @@ func sendResize(ws stdinWriter, in io.Reader) {
 // It must be called after enableRaw so the terminal echoes the response immediately.
 // Returns false (dark) when the terminal does not respond within 200 ms.
 func detectLightBackground(in io.Reader, out io.Writer) bool {
+	if light, ok := configuredLightBackground(); ok {
+		return light
+	}
 	file, ok := in.(*os.File)
 	if !ok {
 		file = os.Stdin
 	}
 	if file == nil {
-		return false
+		return fallbackLightBackground()
 	}
 	fd := int(file.Fd())
 	oldFlags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
-		return false
+		return fallbackLightBackground()
 	}
 	if _, err := io.WriteString(out, "\x1b]11;?\a"); err != nil {
-		return false
+		return fallbackLightBackground()
 	}
 	if err := unix.SetNonblock(fd, true); err != nil {
-		return false
+		return fallbackLightBackground()
 	}
 	defer func() { _, _ = unix.FcntlInt(uintptr(fd), unix.F_SETFL, oldFlags) }()
 
@@ -508,6 +515,53 @@ func detectLightBackground(in io.Reader, out io.Writer) bool {
 			}
 			break
 		}
+	}
+	return fallbackLightBackground()
+}
+
+func configuredLightBackground() (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ORB_ATTACH_BACKGROUND"))) {
+	case "light":
+		return true, true
+	case "dark":
+		return false, true
+	}
+	return false, false
+}
+
+func colorFGBGLightBackground(value string) (bool, bool) {
+	parts := strings.Split(strings.TrimSpace(value), ";")
+	if len(parts) == 0 || parts[len(parts)-1] == "" {
+		return false, false
+	}
+	bg, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil || bg < 0 || bg > 15 {
+		return false, false
+	}
+	luminance := []float64{
+		0.00, // black
+		0.11, // red
+		0.59, // green
+		0.70, // yellow
+		0.11, // blue
+		0.28, // magenta
+		0.70, // cyan
+		0.87, // white
+		0.20, // bright black / gray
+		0.35, // bright red
+		0.72, // bright green
+		0.93, // bright yellow
+		0.30, // bright blue
+		0.50, // bright magenta
+		0.86, // bright cyan
+		1.00, // bright white
+	}
+	return luminance[bg] > 0.5, true
+}
+
+func fallbackLightBackground() bool {
+	if light, ok := colorFGBGLightBackground(os.Getenv("COLORFGBG")); ok {
+		return light
 	}
 	return false
 }
@@ -549,6 +603,7 @@ func parseOSC11Luminance(data []byte) (float64, bool) {
 }
 
 func copyOutput(ws *websocket, out io.Writer, lightBg bool) error {
+	adapter := newColorAdapter(lightBg)
 	for {
 		op, payload, err := ws.readFrame()
 		if err != nil {
@@ -565,7 +620,8 @@ func copyOutput(ws *websocket, out io.Writer, lightBg bool) error {
 				if err != nil {
 					return err
 				}
-				bytes = adaptOutputColors(bytes, lightBg)
+				bytes = keepLocalScrollback(bytes)
+				bytes = adapter.adapt(bytes)
 				if _, err := out.Write(bytes); err != nil {
 					return err
 				}
@@ -578,7 +634,7 @@ func copyOutput(ws *websocket, out io.Writer, lightBg bool) error {
 	}
 }
 
-func adaptOutputColors(in []byte, lightBg bool) []byte {
+func keepLocalScrollback(in []byte) []byte {
 	out := make([]byte, 0, len(in))
 	for i := 0; i < len(in); {
 		if in[i] != 0x1b || i+1 >= len(in) || in[i+1] != '[' {
@@ -586,7 +642,76 @@ func adaptOutputColors(in []byte, lightBg bool) []byte {
 			i++
 			continue
 		}
-		next, replacement, ok := rewriteSGR(in, i, lightBg)
+		next, strip := scanLocalScrollbackMode(in, i+2)
+		if next == i {
+			out = append(out, in[i])
+			i++
+			continue
+		}
+		if strip {
+			i = next
+			continue
+		}
+		out = append(out, in[i:next]...)
+		i = next
+	}
+	return out
+}
+
+func scanLocalScrollbackMode(in []byte, i int) (int, bool) {
+	start := i
+	for i < len(in) {
+		b := in[i]
+		if b >= 0x40 && b <= 0x7e {
+			if b != 'h' && b != 'l' {
+				return i + 1, false
+			}
+			params := string(in[start:i])
+			if !strings.HasPrefix(params, "?") {
+				return i + 1, false
+			}
+			return i + 1, localScrollbackModeShouldStrip(params, b)
+		}
+		i++
+	}
+	return start - 2, false
+}
+
+func localScrollbackModeShouldStrip(params string, final byte) bool {
+	for _, part := range strings.Split(strings.TrimPrefix(params, "?"), ";") {
+		switch part {
+		case "1000", "1002", "1003", "1005", "1006", "1007", "1015":
+			return final == 'h'
+		case "1047", "1048", "1049":
+			return true
+		}
+	}
+	return false
+}
+
+func adaptOutputColors(in []byte, lightBg bool) []byte {
+	return newColorAdapter(lightBg).adapt(in)
+}
+
+type colorAdapter struct {
+	lightBg    bool
+	explicitBg bool
+	inverse    bool
+}
+
+func newColorAdapter(lightBg bool) *colorAdapter {
+	return &colorAdapter{lightBg: lightBg}
+}
+
+func (a *colorAdapter) adapt(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); {
+		if in[i] != 0x1b || i+1 >= len(in) || in[i+1] != '[' {
+			out = append(out, in[i])
+			i++
+			continue
+		}
+		next, replacement, ok := a.rewriteSGR(in, i)
 		if !ok {
 			out = append(out, in[i])
 			i++
@@ -598,7 +723,7 @@ func adaptOutputColors(in []byte, lightBg bool) []byte {
 	return out
 }
 
-func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
+func (a *colorAdapter) rewriteSGR(in []byte, start int) (int, []byte, bool) {
 	i := start + 2
 	for i < len(in) && in[i] != 'm' {
 		if in[i] < '0' || in[i] > '9' {
@@ -613,22 +738,25 @@ func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
 	}
 	params := string(in[start+2 : i])
 	if params == "" {
+		a.applySGR([]string{"0"})
 		return i + 1, in[start : i+1], true
 	}
 	parts := strings.Split(params, ";")
 	rewritten := make([]string, 0, len(parts))
 	changed := false
+	stateAfter := a.previewEffectiveSGR(parts)
+	shouldRewriteForeground := !stateAfter.explicitBg && !stateAfter.inverse
 	for p := 0; p < len(parts); p++ {
 		value, err := strconv.Atoi(parts[p])
 		if err != nil {
 			return start, nil, false
 		}
 		switch {
-		case value == 30 && !lightBg:
+		case value == 30 && !a.lightBg && shouldRewriteForeground:
 			// Dark terminal: black fg → default (black is invisible on dark bg).
 			rewritten = append(rewritten, "39")
 			changed = true
-		case (value == 37 || value == 97) && lightBg:
+		case (value == 37 || value == 97) && a.lightBg && shouldRewriteForeground:
 			// Light terminal: white/bright-white fg → default (invisible on light bg).
 			rewritten = append(rewritten, "39")
 			changed = true
@@ -636,7 +764,7 @@ func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
 			palIdx, _ := strconv.Atoi(parts[p+2])
 			isBlack := palIdx == 0
 			isWhite := palIdx == 7 || palIdx == 15
-			if (!lightBg && isBlack) || (lightBg && isWhite) {
+			if shouldRewriteForeground && ((!a.lightBg && isBlack) || (a.lightBg && isWhite)) {
 				rewritten = append(rewritten, "39")
 				p += 2
 				changed = true
@@ -650,8 +778,31 @@ func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
 			isBlack := r == 0 && g == 0 && b == 0
 			lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255.0
 			isNearWhite := lum > 0.7
-			if (!lightBg && isBlack) || (lightBg && isNearWhite) {
+			if shouldRewriteForeground && ((!a.lightBg && isBlack) || (a.lightBg && isNearWhite)) {
 				rewritten = append(rewritten, "39")
+				p += 4
+				changed = true
+			} else {
+				rewritten = append(rewritten, parts[p])
+			}
+		case isHarshANSIBackground(value):
+			rewritten = append(rewritten, "49")
+			changed = true
+		case value == 48 && p+2 < len(parts) && parts[p+1] == "5":
+			palIdx, _ := strconv.Atoi(parts[p+2])
+			if isHarshPaletteBackground(palIdx) {
+				rewritten = append(rewritten, "49")
+				p += 2
+				changed = true
+			} else {
+				rewritten = append(rewritten, parts[p])
+			}
+		case value == 48 && p+4 < len(parts) && parts[p+1] == "2":
+			r, _ := strconv.Atoi(parts[p+2])
+			g, _ := strconv.Atoi(parts[p+3])
+			b, _ := strconv.Atoi(parts[p+4])
+			if isHarshRGBBackground(r, g, b) {
+				rewritten = append(rewritten, "49")
 				p += 4
 				changed = true
 			} else {
@@ -661,10 +812,110 @@ func rewriteSGR(in []byte, start int, lightBg bool) (int, []byte, bool) {
 			rewritten = append(rewritten, parts[p])
 		}
 	}
+	if changed {
+		stateAfter = a.previewSGR(rewritten)
+	}
+	a.explicitBg = stateAfter.explicitBg
+	a.inverse = stateAfter.inverse
 	if !changed {
 		return i + 1, in[start : i+1], true
 	}
 	return i + 1, []byte("\x1b[" + strings.Join(rewritten, ";") + "m"), true
+}
+
+func isHarshANSIBackground(value int) bool {
+	return value == 43 || value == 103
+}
+
+func isHarshPaletteBackground(index int) bool {
+	switch index {
+	case 3, 11, 220, 221, 222, 226, 227, 228, 229, 230:
+		return true
+	default:
+		return false
+	}
+}
+
+func isHarshRGBBackground(r, g, b int) bool {
+	if r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255 {
+		return false
+	}
+	lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255.0
+	return lum > 0.72 && r > 170 && g > 140 && b < 220 && r >= b+25
+}
+
+func (a *colorAdapter) previewSGR(parts []string) colorAdapter {
+	next := *a
+	next.applySGR(parts)
+	return next
+}
+
+func (a *colorAdapter) previewEffectiveSGR(parts []string) colorAdapter {
+	normalized := make([]string, 0, len(parts))
+	for p := 0; p < len(parts); p++ {
+		value, err := strconv.Atoi(parts[p])
+		if err != nil {
+			normalized = append(normalized, parts[p])
+			continue
+		}
+		switch {
+		case isHarshANSIBackground(value):
+			normalized = append(normalized, "49")
+		case value == 48 && p+2 < len(parts) && parts[p+1] == "5":
+			palIdx, _ := strconv.Atoi(parts[p+2])
+			if isHarshPaletteBackground(palIdx) {
+				normalized = append(normalized, "49")
+				p += 2
+			} else {
+				normalized = append(normalized, parts[p])
+			}
+		case value == 48 && p+4 < len(parts) && parts[p+1] == "2":
+			r, _ := strconv.Atoi(parts[p+2])
+			g, _ := strconv.Atoi(parts[p+3])
+			b, _ := strconv.Atoi(parts[p+4])
+			if isHarshRGBBackground(r, g, b) {
+				normalized = append(normalized, "49")
+				p += 4
+			} else {
+				normalized = append(normalized, parts[p])
+			}
+		default:
+			normalized = append(normalized, parts[p])
+		}
+	}
+	return a.previewSGR(normalized)
+}
+
+func (a *colorAdapter) applySGR(parts []string) {
+	for p := 0; p < len(parts); p++ {
+		value, err := strconv.Atoi(parts[p])
+		if err != nil {
+			continue
+		}
+		switch {
+		case value == 0:
+			a.explicitBg = false
+			a.inverse = false
+		case value == 7:
+			a.inverse = true
+		case value == 27:
+			a.inverse = false
+		case value == 49:
+			a.explicitBg = false
+		case value == 38 && p+2 < len(parts) && parts[p+1] == "5":
+			p += 2
+		case value == 38 && p+4 < len(parts) && parts[p+1] == "2":
+			p += 4
+		case (value >= 40 && value <= 47) || (value >= 100 && value <= 107):
+			a.explicitBg = true
+		case value == 48 && p+2 < len(parts) && parts[p+1] == "5":
+			a.explicitBg = true
+			p += 2
+		case value == 48 && p+4 < len(parts) && parts[p+1] == "2":
+			a.explicitBg = true
+			p += 4
+		}
+	}
 }
 
 type websocket struct {
