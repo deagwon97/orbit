@@ -8,8 +8,8 @@ use axum::{
 };
 use orb_common::{
     CreateDirRequest, CreateDirResponse, CreateSessionRequest, FsDirEntry, FsEntry, FsEntryKind,
-    ListDirsResponse, ListEntriesResponse, ListSessionsQuery, LogsQuery, LogsResponse,
-    ReadFileResponse, StopRequest, WriteFileRequest,
+    ListDirsResponse, ListEntriesResponse, ListSessionsQuery, LogsQuery, ReadFileResponse,
+    StopRequest, WriteFileRequest,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -347,8 +347,18 @@ pub async fn get_logs(
     Path(id): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Response {
-    match state.registry.logs(&id, query.tail.unwrap_or(0)) {
-        Ok(lines) => Json(LogsResponse { lines }).into_response(),
+    let result = if let Some(tail) = query.tail {
+        state.registry.logs(&id, tail)
+    } else {
+        state.registry.logs_page(
+            &id,
+            query.after.unwrap_or(0),
+            query.limit.unwrap_or(200),
+            query.until,
+        )
+    };
+    match result {
+        Ok(logs) => Json(logs).into_response(),
         Err(err) => (StatusCode::NOT_FOUND, err.to_string()).into_response(),
     }
 }

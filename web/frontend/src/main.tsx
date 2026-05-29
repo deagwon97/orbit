@@ -239,6 +239,13 @@ type Session = {
 type AgentBackend = { id: string; name: string; command: string; args: string[] };
 type OrbitConnection = { id: string; label: string; url: string; token: string };
 type ConnectedSession = Session & { connection: OrbitConnection; key: string };
+type LogLine = { id: number; timestamp: string; content: string };
+type LogsResponse = {
+  lines: LogLine[];
+  next_after: number | null;
+  snapshot_last_id: number | null;
+  has_more: boolean;
+};
 type DirListing = {
   cwd: string;
   home: string;
@@ -1240,13 +1247,71 @@ function SessionPane(props: {
   onDelete: () => void;
   reload: () => void;
 }) {
+  const [mode, setMode] = useState<"attach" | "logs">("attach");
+
+  useEffect(() => {
+    setMode("attach");
+  }, [props.session.key]);
+
   return <div className="terminalBox">
     <div className="terminalTop">
       <div className="sessionTitle"><span>{props.session.name}</span><small>{props.session.cwd}</small></div>
+      <button className={mode === "attach" ? "activeDark" : ""} onClick={() => setMode("attach")}><TerminalIcon size={14} />Attach</button>
+      <button className={mode === "logs" ? "activeDark" : ""} onClick={() => setMode("logs")}><FileText size={14} />Logs</button>
       <button onClick={props.onDetach}><LogOut size={14} />Detach</button>
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
-    <Terminal session={props.session} reload={props.reload} />
+    {mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
+  </div>;
+}
+
+function SessionLogs({ session }: { session: ConnectedSession }) {
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const [nextAfter, setNextAfter] = useState<number | null>(0);
+  const [snapshotLastId, setSnapshotLastId] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadPage(reset = false) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const after = reset ? 0 : nextAfter ?? 0;
+      const params = new URLSearchParams({ after: String(after), limit: "200" });
+      const until = reset ? null : snapshotLastId;
+      if (until != null) params.set("until", String(until));
+      const response = await api(`/api/v1/sessions/${encodeURIComponent(session.id)}/logs?${params.toString()}`, {}, session.connection) as LogsResponse;
+      setLines((current) => reset ? response.lines : [...current, ...response.lines]);
+      setNextAfter(response.next_after);
+      setSnapshotLastId(response.snapshot_last_id);
+      setHasMore(response.has_more);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    setLines([]);
+    setNextAfter(0);
+    setSnapshotLastId(null);
+    setHasMore(true);
+    setError("");
+    void loadPage(true);
+  }, [session.key]);
+
+  const text = useMemo(() => lines.map((line) => decodeBytes(line.content)).join(""), [lines]);
+
+  return <div className="logPane">
+    <pre className="logBody">{text || (busy ? "Loading..." : "No logs")}</pre>
+    <div className="logActions">
+      {error && <span className="logError">{error}</span>}
+      <span>{lines.length} chunks</span>
+      <button disabled={busy || !hasMore} onClick={() => void loadPage()}>{busy ? "Loading..." : hasMore ? "More" : "End"}</button>
+    </div>
   </div>;
 }
 

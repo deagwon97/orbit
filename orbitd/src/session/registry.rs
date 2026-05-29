@@ -128,8 +128,18 @@ impl SessionRegistry {
         Ok(())
     }
 
-    pub fn logs(&self, ident: &str, tail: usize) -> Result<Vec<orb_common::LogLine>> {
+    pub fn logs(&self, ident: &str, tail: usize) -> Result<orb_common::LogsResponse> {
         self.db.logs(ident, tail)
+    }
+
+    pub fn logs_page(
+        &self,
+        ident: &str,
+        after: i64,
+        limit: usize,
+        until: Option<i64>,
+    ) -> Result<orb_common::LogsResponse> {
+        self.db.logs_page(ident, after, limit, until)
     }
 
     pub fn attach(&self, ident: &str) -> Result<Arc<PtyManager>> {

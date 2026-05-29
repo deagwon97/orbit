@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use orb_common::{ListSessionsQuery, LogLine, Session, SessionStatus};
+use orb_common::{ListSessionsQuery, LogLine, LogsResponse, Session, SessionStatus};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{str::FromStr, sync::Mutex};
 
@@ -138,22 +138,28 @@ impl Db {
         Ok(())
     }
 
-    pub fn logs(&self, ident: &str, tail: usize) -> Result<Vec<LogLine>> {
+    pub fn logs(&self, ident: &str, tail: usize) -> Result<LogsResponse> {
         let session = self.get_session(ident)?.context("session not found")?;
         let conn = self.conn.lock().unwrap();
+        let snapshot_last_id: Option<i64> = conn.query_row(
+            "SELECT MAX(id) FROM session_logs WHERE session_id = ?1",
+            params![session.id],
+            |row| row.get(0),
+        )?;
         let query = if tail == 0 {
-            "SELECT timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id ASC"
+            "SELECT id, timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id ASC"
         } else {
-            "SELECT timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2"
+            "SELECT id, timestamp, content FROM session_logs WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2"
         };
         let mut stmt = conn.prepare(query)?;
         let map_row = |row: &rusqlite::Row<'_>| {
-            let ts: String = row.get(0)?;
+            let ts: String = row.get(1)?;
             Ok(LogLine {
+                id: row.get(0)?,
                 timestamp: DateTime::parse_from_rfc3339(&ts)
                     .unwrap()
                     .with_timezone(&Utc),
-                content: row.get(1)?,
+                content: row.get(2)?,
             })
         };
         let rows = if tail == 0 {
@@ -165,7 +171,56 @@ impl Db {
         if tail != 0 {
             lines.reverse();
         }
-        Ok(lines)
+        let next_after = lines.last().map(|line| line.id);
+        Ok(LogsResponse {
+            lines,
+            next_after,
+            snapshot_last_id,
+            has_more: false,
+        })
+    }
+
+    pub fn logs_page(
+        &self,
+        ident: &str,
+        after: i64,
+        limit: usize,
+        until: Option<i64>,
+    ) -> Result<LogsResponse> {
+        let session = self.get_session(ident)?.context("session not found")?;
+        let conn = self.conn.lock().unwrap();
+        let snapshot_last_id: Option<i64> = conn.query_row(
+            "SELECT MAX(id) FROM session_logs WHERE session_id = ?1",
+            params![session.id],
+            |row| row.get(0),
+        )?;
+        let until = until.or(snapshot_last_id).unwrap_or(0);
+        let limit = limit.clamp(1, 1000);
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, content FROM session_logs WHERE session_id = ?1 AND id > ?2 AND id <= ?3 ORDER BY id ASC LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![session.id, after, until, (limit + 1) as i64], |row| {
+            let ts: String = row.get(1)?;
+            Ok(LogLine {
+                id: row.get(0)?,
+                timestamp: DateTime::parse_from_rfc3339(&ts)
+                    .unwrap()
+                    .with_timezone(&Utc),
+                content: row.get(2)?,
+            })
+        })?;
+        let mut lines = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = lines.len() > limit;
+        if has_more {
+            lines.truncate(limit);
+        }
+        let next_after = lines.last().map(|line| line.id);
+        Ok(LogsResponse {
+            lines,
+            next_after,
+            snapshot_last_id: Some(until),
+            has_more,
+        })
     }
 }
 

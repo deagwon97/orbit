@@ -29,10 +29,14 @@ type AgentBackend struct {
 }
 
 type LogsResponse struct {
-	Lines []LogLine `json:"lines"`
+	Lines          []LogLine `json:"lines"`
+	NextAfter      *int64    `json:"next_after"`
+	SnapshotLastID *int64    `json:"snapshot_last_id"`
+	HasMore        bool      `json:"has_more"`
 }
 
 type LogLine struct {
+	ID        int64     `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
 	Content   string    `json:"content"`
 }

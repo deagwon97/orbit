@@ -108,6 +108,23 @@ func (c Client) Logs(id string, tail int) (models.LogsResponse, error) {
 	return logs, json.NewDecoder(res.Body).Decode(&logs)
 }
 
+func (c Client) LogsPage(id string, after int64, limit int, until *int64) (models.LogsResponse, error) {
+	q := url.Values{
+		"after": []string{fmt.Sprintf("%d", after)},
+		"limit": []string{fmt.Sprintf("%d", limit)},
+	}
+	if until != nil {
+		q.Set("until", fmt.Sprintf("%d", *until))
+	}
+	res, err := c.request(http.MethodGet, "/api/v1/sessions/"+url.PathEscape(id)+"/logs", q, nil)
+	if err != nil {
+		return models.LogsResponse{}, err
+	}
+	defer res.Body.Close()
+	var logs models.LogsResponse
+	return logs, json.NewDecoder(res.Body).Decode(&logs)
+}
+
 func (c Client) AttachURL(id string) string {
 	base := strings.TrimRight(c.Base, "/")
 	base = strings.Replace(base, "http://", "ws://", 1)

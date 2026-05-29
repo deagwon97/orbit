@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -143,33 +145,77 @@ func remove(c client.Client, args []string) error {
 func logs(c client.Client, args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	tail := fs.Int("tail", 0, "number of log chunks, 0 means all")
+	tail := fs.Int("tail", -1, "number of log chunks, 0 means all")
+	pageSize := fs.Int("page-size", 200, "number of log chunks per page")
 	raw := fs.Bool("raw", false, "print raw PTY output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: orb logs [--raw] [--tail N] <id|name>")
+		return fmt.Errorf("usage: orb logs [--raw] [--tail N] [--page-size N] <id|name>")
 	}
-	response, err := c.Logs(fs.Arg(0), *tail)
-	if err != nil {
-		return err
+	if *tail >= 0 {
+		response, err := c.Logs(fs.Arg(0), *tail)
+		if err != nil {
+			return err
+		}
+		return writeLogLines(os.Stdout, response.Lines, *raw)
 	}
+
+	var after int64
+	var until *int64
+	reader := bufio.NewReader(os.Stdin)
+	interactive := isTerminal(os.Stdin)
+	for {
+		response, err := c.LogsPage(fs.Arg(0), after, *pageSize, until)
+		if err != nil {
+			return err
+		}
+		if until == nil {
+			until = response.SnapshotLastID
+		}
+		if err := writeLogLines(os.Stdout, response.Lines, *raw); err != nil {
+			return err
+		}
+		if response.NextAfter != nil {
+			after = *response.NextAfter
+		}
+		if !response.HasMore || response.NextAfter == nil {
+			return nil
+		}
+		if !interactive {
+			continue
+		}
+		fmt.Fprint(os.Stderr, "\n-- More -- Enter: next page, q: quit ")
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if strings.EqualFold(strings.TrimSpace(line), "q") {
+			return nil
+		}
+	}
+}
+
+func writeLogLines(w io.Writer, lines []models.LogLine, raw bool) error {
 	var out []byte
-	for _, line := range response.Lines {
+	for _, line := range lines {
 		data, err := base64.StdEncoding.DecodeString(line.Content)
 		if err != nil {
 			return err
 		}
 		out = append(out, data...)
 	}
-	if !*raw {
+	if !raw {
 		out = sanitizeLogOutput(out)
 	}
-	if _, err := os.Stdout.Write(out); err != nil {
-		return err
-	}
-	return nil
+	_, err := w.Write(out)
+	return err
+}
+
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
 }
 
 func sanitizeLogOutput(in []byte) []byte {

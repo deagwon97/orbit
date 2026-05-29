@@ -84,10 +84,14 @@ pub struct StopRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsQuery {
     pub tail: Option<usize>,
+    pub after: Option<i64>,
+    pub limit: Option<usize>,
+    pub until: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogLine {
+    pub id: i64,
     pub timestamp: DateTime<Utc>,
     pub content: String,
 }
@@ -95,6 +99,9 @@ pub struct LogLine {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsResponse {
     pub lines: Vec<LogLine>,
+    pub next_after: Option<i64>,
+    pub snapshot_last_id: Option<i64>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
