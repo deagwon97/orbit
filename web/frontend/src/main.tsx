@@ -268,6 +268,7 @@ const DEFAULT_MASTER_PANE_WIDTH = 600;
 const MIN_MASTER_PANE_WIDTH = 600;
 const MAX_MASTER_PANE_WIDTH = 860;
 const MASTER_PANE_WIDTH_KEY = "orbit.masterPaneWidth";
+const CONNECTION_FAILED_MESSAGE_SUFFIX = " orbitd connection failed";
 
 const defaultBackends: AgentBackend[] = [
   { id: "codex", name: "Codex", command: "codex", args: [] },
@@ -568,7 +569,11 @@ function App() {
       const nextSessions = loaded.flatMap((result) => result.sessions);
       setSessions(nextSessions);
       const failures = loaded.filter((result) => result.error);
-      if (failures.length > 0) setMessage(`${failures.length} orbitd connection failed`);
+      if (failures.length > 0) {
+        setMessage(`${failures.length}${CONNECTION_FAILED_MESSAGE_SUFFIX}`);
+      } else {
+        setMessage((current) => current.endsWith(CONNECTION_FAILED_MESSAGE_SUFFIX) ? "" : current);
+      }
       return nextSessions;
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -608,7 +613,11 @@ function App() {
     try {
       await api(`/api/v1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" }, session.connection);
       setMessage(`removed ${session.id}`);
-      if (selectedKey === session.key) setSelectedKey(null);
+      if (selectedKey === session.key) {
+        setSelectedKey(null);
+        setDetailOpen(false);
+        setMobileChromeOpen(false);
+      }
       await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -1471,18 +1480,19 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     term.focus();
 
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`);
-    let detached = false;
+    const attachUrl = `${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`;
+    let ws: WebSocket | null = null;
+    let disposed = false;
+    let reconnectTimer: number | undefined;
+    let reconnectDelay = 1000;
     autoFollowRef.current = true;
     let userScrollIntent = false;
     let userScrollTimer: number | undefined;
 
     const send = (payload: unknown) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
     };
     const sendDetach = () => {
-      if (detached) return;
-      detached = true;
       send({ type: "detach" });
     };
     const sendResize = () => send({ type: "resize", cols: term.cols, rows: term.rows });
@@ -1549,49 +1559,63 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const input = term.onData((data) => {
       if (isDetachInput(data)) {
         sendDetach();
-        ws.close();
+        ws?.close();
         return;
       }
       send({ type: "stdin", data: encodeBytes(data) });
     });
 
-    ws.addEventListener("open", () => {
-      sendResize();
-      term.write("\x1b[2J\x1b[H", followBottom);
-    });
-    ws.addEventListener("message", async (event) => {
-      try {
-        const msg = JSON.parse(await websocketText(event.data));
-        if (msg.type === "stdout") {
-          if (isAtBottom()) autoFollowRef.current = true;
-          term.write(decodeBytes(msg.data), () => {
-            followBottom();
-            updateScrollInfo(term);
-          });
+    const connect = () => {
+      if (disposed) return;
+      ws = new WebSocket(attachUrl);
+      ws.addEventListener("open", () => {
+        reconnectDelay = 1000;
+        sendResize();
+        term.write("\x1b[2J\x1b[H", followBottom);
+      });
+      ws.addEventListener("message", async (event) => {
+        try {
+          const msg = JSON.parse(await websocketText(event.data));
+          if (msg.type === "stdout") {
+            if (isAtBottom()) autoFollowRef.current = true;
+            term.write(decodeBytes(msg.data), () => {
+              followBottom();
+              updateScrollInfo(term);
+            });
+          }
+          if (msg.type === "exit") void reload();
+          if (msg.type === "error") term.write(`\r\n[${msg.code}] ${msg.message}\r\n`);
+        } catch {
+          term.write("\r\n[bad websocket message]\r\n");
         }
-        if (msg.type === "exit") void reload();
-        if (msg.type === "error") term.write(`\r\n[${msg.code}] ${msg.message}\r\n`);
-      } catch {
-        term.write("\r\n[bad websocket message]\r\n");
-      }
-    });
-    ws.addEventListener("error", () => term.write("\r\n[attach failed]\r\n"));
-    ws.addEventListener("close", () => {
-      term.write("\r\n[detached]\r\n", () => term.scrollToBottom());
-      void reload();
-    });
+      });
+      ws.addEventListener("error", () => {
+        if (!disposed) term.write("\r\n[attach failed]\r\n");
+      });
+      ws.addEventListener("close", () => {
+        if (disposed) return;
+        term.write("\r\n[detached, retrying attach]\r\n", () => term.scrollToBottom());
+        void reload();
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+      });
+    };
+    connect();
 
     return () => {
+      disposed = true;
       host.removeEventListener("wheel", markUserScroll);
       host.removeEventListener("touchstart", onTerminalTouchStart);
       host.removeEventListener("touchmove", onTerminalTouchMove);
       host.removeEventListener("pointerdown", markUserScroll);
       resizeObserver.disconnect();
       window.clearTimeout(userScrollTimer);
+      window.clearTimeout(reconnectTimer);
       input.dispose();
       scroll.dispose();
       sendDetach();
-      ws.close();
+      ws?.close();
       term.dispose();
       termRef.current = null;
     };
