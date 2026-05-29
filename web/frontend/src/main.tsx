@@ -540,7 +540,7 @@ function App() {
   }
 
   async function load() {
-    if (connections.length === 0) return;
+    if (connections.length === 0) return [] as ConnectedSession[];
     try {
       const query = showAll ? "" : "?status=running";
       const results = await Promise.allSettled(connections.map(async (connection) => {
@@ -565,11 +565,14 @@ function App() {
       const loaded = results
         .filter((result): result is PromiseFulfilledResult<{ connection: OrbitConnection; sessions: ConnectedSession[]; error?: string }> => result.status === "fulfilled")
         .map((result) => result.value);
-      setSessions(loaded.flatMap((result) => result.sessions));
+      const nextSessions = loaded.flatMap((result) => result.sessions);
+      setSessions(nextSessions);
       const failures = loaded.filter((result) => result.error);
       if (failures.length > 0) setMessage(`${failures.length} orbitd connection failed`);
+      return nextSessions;
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
+      return [] as ConnectedSession[];
     }
   }
 
@@ -585,12 +588,15 @@ function App() {
       setName("");
       setEnv("");
       setCreateOpen(false);
+      const nextSessions = await load();
       if (attachAfterRun) {
-        setSelectedKey(connectionKey(activeConnection.id, session.id));
+        const nextKey = connectionKey(activeConnection.id, session.id);
+        if (nextSessions.some((item) => item.key === nextKey)) {
+          setSelectedKey(nextKey);
+        }
         setFileEditorOpen(false);
         setDetailOpen(true);
       }
-      await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -614,7 +620,12 @@ function App() {
     setDirBusy(true);
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      setDirListing(await api(`/api/v1/fs/dirs${query}`, {}, activeConnection) as DirListing);
+      const listing = await api(`/api/v1/fs/dirs${query}`, {}, activeConnection) as DirListing;
+      if (!path && listing.home && listing.path !== listing.home) {
+        setDirListing(await api(`/api/v1/fs/dirs?path=${encodeURIComponent(listing.home)}`, {}, activeConnection) as DirListing);
+      } else {
+        setDirListing(listing);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
