@@ -201,12 +201,10 @@ button.row { min-height: 42px; justify-content: stretch; }
   scroll-behavior: auto;
 }
 .terminalScrollOverlay {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  bottom: 8px;
-  z-index: 70;
+  flex: 0 0 34px;
   width: 34px;
+  margin: 8px 8px 8px 0;
+  align-self: stretch;
   display: grid;
   grid-template-rows: minmax(80px, 1fr);
   pointer-events: auto;
@@ -739,12 +737,9 @@ button.row { min-height: 42px; justify-content: stretch; }
     min-width: 0;
   }
   .terminalScrollOverlay {
-    position: static;
-    z-index: auto;
     flex: 0 0 28px;
     width: 28px;
     margin: 10px 0 10px -8px;
-    align-self: stretch;
     grid-template-rows: minmax(96px, 1fr);
   }
   .xtermHost .xterm {
