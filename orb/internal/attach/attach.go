@@ -123,8 +123,11 @@ func (c *Command) Run() error {
 	if errors.Is(err, errDetached) || err == nil {
 		return nil
 	}
-	if err == io.EOF || strings.Contains(errString(err), "use of closed network connection") {
-		return errAttachClosed
+	// Treat normal session closure as success so main() doesn't call os.Exit(1),
+	// which would skip deferred terminal cleanup (guard.restore, cleanupTerminal)
+	// and leave the terminal permanently in raw mode.
+	if errors.Is(err, errAttachClosed) || err == io.EOF || strings.Contains(errString(err), "use of closed network connection") {
+		return nil
 	}
 	return err
 }
