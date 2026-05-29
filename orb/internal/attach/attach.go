@@ -29,7 +29,15 @@ import (
 const (
 	clearScreenSeq     = "\x1b[2J\x1b[H"
 	localScrollbackSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1047l\x1b[?1048l\x1b[?1049l"
-	restoreTerminalSeq = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[0m"
+	restoreTerminalSeq = "\x1b[<u\x1b[>4;0m" +
+		"\x1b[?1l" + // DECCKM: normal (non-application) cursor keys
+		"\x1b[?7h" + // DECAWM: re-enable auto-wrap
+		"\x1b[r" + // reset scroll region to full screen
+		"\x1b[?25h" + // show cursor
+		"\x1b[?2004l" + // disable bracketed paste
+		"\x1b[?2026l" + // disable synchronized output
+		"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l" + // disable mouse
+		"\x1b[0m" // reset SGR
 )
 
 var detachTokens = [][]byte{
@@ -99,6 +107,21 @@ func (c *Command) Run() error {
 	done := make(chan error, 2)
 	var closeOnce sync.Once
 	closeConn := func() { closeOnce.Do(func() { _ = ws.Close() }) }
+
+	// Handle SIGHUP/SIGTERM so deferred cleanup (guard.restore, cleanupTerminal)
+	// runs even when the process is asked to terminate externally.
+	stopSignal := make(chan struct{})
+	defer close(stopSignal)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			closeConn()
+		case <-stopSignal:
+		}
+	}()
 
 	stopResize := startResizeLoop(ws, c.in)
 	defer stopResize()
