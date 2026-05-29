@@ -855,16 +855,13 @@ func (a *colorAdapter) rewriteSGR(in []byte, start int) (int, []byte, bool) {
 
 // isHarshANSIBackground reports whether the ANSI background SGR value should
 // be stripped on a terminal with the given background tone.
-// Always strips harsh yellows; additionally strips black on dark terminals
-// and white on light terminals because those blend with the terminal's own
-// background and create a "patchy" appearance.
 func isHarshANSIBackground(value int, lightBg bool) bool {
 	switch value {
 	case 43, 103: // harsh yellow — always strip
 		return true
-	case 40: // black bg — invisible noise on dark terminals
+	case 40, 100: // black / bright-black — near-achromatic on dark terminals
 		return !lightBg
-	case 47, 107: // white/bright-white bg — invisible noise on light terminals
+	case 47, 107: // white / bright-white — near-achromatic on light terminals
 		return lightBg
 	}
 	return false
@@ -872,20 +869,38 @@ func isHarshANSIBackground(value int, lightBg bool) bool {
 
 // isHarshPaletteBackground reports whether palette index N used as a
 // background should be stripped for the given terminal background tone.
+// Yellows are caught by explicit index before the RGB path.
 func isHarshPaletteBackground(index int, lightBg bool) bool {
 	switch index {
 	case 3, 11, 220, 221, 222, 226, 227, 228, 229, 230: // harsh yellows
 		return true
 	}
-	if !lightBg {
-		// On dark terminals strip the full 256-colour grayscale ramp (232-255),
-		// plus palette 0 (black) and 8 (bright-black / dark-gray). All of these
-		// are near-achromatic and create a visible "patch" against the terminal's
-		// own dark background.
-		return index == 0 || index == 8 || index >= 232
+	r, g, b := palette256ToRGB(index)
+	return isHarshRGBBackground(r, g, b, lightBg)
+}
+
+// palette256ToRGB converts a 256-colour palette index to approximate RGB.
+// Standard-16 uses XTerm defaults; 16-231 is the fixed 6x6x6 cube;
+// 232-255 is the fixed grayscale ramp.
+func palette256ToRGB(index int) (int, int, int) {
+	switch {
+	case index < 16:
+		std := [16][3]int{
+			{0, 0, 0}, {128, 0, 0}, {0, 128, 0}, {128, 128, 0},
+			{0, 0, 128}, {128, 0, 128}, {0, 128, 128}, {192, 192, 192},
+			{128, 128, 128}, {255, 0, 0}, {0, 255, 0}, {255, 255, 0},
+			{0, 0, 255}, {255, 0, 255}, {0, 255, 255}, {255, 255, 255},
+		}
+		c := std[index]
+		return c[0], c[1], c[2]
+	case index < 232:
+		i := index - 16
+		vals := [6]int{0, 95, 135, 175, 215, 255}
+		return vals[i/36], vals[(i%36)/6], vals[i%6]
+	default:
+		v := 8 + 10*(index-232)
+		return v, v, v
 	}
-	// 15 = white; 252-255 = near-white gray ramp
-	return index == 15 || index >= 252
 }
 
 // isHarshRGBBackground reports whether an RGB background should be stripped.
@@ -898,19 +913,20 @@ func isHarshRGBBackground(r, g, b int, lightBg bool) bool {
 	if lum > 0.72 && r > 170 && g > 140 && b < 220 && r >= b+25 {
 		return true
 	}
-	// Near-achromatic (low saturation) check
 	maxC := max(r, g, b)
 	saturation := 0.0
 	if maxC > 0 {
-		saturation = float64(max(r,g,b)-min(r,g,b)) / float64(maxC)
+		saturation = float64(maxC-min(r, g, b)) / float64(maxC)
 	}
 	if !lightBg {
-		// Dark terminal: strip any near-achromatic background regardless of
-		// lightness — even a medium gray is visibly wrong on a dark terminal.
-		return saturation < 0.30
+		// Dark terminal: strip near-achromatic backgrounds up to saturation 0.5.
+		// Covers dark-gray editor themes (e.g. #282c34 sat≈0.23) and slightly
+		// tinted dark palettes (e.g. #1a1a2e sat≈0.44) while leaving clearly
+		// intentional colours (bright blue/red/green, sat≥0.6) intact.
+		return saturation < 0.50
 	}
-	// Light terminal: strip bright near-gray backgrounds
-	return lum > 0.75 && saturation < 0.30
+	// Light terminal: strip bright near-achromatic backgrounds.
+	return lum > 0.75 && saturation < 0.50
 }
 
 func (a *colorAdapter) previewSGR(parts []string) colorAdapter {
