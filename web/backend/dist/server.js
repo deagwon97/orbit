@@ -6,19 +6,34 @@ import { config } from "./config.js";
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 await app.register(websocket);
+function orbitdBase(req) {
+    const value = req.headers["x-orbitd-url"] || req.query?.orbitd || config.orbitd;
+    const raw = Array.isArray(value) ? value[0] : String(value ?? "");
+    try {
+        const url = new URL(raw);
+        if (url.protocol !== "http:" && url.protocol !== "https:")
+            throw new Error("unsupported protocol");
+        url.hash = "";
+        url.search = "";
+        return url.toString().replace(/\/$/, "");
+    }
+    catch {
+        throw new Error("invalid orbitd url");
+    }
+}
 function authHeader(req) {
     const token = req.headers.authorization?.replace(/^Bearer /, "") || req.query?.token || config.token;
     return { Authorization: `Bearer ${token}` };
 }
 async function isAuthed(req) {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions?status=running`, { headers: authHeader(req) });
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions?status=running`, { headers: authHeader(req) });
     await res.arrayBuffer();
     return res.ok;
 }
 function queryString(req) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(req.query ?? {})) {
-        if (key === "token" || value == null)
+        if (key === "token" || key === "orbitd" || value == null)
             continue;
         if (Array.isArray(value)) {
             for (const item of value)
@@ -44,14 +59,28 @@ async function forwardJSON(reply, res) {
     }
 }
 app.get("/healthz", async () => ({ ok: true }));
+app.get("/api/v1/auth/check", async (req, reply) => {
+    try {
+        const ok = await isAuthed(req);
+        if (!ok) {
+            reply.code(401);
+            return { ok: false };
+        }
+        return { ok: true };
+    }
+    catch (err) {
+        reply.code(400);
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+});
 app.get("/api/v1/fs/dirs", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/fs/dirs${queryString(req)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/dirs${queryString(req)}`, {
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
 app.post("/api/v1/fs/dirs", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/fs/dirs`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/dirs`, {
         method: "POST",
         headers: { ...authHeader(req), "content-type": "application/json" },
         body: JSON.stringify(req.body)
@@ -59,19 +88,31 @@ app.post("/api/v1/fs/dirs", async (req, reply) => {
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/fs/entries", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/fs/entries${queryString(req)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/entries${queryString(req)}`, {
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/fs/files", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/fs/files${queryString(req)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/files${queryString(req)}`, {
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
+app.get("/api/v1/fs/raw", async (req, reply) => {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/raw${queryString(req)}`, {
+        headers: authHeader(req)
+    });
+    if (!res.ok) {
+        reply.code(res.status);
+        return { error: await res.text() };
+    }
+    const contentType = res.headers.get("content-type") || "application/octet-stream";
+    reply.header("content-type", contentType);
+    return reply.send(Buffer.from(await res.arrayBuffer()));
+});
 app.put("/api/v1/fs/files", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/fs/files`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/fs/files`, {
         method: "PUT",
         headers: { ...authHeader(req), "content-type": "application/json" },
         body: JSON.stringify(req.body)
@@ -79,21 +120,21 @@ app.put("/api/v1/fs/files", async (req, reply) => {
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/sessions", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions${queryString(req)}`, { headers: authHeader(req) });
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions${queryString(req)}`, { headers: authHeader(req) });
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/backends", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/backends`, { headers: authHeader(req) });
+    const res = await fetch(`${orbitdBase(req)}/api/v1/backends`, { headers: authHeader(req) });
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/sessions/:id", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions/${encodeURIComponent(req.params.id)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}`, {
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
 app.post("/api/v1/sessions", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions`, {
         method: "POST",
         headers: { ...authHeader(req), "content-type": "application/json" },
         body: JSON.stringify(req.body)
@@ -101,7 +142,7 @@ app.post("/api/v1/sessions", async (req, reply) => {
     return forwardJSON(reply, res);
 });
 app.post("/api/v1/sessions/:id/stop", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions/${encodeURIComponent(req.params.id)}/stop`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/stop`, {
         method: "POST",
         headers: { ...authHeader(req), "content-type": "application/json" },
         body: JSON.stringify(req.body ?? {})
@@ -109,20 +150,28 @@ app.post("/api/v1/sessions/:id/stop", async (req, reply) => {
     return forwardJSON(reply, res);
 });
 app.delete("/api/v1/sessions/:id", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions/${encodeURIComponent(req.params.id)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}`, {
         method: "DELETE",
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/sessions/:id/logs", async (req, reply) => {
-    const res = await fetch(`${config.orbitd}/api/v1/sessions/${encodeURIComponent(req.params.id)}/logs${queryString(req)}`, {
+    const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/logs${queryString(req)}`, {
         headers: authHeader(req)
     });
     return forwardJSON(reply, res);
 });
 app.get("/api/v1/sessions/:id/attach", { websocket: true }, (socket, req) => {
-    const upstream = new WebSocket(`${config.orbitd.replace(/^http/, "ws")}/api/v1/sessions/${encodeURIComponent(req.params.id)}/attach`, {
+    let base;
+    try {
+        base = orbitdBase(req);
+    }
+    catch {
+        socket.close(1008, "invalid orbitd url");
+        return;
+    }
+    const upstream = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/sessions/${encodeURIComponent(req.params.id)}/attach`, {
         headers: authHeader(req)
     });
     let upstreamOpen = false;

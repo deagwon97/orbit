@@ -702,6 +702,13 @@ function App() {
     <section className="toolbar">
       <strong>Orbit</strong>
       <div className="toolbarActions">
+        <button
+          className={connectionsOpen ? "activeButton" : ""}
+          title="Orbitd"
+          onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
+        >
+          <Server size={16} />
+        </button>
         <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
       </div>
     </section>
@@ -718,7 +725,6 @@ function App() {
         /> : fileEditorOpen && activeConnection ? <FileWorkspace
           connection={activeConnection}
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
-          onConnections={() => { setConnectionsOpen(true); setDetailOpen(false); }}
           detailOpen={detailOpen}
           masterPaneWidth={masterPaneWidth}
           onMasterPaneWidth={setMasterPaneWidth}
@@ -729,7 +735,6 @@ function App() {
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
-            <button onClick={() => { setConnectionsOpen(true); setDetailOpen(false); }}><Server size={14} />Orbitd</button>
             <button className={`sessionFilterButton${showAll ? " activeButton" : ""}`} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
             <button className="iconButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} /></button>
           </div>
@@ -874,7 +879,6 @@ function ConnectionsWorkspace(props: {
     <div className="paneTabs">
       <button onClick={props.onSessions}><TerminalIcon size={14} />Sessions</button>
       <button onClick={props.onFiles}><FolderOpen size={14} />Files</button>
-      <button className="activeButton"><Server size={14} />Orbitd</button>
       <button className="iconButton connectionAddButton" title="Add orbitd" onClick={props.onAdd}><Plus size={16} /></button>
     </div>
     <div className="connectionList">
@@ -958,14 +962,13 @@ function FileWorkspace(props: {
   connection: OrbitConnection;
   initialPath?: string;
   onSessions: () => void;
-  onConnections: () => void;
   detailOpen: boolean;
   masterPaneWidth: number;
   onMasterPaneWidth: (width: number) => void;
   onDetailOpen: () => void;
   onBack: () => void;
 }) {
-  const { connection, initialPath, onSessions, onConnections, detailOpen, masterPaneWidth, onMasterPaneWidth, onDetailOpen, onBack } = props;
+  const { connection, initialPath, onSessions, detailOpen, masterPaneWidth, onMasterPaneWidth, onDetailOpen, onBack } = props;
   const [listing, setListing] = useState<ListEntriesResponse | null>(null);
   const [listBusy, setListBusy] = useState(false);
   const [tree, setTree] = useState<EntryTree>({});
@@ -1124,7 +1127,6 @@ function FileWorkspace(props: {
       <div className="paneTabs">
         <button onClick={onSessions}><TerminalIcon size={14} />Sessions</button>
         <button className="activeButton"><FolderOpen size={14} />Files</button>
-        <button onClick={onConnections}><Server size={14} />Orbitd</button>
       </div>
       {error && <div className="folderError">{error}</div>}
       <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
