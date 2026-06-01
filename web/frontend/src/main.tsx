@@ -263,6 +263,7 @@ type ListEntriesResponse = {
 };
 type OpenedFile = { path: string; content: string; savedContent: string };
 type EntryTree = Record<string, FsEntry[]>;
+type TerminalModifier = "shift" | "ctrl" | "cmd" | "alt";
 
 const DEFAULT_MASTER_PANE_WIDTH = 600;
 const MIN_MASTER_PANE_WIDTH = 600;
@@ -1440,6 +1441,13 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const autoFollowRef = useRef(true);
+  const sendInputRef = useRef<(data: string) => void>(() => {});
+  const [modifiers, setModifiers] = useState<Record<TerminalModifier, boolean>>({
+    shift: false,
+    ctrl: false,
+    cmd: false,
+    alt: false
+  });
   const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
 
   function updateScrollInfo(term: XTerm) {
@@ -1494,6 +1502,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const send = (payload: unknown) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
     };
+    sendInputRef.current = (data: string) => send({ type: "stdin", data: encodeBytes(data) });
     const sendDetach = () => {
       send({ type: "detach" });
     };
@@ -1564,7 +1573,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
         ws?.close();
         return;
       }
-      send({ type: "stdin", data: encodeBytes(data) });
+      sendInputRef.current(data);
     });
 
     const connect = () => {
@@ -1616,6 +1625,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       window.clearTimeout(reconnectTimer);
       input.dispose();
       scroll.dispose();
+      sendInputRef.current = () => {};
       sendDetach();
       ws?.close();
       term.dispose();
@@ -1623,31 +1633,72 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     };
   }, [session.id]);
 
+  function toggleModifier(modifier: TerminalModifier) {
+    setModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
+    termRef.current?.focus();
+  }
+
+  function arrowSequence(direction: "left" | "up" | "down" | "right") {
+    const code = {
+      up: "A",
+      down: "B",
+      right: "C",
+      left: "D"
+    }[direction];
+    const modifierValue = 1
+      + (modifiers.shift ? 1 : 0)
+      + (modifiers.alt ? 2 : 0)
+      + (modifiers.ctrl ? 4 : 0)
+      + (modifiers.cmd ? 8 : 0);
+    return modifierValue === 1 ? `\x1b[${code}` : `\x1b[1;${modifierValue}${code}`;
+  }
+
+  function sendShortcut(key: "tab" | "left" | "up" | "down" | "right") {
+    const data = key === "tab"
+      ? `${modifiers.alt || modifiers.cmd ? "\x1b" : ""}${modifiers.shift ? "\x1b[Z" : "\t"}`
+      : arrowSequence(key);
+    sendInputRef.current(data);
+    termRef.current?.focus();
+  }
+
   return <div className="xtermShell">
-    <div className="xtermHost" ref={ref} />
-    <div className={`terminalScrollOverlay${scrollInfo.scrollable ? "" : " disabled"}`} aria-hidden={!scrollInfo.scrollable}>
-      <div
-        className="terminalScrollRail"
-        onPointerDown={(event) => {
-          if (!scrollInfo.scrollable) return;
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          scrollToRatio(event.clientY, event.currentTarget);
-        }}
-        onPointerMove={(event) => {
-          if (!scrollInfo.scrollable || event.buttons !== 1) return;
-          event.preventDefault();
-          scrollToRatio(event.clientY, event.currentTarget);
-        }}
-      >
+    <div className="xtermSurface">
+      <div className="xtermHost" ref={ref} />
+      <div className={`terminalScrollOverlay${scrollInfo.scrollable ? "" : " disabled"}`} aria-hidden={!scrollInfo.scrollable}>
         <div
-          className="terminalScrollThumb"
-          style={{
-            height: `${scrollInfo.size * 100}%`,
-            top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
+          className="terminalScrollRail"
+          onPointerDown={(event) => {
+            if (!scrollInfo.scrollable) return;
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            scrollToRatio(event.clientY, event.currentTarget);
           }}
-        />
+          onPointerMove={(event) => {
+            if (!scrollInfo.scrollable || event.buttons !== 1) return;
+            event.preventDefault();
+            scrollToRatio(event.clientY, event.currentTarget);
+          }}
+        >
+          <div
+            className="terminalScrollThumb"
+            style={{
+              height: `${scrollInfo.size * 100}%`,
+              top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
+            }}
+          />
+        </div>
       </div>
+    </div>
+    <div className="terminalKeyBar" aria-label="Terminal shortcut keys">
+      <button type="button" onClick={() => sendShortcut("tab")}>Tab</button>
+      <button type="button" className={modifiers.shift ? "activeKey" : ""} onClick={() => toggleModifier("shift")}>Shift</button>
+      <button type="button" className={modifiers.ctrl ? "activeKey" : ""} onClick={() => toggleModifier("ctrl")}>Ctrl</button>
+      <button type="button" className={modifiers.cmd ? "activeKey" : ""} onClick={() => toggleModifier("cmd")}>Cmd</button>
+      <button type="button" className={modifiers.alt ? "activeKey" : ""} onClick={() => toggleModifier("alt")}>Alt</button>
+      <button type="button" onClick={() => sendShortcut("left")}><ChevronLeft size={16} /></button>
+      <button type="button" onClick={() => sendShortcut("up")}><ChevronUp size={16} /></button>
+      <button type="button" onClick={() => sendShortcut("down")}><ChevronDown size={16} /></button>
+      <button type="button" onClick={() => sendShortcut("right")}><ChevronRight size={16} /></button>
     </div>
   </div>;
 }
