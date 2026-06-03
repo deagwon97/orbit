@@ -1664,9 +1664,10 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
         try {
           const msg = JSON.parse(await websocketText(event.data));
           if (msg.type === "stdout") {
-            if (isAtBottom()) autoFollowRef.current = true;
+            const wasAtBottom = isAtBottom();
+            if (wasAtBottom) autoFollowRef.current = true;
             term.write(decodeBytes(msg.data), () => {
-              followBottom();
+              if (autoFollowRef.current) followBottom();
               updateScrollInfo(term);
             });
           }
