@@ -306,36 +306,6 @@ button.row { min-height: 42px; justify-content: stretch; }
 .xtermHost .xterm-screen {
   overflow-y: hidden;
 }
-.terminalScrollOverlay {
-  flex: 0 0 34px;
-  width: 34px;
-  margin: 8px 8px 8px 0;
-  align-self: stretch;
-  display: grid;
-  grid-template-rows: minmax(80px, 1fr);
-  pointer-events: auto;
-}
-.terminalScrollOverlay.disabled {
-  opacity: .45;
-  pointer-events: none;
-}
-.terminalScrollRail {
-  position: relative;
-  width: 34px;
-  border: 1px solid #394247;
-  border-radius: 999px;
-  background: rgba(15, 18, 20, .74);
-  touch-action: none;
-}
-.terminalScrollThumb {
-  position: absolute;
-  left: 7px;
-  width: 18px;
-  min-height: 28px;
-  border-radius: 999px;
-  background: #8fa0a8;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.18);
-}
 .terminalKeyBar {
   min-height: 44px;
   display: grid;
@@ -946,21 +916,8 @@ button.row { min-height: 42px; justify-content: stretch; }
   .xtermHost {
     min-width: 0;
   }
-  .terminalScrollOverlay {
-    flex: 0 0 28px;
-    width: 28px;
-    margin: 10px 0 10px -8px;
-    grid-template-rows: minmax(96px, 1fr);
-  }
   .xtermHost .xterm {
     padding-right: 0;
-  }
-  .terminalScrollRail {
-    width: 28px;
-  }
-  .terminalScrollThumb {
-    left: 6px;
-    width: 14px;
   }
   .modalBackdrop {
     align-items: end;

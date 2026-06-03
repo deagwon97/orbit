@@ -1740,30 +1740,6 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   return <div className="xtermShell">
     <div className="xtermSurface">
       <div className="xtermHost" ref={ref} />
-      <div className={`terminalScrollOverlay${scrollInfo.scrollable ? "" : " disabled"}`} aria-hidden={!scrollInfo.scrollable}>
-        <div
-          className="terminalScrollRail"
-          onPointerDown={(event) => {
-            if (!scrollInfo.scrollable) return;
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            scrollToRatio(event.clientY, event.currentTarget);
-          }}
-          onPointerMove={(event) => {
-            if (!scrollInfo.scrollable || event.buttons !== 1) return;
-            event.preventDefault();
-            scrollToRatio(event.clientY, event.currentTarget);
-          }}
-        >
-          <div
-            className="terminalScrollThumb"
-            style={{
-              height: `${scrollInfo.size * 100}%`,
-              top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
-            }}
-          />
-        </div>
-      </div>
     </div>
     <div className="terminalKeyBar" aria-label="Terminal shortcut keys">
       <button type="button" onClick={() => sendShortcut("tab")}>Tab</button>
