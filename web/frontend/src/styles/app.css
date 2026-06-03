@@ -294,9 +294,12 @@ button.row { min-height: 42px; justify-content: stretch; }
 }
 .xtermHost .xterm { height: 100%; padding: 8px 8px 10px; }
 .xtermHost .xterm-viewport {
-  overflow-y: hidden;
+  overflow-y: hidden !important;
   overscroll-behavior: contain;
   scroll-behavior: auto;
+}
+.xtermHost .xterm-screen {
+  overflow-y: hidden;
 }
 .terminalScrollOverlay {
   flex: 0 0 34px;
