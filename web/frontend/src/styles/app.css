@@ -47,6 +47,41 @@ input { min-width: 0; }
   gap: 8px;
 }
 .toolbarActions button { width: 38px; min-height: 34px; padding: 0; }
+.activeOrbitd {
+  margin-left: 12px;
+  min-width: 0;
+  max-width: 360px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #c9d2d8;
+  background: #f4f9f7;
+  color: #2c3a40;
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.activeOrbitd:hover { background: #e7f1ee; border-color: #8db7a9; }
+.activeOrbitd > svg { flex: 0 0 auto; color: #5c8375; }
+.activeOrbitdLabel {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.activeOrbitdUrl {
+  color: #66737b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .mobileChromeToggle { display: none; }
 .cwdField { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 6px; }
 .cwdField button { padding: 0; }
@@ -57,14 +92,34 @@ input { min-width: 0; }
   min-height: 32px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  gap: 8px;
+  padding: 0 6px 0 14px;
   border-bottom: 1px solid #d8e0e5;
   color: #355148;
   background: #eef6f3;
+}
+.statusLineText {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.statusLineClose {
+  flex: 0 0 auto;
+  width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #355148;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.statusLineClose:hover { background: #d4ede7; }
 
 .layout { flex: 1; display: grid; grid-template-columns: minmax(600px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .masterPane {
@@ -800,6 +855,8 @@ button.row { min-height: 42px; justify-content: stretch; }
     padding: 8px max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
   }
   .toolbar strong { flex: 0 0 auto; }
+  .activeOrbitd { margin-left: 0; max-width: none; flex: 1 1 auto; }
+  .activeOrbitdUrl { display: none; }
   .toolbarActions { margin-left: auto; }
   .toolbarActions button,
   .iconButton {

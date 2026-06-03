@@ -493,7 +493,11 @@ function App() {
   const [env, setEnv] = useState("");
   const [attachAfterRun, setAttachAfterRun] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [messageState, setMessageState] = useState<{ text: string; epoch: number }>({ text: "", epoch: 0 });
+  const setMessage = React.useCallback((text: string) => {
+    setMessageState((prev) => ({ text, epoch: prev.epoch + 1 }));
+  }, []);
+  const message = messageState.text;
   const [folderOpen, setFolderOpen] = useState(false);
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
@@ -683,6 +687,13 @@ function App() {
     localStorage.setItem(MASTER_PANE_WIDTH_KEY, String(masterPaneWidth));
   }, [masterPaneWidth]);
   useEffect(() => {
+    if (!messageState.text) return;
+    const timer = window.setTimeout(() => {
+      setMessageState((prev) => (prev.epoch === messageState.epoch ? { text: "", epoch: prev.epoch } : prev));
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [messageState]);
+  useEffect(() => {
     const onResize = () => {
       setMasterPaneWidth((width) => clampMasterPaneWidth(width));
     };
@@ -698,6 +709,17 @@ function App() {
     </button>}
     <section className="toolbar">
       <strong>Orbit</strong>
+      {activeConnection && (
+        <button
+          className="activeOrbitd"
+          title={`${activeConnection.label} · ${activeConnection.url}`}
+          onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
+        >
+          <Server size={14} />
+          <span className="activeOrbitdLabel">{activeConnection.label}</span>
+          <span className="activeOrbitdUrl">{activeConnection.url}</span>
+        </button>
+      )}
       <div className="toolbarActions">
         <button
           className={connectionsOpen ? "activeButton" : ""}
@@ -709,7 +731,12 @@ function App() {
         <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
       </div>
     </section>
-    {message && <div className="statusLine">{message}</div>}
+    {message && <div className="statusLine">
+      <span className="statusLineText">{message}</span>
+      <button className="statusLineClose" title="Dismiss" onClick={() => setMessageState((prev) => ({ text: "", epoch: prev.epoch }))}>
+        <X size={14} />
+      </button>
+    </div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}`} style={layoutStyle}>
       {connectionsOpen ? <ConnectionsWorkspace
           connections={connections}
