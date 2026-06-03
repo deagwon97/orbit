@@ -16,6 +16,7 @@ GITHUB_API="https://api.github.com/repos/${REPO}"
 SERVICE_NAME="orbitd"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 ORBITD_CONFIG_DIR="/etc/orbitd"
+DEFAULT_INSTALL_DIR="/usr/local/bin"
 
 # ── colors ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -34,9 +35,13 @@ Options:
   -p, --prebuilt          Download pre-built binaries from GitHub releases
   -b, --build             Build from source using Rust + Go (default)
   -v, --version VERSION   Release tag to install, e.g. v0.2.0  (default: latest)
-      --install-dir DIR   Destination directory (default: /usr/local/bin)
+      --install-dir DIR   Destination directory for orbitd and orb (default: ${DEFAULT_INSTALL_DIR})
       --no-systemd        Skip systemd service registration
   -h, --help              Show this message
+
+Default binary paths:
+  orbitd: ${DEFAULT_INSTALL_DIR}/orbitd
+  orb   : ${DEFAULT_INSTALL_DIR}/orb
 
 Examples:
   sudo bash $(basename "$0")
@@ -57,7 +62,7 @@ detect_arch() {
 }
 
 default_install_dir() {
-    echo "/usr/local/bin"
+    echo "$DEFAULT_INSTALL_DIR"
 }
 
 # Resolve the real invoking user even when run with sudo.
@@ -271,6 +276,8 @@ done
 
 log "Mode        : ${MODE}"
 log "Install dir : ${INSTALL_DIR}"
+log "orbitd path : ${INSTALL_DIR}/orbitd"
+log "orb path    : ${INSTALL_DIR}/orb"
 log "Systemd     : $( $SETUP_SYSTEMD && echo "yes" || echo "no (--no-systemd)" )"
 [[ "$MODE" == "prebuilt" ]] && log "Version     : ${VERSION}"
 echo

@@ -40,8 +40,15 @@ Only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, a
 
 ## Quick Start
 
-The install script requires root to write to `/usr/local/bin` and register the
-systemd service — run it with `sudo`.
+The install script requires root to write the default binary paths and register
+the systemd service — run it with `sudo`.
+
+Default binary paths:
+
+| Binary | Default path |
+|--------|--------------|
+| `orbitd` | `/usr/local/bin/orbitd` |
+| `orb` | `/usr/local/bin/orb` |
 
 ### Option A — Pre-built binaries (fastest)
 
@@ -52,7 +59,8 @@ sudo bash install/install.sh --prebuilt
 ```
 
 Downloads the latest release binaries for your architecture, installs them to
-`/usr/local/bin`, and registers `orbitd` as a systemd service that starts on boot.
+the default binary paths, and registers `orbitd` as a systemd service that starts
+on boot.
 
 ### Option B — Build from source
 
@@ -66,8 +74,8 @@ sudo bash install/install.sh
 ```
 
 The build runs as the original user (via `SUDO_USER`) so your `cargo` and `go`
-installations are found correctly. Binaries are then installed to `/usr/local/bin`
-and the systemd service is registered.
+installations are found correctly. Binaries are then installed to the default
+binary paths and the systemd service is registered.
 
 ### After install
 
@@ -102,7 +110,8 @@ sudo bash install/install.sh [OPTIONS]
   -p, --prebuilt          Download pre-built binaries from GitHub releases
   -b, --build             Build from source (default)
   -v, --version VERSION   Specific release tag, e.g. v0.2.0 (default: latest)
-      --install-dir DIR   Override install directory (default: /usr/local/bin)
+      --install-dir DIR   Override install directory for both binaries
+                          (default: /usr/local/bin; installs DIR/orbitd and DIR/orb)
       --no-systemd        Skip systemd service registration
   -h, --help              Show all options
 ```
