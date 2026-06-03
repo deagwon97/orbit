@@ -1,10 +1,12 @@
+import "@xterm/xterm/css/xterm.css";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
-import { Terminal as XTerm } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
+import { Terminal as XTermTerminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { marked } from "marked";
-import { AnsiUp } from "ansi_up";
 import { basicSetup, EditorView } from "codemirror";
 import { search } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting, StreamLanguage } from "@codemirror/language";
@@ -1388,8 +1390,9 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   const [hasMore, setHasMore] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [autoFollow, setAutoFollow] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<XTermTerminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   async function loadPage(reset = false) {
     if (busy) return;
@@ -1422,39 +1425,62 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   }, [session.key]);
 
   useEffect(() => {
-    if (autoFollow && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [lines, autoFollow]);
+    if (!containerRef.current) return;
 
-  function handleScroll() {
-    if (containerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-      setAutoFollow(scrollHeight - scrollTop - clientHeight < 100);
-    }
-  }
+    const term = new XTermTerminal({
+      disableStdin: true,
+      cursorBlink: false,
+      cursorStyle: 'block',
+      fontSize: 13,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      theme: {
+        background: '#101214',
+        foreground: '#e8ecef'
+      },
+      scrollback: 10000
+    });
 
-  const ansiUp = useMemo(() => {
-    const converter = new AnsiUp();
-    converter.use_classes = true;
-    return converter;
-  }, []);
+    const fitAddon = new FitAddon();
+    const webLinksAddon = new WebLinksAddon();
 
-  function renderLogs() {
-    const allContent = lines.map((line) => {
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+    term.open(containerRef.current);
+    term.element?.setAttribute('tabindex', '-1');
+
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    setTimeout(() => fitAddon.fit(), 0);
+
+    return () => {
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [session.key]);
+
+  useEffect(() => {
+    if (!terminalRef.current || lines.length === 0) return;
+
+    const term = terminalRef.current;
+    term.clear();
+
+    const fullContent = lines.map((line) => {
       const decoded = decodeBytes(line.content);
-      return stripAnsiControlCodes(decoded);
-    }).join("\n");
-    const html = ansiUp.ansi_to_html(allContent);
-    return <span dangerouslySetInnerHTML={{ __html: html }} />;
-  }
+      return decoded;
+    }).join("");
+
+    const outputLines = fullContent.split('\n');
+    for (const line of outputLines) {
+      term.writeln(line);
+    }
+
+    term.scrollToBottom();
+  }, [lines]);
 
   return <div className="logPane">
-    <div className="logBody logBodyStatic" ref={containerRef}>
-      {lines.length === 0 && !busy && <div className="logEmpty">No logs</div>}
-      {busy && <div className="logLoading">Loading...</div>}
-      <pre className="logContent">{renderLogs()}</pre>
-    </div>
+    <div className="logBody logBodyStatic" ref={containerRef}></div>
     <div className="logActions">
       {error && <span className="logError">{error}</span>}
       <span>{lines.length} chunks</span>
@@ -1465,7 +1491,7 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
 
 function Terminal({ session, reload }: { session: ConnectedSession; reload: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
+  const termRef = useRef<XTermTerminal | null>(null);
   const autoFollowRef = useRef(true);
   const sendInputRef = useRef<(data: string) => void>(() => {});
   const [modifiers, setModifiers] = useState<Record<TerminalModifier, boolean>>({
@@ -1476,7 +1502,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   });
   const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
 
-  function updateScrollInfo(term: XTerm) {
+  function updateScrollInfo(term: XTermTerminal) {
     const totalRows = term.buffer.active.baseY + term.rows;
     const scrollable = term.buffer.active.baseY > 0;
     const top = scrollable ? term.buffer.active.viewportY / term.buffer.active.baseY : 1;
@@ -1500,13 +1526,12 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     if (!ref.current) return;
     const host = ref.current;
     const coarsePointer = isCoarsePointer();
-    const term = new XTerm({
+    const term = new XTermTerminal({
       cursorBlink: !coarsePointer,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       fontSize: 14,
       convertEol: false,
       scrollback: 10000,
-      allowProposedApi: false
     });
     termRef.current = term;
     const fit = new FitAddon();
