@@ -12,10 +12,9 @@ import (
 
 	attachcmd "orb/internal/attach"
 	"orb/internal/client"
+	"orb/internal/config"
 	"orb/internal/models"
 )
-
-const baseURL = "http://127.0.0.1:7777"
 
 func Execute(args []string) error {
 	if len(args) == 0 {
@@ -23,7 +22,7 @@ func Execute(args []string) error {
 		return nil
 	}
 
-	c := client.New(baseURL)
+	c := client.New(config.URL())
 	switch args[0] {
 	case "backends", "tools":
 		return backends(c, args[1:])
