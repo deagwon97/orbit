@@ -218,30 +218,288 @@ func isTerminal(file *os.File) bool {
 }
 
 func sanitizeLogOutput(in []byte) []byte {
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); {
-		switch in[i] {
+	// Simple terminal emulation: process ANSI sequences to render final output
+	buf := newTerminalBuffer(80, 24)
+	buf.write(in)
+	return buf.render()
+}
+
+// terminalBuffer is a simple ANSI terminal emulator
+type terminalBuffer struct {
+	width    int
+	height   int
+	screen   [][]byte
+	x, y     int
+	scrollTop, scrollBottom int
+}
+
+func newTerminalBuffer(width, height int) *terminalBuffer {
+	screen := make([][]byte, height)
+	for i := range screen {
+		screen[i] = make([]byte, 0, width)
+	}
+	return &terminalBuffer{
+		width:  width,
+		height: height,
+		screen: screen,
+		x:      0,
+		y:      0,
+		scrollTop: 0,
+		scrollBottom: height - 1,
+	}
+}
+
+func (t *terminalBuffer) write(data []byte) {
+	i := 0
+	for i < len(data) {
+		switch data[i] {
 		case 0x1b:
-			i = skipEscapeSequence(in, i)
+			i = t.parseEscape(data, i)
+		case '\n':
+			t.newline()
+			i++
 		case '\r':
-			if i+1 < len(in) && in[i+1] == '\n' {
-				out = appendNewline(out)
-				i += 2
-			} else {
-				out = appendNewline(out)
-				i++
-			}
+			t.carriageReturn()
+			i++
 		case '\b':
-			if len(out) > 0 && out[len(out)-1] != '\n' {
-				out = out[:len(out)-1]
-			}
+			t.backspace()
+			i++
+		case '\t':
+			t.tab()
 			i++
 		default:
-			out = append(out, in[i])
+			if data[i] >= 0x20 && data[i] < 0x7f {
+				t.putChar(data[i])
+			}
 			i++
 		}
 	}
-	return compactBlankLines(out)
+}
+
+func (t *terminalBuffer) parseEscape(data []byte, i int) int {
+	if i+1 >= len(data) {
+		return len(data)
+	}
+	switch data[i+1] {
+	case '[':
+		return t.parseCSI(data, i+2)
+	case ']':
+		return t.skipUntil(data, i+2, 0x07)
+	default:
+		return i + 2
+	}
+}
+
+func (t *terminalBuffer) parseCSI(data []byte, i int) int {
+	// Parse optional parameters
+	params := make([]int, 0, 4)
+	num := 0
+	hasNum := false
+	for i < len(data) {
+		b := data[i]
+		if b >= '0' && b <= '9' {
+			num = num*10 + int(b-'0')
+			hasNum = true
+			i++
+		} else if b == ';' {
+			if hasNum {
+				params = append(params, num)
+			} else {
+				params = append(params, 0)
+			}
+			num = 0
+			hasNum = false
+			i++
+		} else if b >= '@' && b <= '~' {
+			// Command
+			if hasNum {
+				params = append(params, num)
+			}
+			t.execCSI(b, params)
+			return i + 1
+		} else {
+			i++
+		}
+	}
+	return len(data)
+}
+
+func (t *terminalBuffer) execCSI(cmd byte, params []int) {
+	switch cmd {
+	case 'A': // Cursor Up
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.y = max(0, t.y-n)
+	case 'B': // Cursor Down
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.y = min(t.height-1, t.y+n)
+	case 'C': // Cursor Forward
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.x = min(t.width-1, t.x+n)
+	case 'D': // Cursor Back
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.x = max(0, t.x-n)
+	case 'E': // Cursor Next Line
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.y = min(t.height-1, t.y+n)
+		t.x = 0
+	case 'F': // Cursor Previous Line
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.y = max(0, t.y-n)
+		t.x = 0
+	case 'G': // Cursor Horizontal Absolute
+		n := 1
+		if len(params) > 0 && params[0] > 0 {
+			n = params[0]
+		}
+		t.x = min(t.width-1, n-1)
+	case 'H', 'f': // Cursor Position
+		row, col := 1, 1
+		if len(params) >= 1 && params[0] > 0 {
+			row = params[0]
+		}
+		if len(params) >= 2 && params[1] > 0 {
+			col = params[1]
+		}
+		t.y = max(0, min(t.height-1, row-1))
+		t.x = max(0, min(t.width-1, col-1))
+	case 'J': // Erase Display
+		if len(params) == 0 || params[0] == 0 {
+			// Clear from cursor to end of screen
+			for x := t.x; x < t.width; x++ {
+				t.set(t.x, t.y, ' ')
+			}
+			for y := t.y + 1; y < t.height; y++ {
+				for x := 0; x < t.width; x++ {
+					t.set(x, y, ' ')
+				}
+			}
+		}
+	case 'K': // Erase Line
+		if len(params) == 0 || params[0] == 0 {
+			// Clear from cursor to end of line
+			for x := t.x; x < t.width; x++ {
+				t.set(t.x, t.y, ' ')
+			}
+		}
+	case 'm': // SGR (ignored for rendering)
+	case 'l', 'h': // Show/hide cursor (ignored)
+	}
+}
+
+func (t *terminalBuffer) putChar(b byte) {
+	if t.x >= t.width {
+		t.newline()
+	}
+	if t.x < t.width {
+		t.set(t.x, t.y, b)
+		t.x++
+	}
+}
+
+func (t *terminalBuffer) set(x, y int, b byte) {
+	if y < 0 || y >= t.height || x < 0 || x >= t.width {
+		return
+	}
+	// Extend row if needed
+	for len(t.screen[y]) <= x {
+		t.screen[y] = append(t.screen[y], ' ')
+	}
+	t.screen[y][x] = b
+}
+
+func (t *terminalBuffer) newline() {
+	t.x = 0
+	t.y++
+	if t.y > t.scrollBottom {
+		// Scroll up
+		t.screen = append(t.screen[1:], make([]byte, 0, t.width))
+		t.y = t.scrollBottom
+	}
+}
+
+func (t *terminalBuffer) carriageReturn() {
+	t.x = 0
+}
+
+func (t *terminalBuffer) backspace() {
+	if t.x > 0 {
+		t.x--
+	}
+}
+
+func (t *terminalBuffer) tab() {
+	tabStop := 8
+	nextTab := ((t.x / tabStop) + 1) * tabStop
+	for t.x < nextTab && t.x < t.width {
+		t.putChar(' ')
+	}
+}
+
+func (t *terminalBuffer) skipUntil(data []byte, i int, term byte) int {
+	for i < len(data) {
+		if data[i] == term {
+			return i + 1
+		}
+		i++
+	}
+	return len(data)
+}
+
+func (t *terminalBuffer) render() []byte {
+	var out []byte
+	for y := 0; y < t.height; y++ {
+		row := t.screen[y]
+		if len(row) > 0 {
+			// Trim trailing spaces
+			end := len(row)
+			for end > 0 && row[end-1] == ' ' {
+				end--
+			}
+			out = append(out, row[:end]...)
+		}
+		out = append(out, '\n')
+	}
+	// Trim trailing blank lines
+	for len(out) > 0 && out[len(out)-1] == '\n' {
+		if len(out) > 1 && out[len(out)-2] == '\n' {
+			out = out[:len(out)-1]
+		} else {
+			break
+		}
+	}
+	return out
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func appendNewline(out []byte) []byte {
