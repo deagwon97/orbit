@@ -355,18 +355,23 @@ function encodeBytes(text: string) {
 }
 
 function decodeBytes(data: string) {
-  return new TextDecoder('utf-8').decode(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder('utf-8').decode(bytes);
 }
 
 function stripAnsiControlCodes(text: string): string {
   // CSI 시퀀스 중 커서 이동/화면 제어 관련 제거 (색상 코드는 ansi_up 가 처리)
-  // 제거: cursor up/down/left/right, erase, scroll, etc.
   return text.replace(/\x1b\[(\??)(\d*)([a-zA-Z])/g, (match, prefix, code, cmd) => {
     // 색상/스타일 코드는 유지 (m 명령)
     if (cmd === 'm') return match;
     // 그 외 제어 코드는 제거
     return '';
-  }).replace(/\x1b\][^\x07]*\x07/g, ''); // OSC 시퀀스 제거 (창 제목 등)
+  }).replace(/\x1b\][^\x07]*\x07/g, '') // OSC 시퀀스 제거
+    .replace(/\x1b[\x1b\\]/g, ''); // ESC character 제거
 }
 
 async function websocketText(data: MessageEvent["data"]) {
