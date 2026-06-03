@@ -355,7 +355,18 @@ function encodeBytes(text: string) {
 }
 
 function decodeBytes(data: string) {
-  return new TextDecoder().decode(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
+  return new TextDecoder('utf-8').decode(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
+}
+
+function stripAnsiControlCodes(text: string): string {
+  // CSI 시퀀스 중 커서 이동/화면 제어 관련 제거 (색상 코드는 ansi_up 가 처리)
+  // 제거: cursor up/down/left/right, erase, scroll, etc.
+  return text.replace(/\x1b\[(\??)(\d*)([a-zA-Z])/g, (match, prefix, code, cmd) => {
+    // 색상/스타일 코드는 유지 (m 명령)
+    if (cmd === 'm') return match;
+    // 그 외 제어 코드는 제거
+    return '';
+  }).replace(/\x1b\][^\x07]*\x07/g, ''); // OSC 시퀀스 제거 (창 제목 등)
 }
 
 async function websocketText(data: MessageEvent["data"]) {
@@ -1425,7 +1436,10 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   }, []);
 
   function renderLogs() {
-    const allContent = lines.map((line) => decodeBytes(line.content)).join("");
+    const allContent = lines.map((line) => {
+      const decoded = decodeBytes(line.content);
+      return stripAnsiControlCodes(decoded);
+    }).join("");
     const html = ansiUp.ansi_to_html(allContent);
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
