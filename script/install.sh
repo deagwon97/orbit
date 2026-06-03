@@ -16,7 +16,8 @@ GITHUB_API="https://api.github.com/repos/${REPO}"
 SERVICE_NAME="orbitd"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 ORBITD_CONFIG_DIR="/etc/orbitd"
-DEFAULT_INSTALL_DIR="/usr/local/bin"
+DEFAULT_ORBITD_DIR="/opt/orbit"
+DEFAULT_ORB_DIR_REL=".local/bin"
 
 # ── colors ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -35,19 +36,21 @@ Options:
   -p, --prebuilt          Download pre-built binaries from GitHub releases
   -b, --build             Build from source using Rust + Go (default)
   -v, --version VERSION   Release tag to install, e.g. v0.2.0  (default: latest)
-      --install-dir DIR   Destination directory for orbitd and orb (default: ${DEFAULT_INSTALL_DIR})
+      --orbitd-dir DIR    Destination directory for orbitd (default: ${DEFAULT_ORBITD_DIR})
+      --orb-dir DIR       Destination directory for orb (default: ~/${DEFAULT_ORB_DIR_REL})
+      --install-dir DIR   Legacy: install both orbitd and orb into DIR
       --no-systemd        Skip systemd service registration
   -h, --help              Show this message
 
 Default binary paths:
-  orbitd: ${DEFAULT_INSTALL_DIR}/orbitd
-  orb   : ${DEFAULT_INSTALL_DIR}/orb
+  orbitd: ${DEFAULT_ORBITD_DIR}/orbitd
+  orb   : ~/${DEFAULT_ORB_DIR_REL}/orb
 
 Examples:
   sudo bash $(basename "$0")
   sudo bash $(basename "$0") --prebuilt
   sudo bash $(basename "$0") --prebuilt --version v0.2.0
-  sudo bash $(basename "$0") --build --install-dir /opt/orbit/bin
+  sudo bash $(basename "$0") --build --orbitd-dir /opt/orbit --orb-dir ~/.local/bin
   sudo bash $(basename "$0") --prebuilt --no-systemd
 EOF
 }
@@ -61,10 +64,6 @@ detect_arch() {
     esac
 }
 
-default_install_dir() {
-    echo "$DEFAULT_INSTALL_DIR"
-}
-
 # Resolve the real invoking user even when run with sudo.
 real_user() {
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -74,27 +73,82 @@ real_user() {
     fi
 }
 
+real_user_home() {
+    sudo -u "$(real_user)" bash -lc 'printf "%s" "$HOME"'
+}
+
+default_orbitd_dir() {
+    echo "$DEFAULT_ORBITD_DIR"
+}
+
+default_orb_dir() {
+    echo "$(real_user_home)/${DEFAULT_ORB_DIR_REL}"
+}
+
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # Run a command as the original (pre-sudo) user.
 # Falls back to the current user when not invoked via sudo.
 run_as_user() { sudo -u "$(real_user)" bash -lc "$*"; }
 
-# Install two binaries into $install_dir (script already runs as root).
+stop_existing_processes() {
+    local svc_user
+    svc_user="$(real_user)"
+
+    if check_cmd pgrep && check_cmd pkill; then
+        if pgrep -u "$svc_user" -x orb >/dev/null 2>&1; then
+            log "Stopping existing orb client processes..."
+            pkill -TERM -u "$svc_user" -x orb || true
+            sleep 1
+            if pgrep -u "$svc_user" -x orb >/dev/null 2>&1; then
+                warn "Force stopping remaining orb client processes..."
+                pkill -KILL -u "$svc_user" -x orb || true
+            fi
+        fi
+    else
+        warn "pgrep/pkill not found; skipping orb process stop."
+    fi
+
+    if check_cmd systemctl; then
+        if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
+            log "Stopping existing ${SERVICE_NAME} service..."
+            systemctl stop "$SERVICE_NAME"
+        fi
+    fi
+
+    if check_cmd pgrep && check_cmd pkill; then
+        if pgrep -x orbitd >/dev/null 2>&1; then
+            log "Stopping remaining orbitd processes..."
+            pkill -TERM -x orbitd || true
+            sleep 1
+            if pgrep -x orbitd >/dev/null 2>&1; then
+                warn "Force stopping remaining orbitd processes..."
+                pkill -KILL -x orbitd || true
+            fi
+        fi
+    else
+        warn "pgrep/pkill not found; skipping remaining orbitd process stop."
+    fi
+}
+
+# Install orbitd as root and orb as the invoking user.
 place_binaries() {
-    local orbitd_bin="$1" orb_bin="$2" install_dir="$3"
+    local orbitd_bin="$1" orb_bin="$2" orbitd_dir="$3" orb_dir="$4"
+    local orb_user
+    orb_user="$(real_user)"
 
-    mkdir -p "$install_dir"
-    install -m 0755 "$orbitd_bin" "${install_dir}/orbitd"
-    install -m 0755 "$orb_bin"    "${install_dir}/orb"
+    mkdir -p "$orbitd_dir"
+    install -d -o "$orb_user" -g "$(id -gn "$orb_user")" -m 0755 "$orb_dir"
+    install -m 0755 "$orbitd_bin" "${orbitd_dir}/orbitd"
+    install -o "$orb_user" -g "$(id -gn "$orb_user")" -m 0755 "$orb_bin" "${orb_dir}/orb"
 
-    log "Installed  orbitd  →  ${install_dir}/orbitd"
-    log "Installed  orb     →  ${install_dir}/orb"
+    log "Installed  orbitd  →  ${orbitd_dir}/orbitd"
+    log "Installed  orb     →  ${orb_dir}/orb"
 }
 
 # ── prebuilt install ─────────────────────────────────────────────────────────
 install_prebuilt() {
-    local version="$1" install_dir="$2"
+    local version="$1" orbitd_dir="$2" orb_dir="$3"
     local arch; arch=$(detect_arch)
 
     check_cmd curl || die "'curl' is required for downloading binaries. Please install it."
@@ -120,12 +174,12 @@ install_prebuilt() {
     curl -fsSL --progress-bar "${base_url}/orb-linux-${arch}" -o "${tmp_dir}/orb" \
         || die "Download failed. Does release ${version} have orb-linux-${arch}? Check: https://github.com/${REPO}/releases"
 
-    place_binaries "${tmp_dir}/orbitd" "${tmp_dir}/orb" "$install_dir"
+    place_binaries "${tmp_dir}/orbitd" "${tmp_dir}/orb" "$orbitd_dir" "$orb_dir"
 }
 
 # ── build from source ─────────────────────────────────────────────────────────
 install_from_source() {
-    local install_dir="$1"
+    local orbitd_dir="$1" orb_dir="$2"
 
     # cargo and go are installed in user space — check and build as that user.
     run_as_user 'command -v cargo' >/dev/null 2>&1 \
@@ -168,7 +222,7 @@ install_from_source() {
     local orb_bin="${repo_dir}/orb/orb"
     [[ -f "$orb_bin" ]] || die "orb binary not found after build: ${orb_bin}"
 
-    place_binaries "$orbitd_bin" "$orb_bin" "$install_dir"
+    place_binaries "$orbitd_bin" "$orb_bin" "$orbitd_dir" "$orb_dir"
 }
 
 # Pre-create /etc/orbitd so the daemon can write its token there as svc_user.
@@ -197,15 +251,16 @@ setup_systemd() {
 
     check_cmd systemctl || { warn "systemd not found — skipping service registration."; return; }
 
-    local svc_user
+    local svc_user svc_home
     svc_user=$(real_user)
+    svc_home=$(real_user_home)
 
     prepare_orbitd_config_dir "$svc_user"
     link_orb_token "$svc_user"
 
     # Backend commands typically use absolute paths in /etc/orbitd/config.yaml,
     # so only standard system directories are needed here.
-    local svc_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    local svc_path="${svc_home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
     log "Installing systemd service: ${SERVICE_FILE}"
     cat > "$SERVICE_FILE" <<EOF
@@ -229,26 +284,23 @@ EOF
     log "Reloading systemd daemon..."
     systemctl daemon-reload
 
-    # If already active, restart; otherwise enable and start fresh.
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        log "Restarting existing ${SERVICE_NAME} service..."
-        systemctl restart "$SERVICE_NAME"
-    else
-        log "Enabling and starting ${SERVICE_NAME} service..."
-        systemctl enable --now "$SERVICE_NAME"
-    fi
+    log "Enabling ${SERVICE_NAME} service..."
+    systemctl enable "$SERVICE_NAME"
+
+    log "Restarting ${SERVICE_NAME} service..."
+    systemctl restart "$SERVICE_NAME"
 
     log "Service status:"
     systemctl status "$SERVICE_NAME" --no-pager -l || true
 }
 
 # ── PATH hint ────────────────────────────────────────────────────────────────
-path_hint() {
-    local install_dir="$1"
-    if [[ ":${PATH}:" != *":${install_dir}:"* ]]; then
-        warn "${install_dir} is not in your PATH."
+orb_path_hint() {
+    local orb_dir="$1"
+    if [[ ":${PATH}:" != *":${orb_dir}:"* ]]; then
+        warn "${orb_dir} is not in your PATH."
         warn "Add the following to your shell config (~/.bashrc, ~/.zshrc, etc.):"
-        warn "  export PATH=\"\$PATH:${install_dir}\""
+        warn "  export PATH=\"\$PATH:${orb_dir}\""
     fi
 }
 
@@ -257,7 +309,8 @@ path_hint() {
 
 MODE="build"
 VERSION="latest"
-INSTALL_DIR=""
+ORBITD_DIR=""
+ORB_DIR=""
 SETUP_SYSTEMD=true
 
 while [[ $# -gt 0 ]]; do
@@ -265,34 +318,39 @@ while [[ $# -gt 0 ]]; do
         -p|--prebuilt)    MODE="prebuilt"; shift ;;
         -b|--build)       MODE="build";    shift ;;
         -v|--version)     [[ $# -ge 2 ]] || die "--version requires an argument"; VERSION="$2"; shift 2 ;;
-        --install-dir)    [[ $# -ge 2 ]] || die "--install-dir requires an argument"; INSTALL_DIR="$2"; shift 2 ;;
+        --orbitd-dir)     [[ $# -ge 2 ]] || die "--orbitd-dir requires an argument"; ORBITD_DIR="$2"; shift 2 ;;
+        --orb-dir)        [[ $# -ge 2 ]] || die "--orb-dir requires an argument"; ORB_DIR="$2"; shift 2 ;;
+        --install-dir)    [[ $# -ge 2 ]] || die "--install-dir requires an argument"; ORBITD_DIR="$2"; ORB_DIR="$2"; shift 2 ;;
         --no-systemd)     SETUP_SYSTEMD=false; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                die "Unknown option: '$1'. Run with --help for usage." ;;
     esac
 done
 
-[[ -z "$INSTALL_DIR" ]] && INSTALL_DIR=$(default_install_dir)
+[[ -z "$ORBITD_DIR" ]] && ORBITD_DIR=$(default_orbitd_dir)
+[[ -z "$ORB_DIR" ]] && ORB_DIR=$(default_orb_dir)
 
 log "Mode        : ${MODE}"
-log "Install dir : ${INSTALL_DIR}"
-log "orbitd path : ${INSTALL_DIR}/orbitd"
-log "orb path    : ${INSTALL_DIR}/orb"
+log "orbitd path : ${ORBITD_DIR}/orbitd"
+log "orb path    : ${ORB_DIR}/orb"
 log "Systemd     : $( $SETUP_SYSTEMD && echo "yes" || echo "no (--no-systemd)" )"
 [[ "$MODE" == "prebuilt" ]] && log "Version     : ${VERSION}"
 echo
 
+stop_existing_processes
+echo
+
 case "$MODE" in
-    prebuilt) install_prebuilt "$VERSION" "$INSTALL_DIR" ;;
-    build)    install_from_source "$INSTALL_DIR" ;;
+    prebuilt) install_prebuilt "$VERSION" "$ORBITD_DIR" "$ORB_DIR" ;;
+    build)    install_from_source "$ORBITD_DIR" "$ORB_DIR" ;;
 esac
 
 echo
-path_hint "$INSTALL_DIR"
+orb_path_hint "$ORB_DIR"
 
 if $SETUP_SYSTEMD; then
     echo
-    setup_systemd "${INSTALL_DIR}/orbitd"
+    setup_systemd "${ORBITD_DIR}/orbitd"
     echo
     log "Done. orbitd is running as a system service."
     log "  sudo systemctl status orbitd    — check status"

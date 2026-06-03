@@ -45,17 +45,17 @@ the systemd service — run it with `sudo`.
 
 Default binary paths:
 
-| Binary | Default path |
-|--------|--------------|
-| `orbitd` | `/usr/local/bin/orbitd` |
-| `orb` | `/usr/local/bin/orb` |
+| Binary   | Default path         |
+| -------- | -------------------- |
+| `orbitd` | `/opt/orbit/orbitd`  |
+| `orb`    | `~/.local/bin/orb`   |
 
 ### Option A — Pre-built binaries (fastest)
 
 ```bash
 git clone https://github.com/deagwon97/orbit.git
 cd orbit
-sudo bash install/install.sh --prebuilt
+sudo bash script/install.sh --prebuilt
 ```
 
 Downloads the latest release binaries for your architecture, installs them to
@@ -70,10 +70,12 @@ installed for your user account.
 ```bash
 git clone https://github.com/deagwon97/orbit.git
 cd orbit
-sudo bash install/install.sh
+sudo bash script/install.sh
 ```
 
-The build runs as the original user (via `SUDO_USER`) so your `cargo` and `go`
+Before installation starts, the script stops any running `orb` client processes
+for the invoking user and stops the existing `orbitd` service/process. The build
+runs as the original user (via `SUDO_USER`) so your `cargo` and `go`
 installations are found correctly. Binaries are then installed to the default
 binary paths and the systemd service is registered.
 
@@ -89,29 +91,30 @@ orb run codex  # create a session and attach
 
 `orbitd` listens on `127.0.0.1:7777` and uses these files:
 
-| Path | Purpose |
-|------|---------|
-| `/etc/orbitd/token` | Bearer token for client auth (auto-generated) |
-| `/etc/orbitd/config.yaml` | Optional config file (also holds backend overrides) |
-| `~/.local/share/orbit/audit.jsonl` | Session audit trail |
+| Path                               | Purpose                                             |
+| ---------------------------------- | --------------------------------------------------- |
+| `/etc/orbitd/token`                | Bearer token for client auth (auto-generated)       |
+| `/etc/orbitd/config.yaml`          | Optional config file (also holds backend overrides) |
+| `~/.local/share/orbit/audit.jsonl` | Session audit trail                                 |
 
 `orb` reads its own files:
 
-| Path | Purpose |
-|------|---------|
-| `~/.config/orbit/orb/config.yaml` | Optional client config (orbitd URL) |
-| `~/.config/orbit/orb/token` | Bearer token (typically a symlink to `/etc/orbitd/token`) |
+| Path                              | Purpose                                                   |
+| --------------------------------- | --------------------------------------------------------- |
+| `~/.config/orbit/orb/config.yaml` | Optional client config (orbitd URL)                       |
+| `~/.config/orbit/orb/token`       | Bearer token (typically a symlink to `/etc/orbitd/token`) |
 
 ### Install script options
 
 ```
-sudo bash install/install.sh [OPTIONS]
+sudo bash script/install.sh [OPTIONS]
 
   -p, --prebuilt          Download pre-built binaries from GitHub releases
   -b, --build             Build from source (default)
   -v, --version VERSION   Specific release tag, e.g. v0.2.0 (default: latest)
-      --install-dir DIR   Override install directory for both binaries
-                          (default: /usr/local/bin; installs DIR/orbitd and DIR/orb)
+      --orbitd-dir DIR    Override orbitd install directory (default: /opt/orbit)
+      --orb-dir DIR       Override orb install directory (default: ~/.local/bin)
+      --install-dir DIR   Legacy: install both binaries into DIR
       --no-systemd        Skip systemd service registration
   -h, --help              Show all options
 ```
@@ -134,25 +137,25 @@ sudo bash install/install.sh [OPTIONS]
 └───────────────────────────────────────────────────┘
 ```
 
-| Key | Action |
-|-----|--------|
-| `↑`/`↓` or `k`/`j` | Move selection |
-| `enter` or `a` | Attach to selected session |
-| `n` | Open session creation form |
-| `x` | Delete selected session |
-| `l` | Show last 100 log chunks for selected session |
-| `tab` | Toggle between running / all sessions filter |
-| `r` | Refresh session list |
-| `q` or `Ctrl-C` | Quit |
+| Key                | Action                                        |
+| ------------------ | --------------------------------------------- |
+| `↑`/`↓` or `k`/`j` | Move selection                                |
+| `enter` or `a`     | Attach to selected session                    |
+| `n`                | Open session creation form                    |
+| `x`                | Delete selected session                       |
+| `l`                | Show last 100 log chunks for selected session |
+| `tab`              | Toggle between running / all sessions filter  |
+| `r`                | Refresh session list                          |
+| `q` or `Ctrl-C`    | Quit                                          |
 
 **Session creation form** — navigate with `tab`/`↑`/`↓`, edit with typing, toggle with `←`/`→`:
 
-| Field | Description |
-|-------|-------------|
-| `tool` | Backend ID from `orbitd` (←/→ to cycle) |
-| `name` | Optional session name |
-| `cwd` | Optional working directory (defaults to current dir) |
-| `env` | Space-separated `KEY=VALUE` pairs |
+| Field    | Description                                           |
+| -------- | ----------------------------------------------------- |
+| `tool`   | Backend ID from `orbitd` (←/→ to cycle)               |
+| `name`   | Optional session name                                 |
+| `cwd`    | Optional working directory (defaults to current dir)  |
+| `env`    | Space-separated `KEY=VALUE` pairs                     |
 | `detach` | `true` → return to list; `false` → attach immediately |
 
 **When attached**: press `Ctrl-]` or `Ctrl-\` to detach while keeping the session running. If your terminal intercepts those keys, `Ctrl-G`, `Ctrl-^`, or `Ctrl-_` also work.
@@ -183,22 +186,22 @@ orb rm <id>...         # delete one or more sessions by ID or name
 
 Base: `http://127.0.0.1:7777` — all endpoints except `/healthz` require `Authorization: Bearer <token>`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/healthz` | Health check (no auth) |
-| `GET` | `/api/v1/backends` | List agent backends available to `orbitd` |
-| `POST` | `/api/v1/sessions` | Create a session |
-| `GET` | `/api/v1/sessions` | List sessions (`?status=running`, `?tool=codex`) |
-| `GET` | `/api/v1/sessions/:id` | Get session by ID or name |
-| `POST` | `/api/v1/sessions/:id/stop` | Stop a running session |
-| `DELETE` | `/api/v1/sessions/:id` | Delete session (kills process if running) |
-| `GET` | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks |
-| `GET` | `/api/v1/sessions/:id/attach` | WebSocket upgrade for live attach |
-| `GET` | `/api/v1/fs/dirs?path=...` | List visible subdirectories for a path |
-| `POST` | `/api/v1/fs/dirs` | Create a child directory |
-| `GET` | `/api/v1/fs/entries?path=...` | List visible files and directories for a path |
-| `GET` | `/api/v1/fs/files?path=...` | Read a UTF-8 text file, up to 10 MB |
-| `PUT` | `/api/v1/fs/files` | Write UTF-8 text content to a file |
+| Method   | Path                               | Description                                      |
+| -------- | ---------------------------------- | ------------------------------------------------ |
+| `GET`    | `/healthz`                         | Health check (no auth)                           |
+| `GET`    | `/api/v1/backends`                 | List agent backends available to `orbitd`        |
+| `POST`   | `/api/v1/sessions`                 | Create a session                                 |
+| `GET`    | `/api/v1/sessions`                 | List sessions (`?status=running`, `?tool=codex`) |
+| `GET`    | `/api/v1/sessions/:id`             | Get session by ID or name                        |
+| `POST`   | `/api/v1/sessions/:id/stop`        | Stop a running session                           |
+| `DELETE` | `/api/v1/sessions/:id`             | Delete session (kills process if running)        |
+| `GET`    | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks                    |
+| `GET`    | `/api/v1/sessions/:id/attach`      | WebSocket upgrade for live attach                |
+| `GET`    | `/api/v1/fs/dirs?path=...`         | List visible subdirectories for a path           |
+| `POST`   | `/api/v1/fs/dirs`                  | Create a child directory                         |
+| `GET`    | `/api/v1/fs/entries?path=...`      | List visible files and directories for a path    |
+| `GET`    | `/api/v1/fs/files?path=...`        | Read a UTF-8 text file, up to 10 MB              |
+| `PUT`    | `/api/v1/fs/files`                 | Write UTF-8 text content to a file               |
 
 **Create session** request body:
 
@@ -252,17 +255,17 @@ backends:
 
 Default paths and runtime settings:
 
-| Setting | Default | Environment override |
-|---------|---------|----------------------|
-| `listen` | `127.0.0.1:7777` | — |
-| `config_path` | `/etc/orbitd/config.yaml` | `ORBITD_CONFIG` |
-| `token_path` | `/etc/orbitd/token` | `ORBITD_TOKEN_PATH` |
-| `data_dir` | `~/.local/share/orbit` | — |
-| `session_logs_dir` | `./tmp` (relative to `orbitd` working dir) | — |
-| `audit_path` | `~/.local/share/orbit/audit.jsonl` | — |
-| `process_path` | `$PATH` from server environment | — |
-| `scrollback_lines` | 10,000 | — |
-| `scrollback_max_bytes` | 100 MB | — |
+| Setting                | Default                                    | Environment override |
+| ---------------------- | ------------------------------------------ | -------------------- |
+| `listen`               | `127.0.0.1:7777`                           | —                    |
+| `config_path`          | `/etc/orbitd/config.yaml`                  | `ORBITD_CONFIG`      |
+| `token_path`           | `/etc/orbitd/token`                        | `ORBITD_TOKEN_PATH`  |
+| `data_dir`             | `~/.local/share/orbit`                     | —                    |
+| `session_logs_dir`     | `./tmp` (relative to `orbitd` working dir) | —                    |
+| `audit_path`           | `~/.local/share/orbit/audit.jsonl`         | —                    |
+| `process_path`         | `$PATH` from server environment            | —                    |
+| `scrollback_lines`     | 10,000                                     | —                    |
+| `scrollback_max_bytes` | 100 MB                                     | —                    |
 
 ### orb (client)
 
@@ -272,22 +275,22 @@ Default paths and runtime settings:
 url: "http://127.0.0.1:7777"
 ```
 
-| Setting | Default | Environment override |
-|---------|---------|----------------------|
-| `config_path` | `~/.config/orbit/orb/config.yaml` | `ORB_CONFIG` |
-| `token_path` | `~/.config/orbit/orb/token` | `ORB_TOKEN_PATH` |
-| `url` | `http://127.0.0.1:7777` (from `config.yaml`) | — |
+| Setting       | Default                                      | Environment override |
+| ------------- | -------------------------------------------- | -------------------- |
+| `config_path` | `~/.config/orbit/orb/config.yaml`            | `ORB_CONFIG`         |
+| `token_path`  | `~/.config/orbit/orb/token`                  | `ORB_TOKEN_PATH`     |
+| `url`         | `http://127.0.0.1:7777` (from `config.yaml`) | —                    |
 
 ## Agent Backends
 
 By default, `orbitd` exposes these backend IDs:
 
-| Backend ID | Command | Extra args |
-|------------|---------|------------|
-| `codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
-| `claude` | `claude` | `--dangerously-skip-permissions` |
-| `opencode` | `opencode` | _(none)_ |
-| `pi` | `pi` | _(none)_ |
+| Backend ID | Command    | Extra args                                   |
+| ---------- | ---------- | -------------------------------------------- |
+| `codex`    | `codex`    | `--dangerously-bypass-approvals-and-sandbox` |
+| `claude`   | `claude`   | `--dangerously-skip-permissions`             |
+| `opencode` | `opencode` | _(none)_                                     |
+| `pi`       | `pi`       | _(none)_                                     |
 
 To replace the defaults, add a `backends` list to `/etc/orbitd/config.yaml`:
 
@@ -363,19 +366,19 @@ cd web/backend && npm run dev
 
 Then open the Vite frontend and add an Orbitd connection:
 
-| Field | Example | Notes |
-|-------|---------|-------|
-| Name | `local` | Display label in the web UI |
-| URL | `http://127.0.0.1:7777` | The `orbitd` HTTP endpoint reachable from the web backend |
-| Token | contents of `~/.config/orbit/orb/token` (or `/etc/orbitd/token`) | Bearer token generated by `orbitd` |
+| Field | Example                                                          | Notes                                                     |
+| ----- | ---------------------------------------------------------------- | --------------------------------------------------------- |
+| Name  | `local`                                                          | Display label in the web UI                               |
+| URL   | `http://127.0.0.1:7777`                                          | The `orbitd` HTTP endpoint reachable from the web backend |
+| Token | contents of `~/.config/orbit/orb/token` (or `/etc/orbitd/token`) | Bearer token generated by `orbitd`                        |
 
 The web backend accepts the following environment variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | Web backend listen port |
-| `ORBITD_URL` | `http://127.0.0.1:7777` | Fallback upstream orbitd URL |
-| `ORBIT_TOKEN` | `""` | Fallback Bearer token for orbitd auth |
+| Variable      | Default                 | Description                           |
+| ------------- | ----------------------- | ------------------------------------- |
+| `PORT`        | `3001`                  | Web backend listen port               |
+| `ORBITD_URL`  | `http://127.0.0.1:7777` | Fallback upstream orbitd URL          |
+| `ORBIT_TOKEN` | `""`                    | Fallback Bearer token for orbitd auth |
 
 In the browser, add an `orbitd` connection with a label, URL, and Bearer token.
 Connections are stored in `localStorage`; each proxied request sends the selected
@@ -394,7 +397,7 @@ Mobile behavior is optimized for terminal use:
 
 ## systemd Service
 
-`install/install.sh` registers `orbitd` as a system service automatically.
+`script/install.sh` registers `orbitd` as a system service automatically.
 The generated unit file (`/etc/systemd/system/orbitd.service`) looks like:
 
 ```ini
@@ -405,8 +408,8 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/local/bin/orbitd
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/orbit/orbitd
 Restart=on-failure
 RestartSec=5
 
@@ -432,7 +435,21 @@ journalctl -u orbitd -f           # follow logs
 To skip service registration during install, pass `--no-systemd`:
 
 ```bash
-bash install/install.sh --no-systemd
+sudo bash script/install.sh --no-systemd
+```
+
+### Uninstall
+
+Remove the service and installed binaries:
+
+```bash
+sudo bash script/uninstall.sh
+```
+
+To also remove `/etc/orbitd`, `~/.config/orbit/orb`, and `~/.local/share/orbit`, pass `--purge`:
+
+```bash
+sudo bash script/uninstall.sh --purge
 ```
 
 ## Session Lifecycle
@@ -447,14 +464,14 @@ Sessions are stored in an in-memory SQLite database and are **not persisted** ac
 
 ## Troubleshooting
 
-| Problem | Check |
-|---------|-------|
-| TUI auth failure | Ensure `~/.config/orbit/orb/token` exists (symlink to `/etc/orbitd/token` works); start `orbitd` once to generate the source token |
-| Connection refused | Is `orbitd` running on `127.0.0.1:7777`? Check server logs |
-| Web UI can't connect | Is the web backend running on port 3001? Is the selected connection URL correct? Is the token set via `ORBIT_TOKEN` env or entered in the Orbitd connection screen? |
-| Session creation fails | Is the backend ID listed by `orb backends`? Is its command on `PATH`, or configured as an absolute path? |
-| "Cannot attach" | Session may have already exited and been cleaned up |
-| Build errors (Rust) | Ensure `pkg-config` and `libdbus-1-dev` are installed (`portable-pty` dependency) |
+| Problem                | Check                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TUI auth failure       | Ensure `~/.config/orbit/orb/token` exists (symlink to `/etc/orbitd/token` works); start `orbitd` once to generate the source token                                  |
+| Connection refused     | Is `orbitd` running on `127.0.0.1:7777`? Check server logs                                                                                                          |
+| Web UI can't connect   | Is the web backend running on port 3001? Is the selected connection URL correct? Is the token set via `ORBIT_TOKEN` env or entered in the Orbitd connection screen? |
+| Session creation fails | Is the backend ID listed by `orb backends`? Is its command on `PATH`, or configured as an absolute path?                                                            |
+| "Cannot attach"        | Session may have already exited and been cleaned up                                                                                                                 |
+| Build errors (Rust)    | Ensure `pkg-config` and `libdbus-1-dev` are installed (`portable-pty` dependency)                                                                                   |
 
 ## License
 
