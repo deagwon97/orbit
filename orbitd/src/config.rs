@@ -64,6 +64,13 @@ impl Default for Config {
 }
 
 fn get_user_path() -> Result<String, Box<dyn std::error::Error>> {
+    // First, try to get PATH from environment (set by systemd or shell)
+    if let Ok(path) = std::env::var("PATH") {
+        if !path.is_empty() && path.contains("local/bin") {
+            return Ok(path);
+        }
+    }
+
     // Try to get PATH from user's shell profile
     let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
 
