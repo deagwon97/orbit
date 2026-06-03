@@ -85,6 +85,46 @@ default_orb_dir() {
     echo "$(real_user_home)/${DEFAULT_ORB_DIR_REL}"
 }
 
+append_path_dir() {
+    local current="$1" dir="$2"
+    [[ -n "$dir" && -d "$dir" ]] || { echo "$current"; return; }
+    case ":${current}:" in
+        *":${dir}:"*) echo "$current" ;;
+        *) echo "${current}:${dir}" ;;
+    esac
+}
+
+user_runtime_path() {
+    local svc_user svc_home shell_path node_path node_dir nvm_bin path
+    svc_user="$(real_user)"
+    svc_home="$(real_user_home)"
+    path="${svc_home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    shell_path=$(sudo -u "$svc_user" bash -lc 'printf "%s" "$PATH"' 2>/dev/null || true)
+    if [[ -n "$shell_path" ]]; then
+        path="$shell_path"
+        path=$(append_path_dir "$path" "${svc_home}/.local/bin")
+        path=$(append_path_dir "$path" "/usr/local/sbin")
+        path=$(append_path_dir "$path" "/usr/local/bin")
+        path=$(append_path_dir "$path" "/usr/sbin")
+        path=$(append_path_dir "$path" "/usr/bin")
+        path=$(append_path_dir "$path" "/sbin")
+        path=$(append_path_dir "$path" "/bin")
+    fi
+
+    node_path=$(sudo -u "$svc_user" bash -lc 'command -v node 2>/dev/null || true' 2>/dev/null || true)
+    if [[ -n "$node_path" ]]; then
+        node_dir="$(dirname "$node_path")"
+        path=$(append_path_dir "$path" "$node_dir")
+    fi
+
+    for nvm_bin in "${svc_home}"/.nvm/versions/node/*/bin; do
+        path=$(append_path_dir "$path" "$nvm_bin")
+    done
+
+    echo "$path"
+}
+
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # Run a command as the original (pre-sudo) user.
@@ -258,9 +298,8 @@ setup_systemd() {
     prepare_orbitd_config_dir "$svc_user"
     link_orb_token "$svc_user"
 
-    # Backend commands typically use absolute paths in /etc/orbitd/config.yaml,
-    # so only standard system directories are needed here.
-    local svc_path="${svc_home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    local svc_path
+    svc_path=$(user_runtime_path)
 
     log "Installing systemd service: ${SERVICE_FILE}"
     cat > "$SERVICE_FILE" <<EOF

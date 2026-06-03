@@ -408,7 +408,7 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/home/ubuntu/.local/bin:/home/ubuntu/.nvm/versions/node/v24.16.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/opt/orbit/orbitd
 Restart=on-failure
 RestartSec=5
@@ -418,9 +418,11 @@ WantedBy=multi-user.target
 ```
 
 `User` is set to the invoking user (not root, even when `sudo` is used).
-Backend commands that live outside the standard `PATH` (e.g. under `~/.nvm`)
-should be defined with absolute paths in the `backends` section of
-`/etc/orbitd/config.yaml` — see [Agent Backends](#agent-backends).
+The generated `PATH` includes the invoking user's shell `PATH`, `~/.local/bin`,
+standard system directories, the active Node.js bin directory, and
+`~/.nvm/versions/node/*/bin` directories when present. Backend commands can still
+be defined with absolute paths in `/etc/orbitd/config.yaml` when needed — see
+[Agent Backends](#agent-backends).
 
 **Common service commands:**
 
