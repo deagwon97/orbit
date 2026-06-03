@@ -1418,77 +1418,65 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   }
 
   const ansiRegex = /\x1b\[([0-9;]*)m/g;
-  const ansiColors: Record<string, string> = {
-    "0": "#e8ecef",  // reset
-    "1": "#f5f7fa",  // bold
-    "30": "#2e3436", // black
-    "31": "#cc0000", // red
-    "32": "#4e9a06", // green
-    "33": "#c4a000", // yellow
-    "34": "#3465a4", // blue
-    "35": "#75507b", // magenta
-    "36": "#06989a", // cyan
-    "37": "#d3d7cf", // white
-    "90": "#555753", // bright black
-    "91": "#ef2929", // bright red
-    "92": "#8ae234", // bright green
-    "93": "#fce94f", // bright yellow
-    "94": "#729fcf", // bright blue
-    "95": "#ad7fa8", // bright magenta
-    "96": "#34e2e2", // bright cyan
-    "97": "#eeeeec"  // bright white
-  };
 
-  function renderLine(content: string) {
-    const decoded = decodeBytes(content);
-    const parts: { text: string; color?: string }[] = [];
-    let currentColor = "#e8ecef";
+  function renderLogs() {
+    const allContent = lines.map((line) => decodeBytes(line.content)).join("");
+    const parts: { text: string; className?: string }[] = [];
+    let currentClass = "";
     let lastIndex = 0;
+    let match: RegExpExecArray | null;
 
-    for (const match of decoded.matchAll(ansiRegex)) {
+    while ((match = ansiRegex.exec(allContent)) !== null) {
       if (match.index > lastIndex) {
-        parts.push({ text: decoded.slice(lastIndex, match.index), color: currentColor });
+        parts.push({ text: allContent.slice(lastIndex, match.index), className: currentClass || undefined });
       }
       const codes = match[1].split(";").filter(Boolean);
+      const classes: string[] = [];
       for (const code of codes) {
         if (code === "0") {
-          currentColor = "#e8ecef";
-        } else if (code in ansiColors) {
-          currentColor = ansiColors[code];
-        }
+          classes.length = 0;
+        } else if (code === "1") {
+          classes.push("ansi-bold");
+        } else if (code === "4") {
+          classes.push("ansi-underline");
+        } else if (code === "30") classes.push("ansi-black");
+        else if (code === "31") classes.push("ansi-red");
+        else if (code === "32") classes.push("ansi-green");
+        else if (code === "33") classes.push("ansi-yellow");
+        else if (code === "34") classes.push("ansi-blue");
+        else if (code === "35") classes.push("ansi-magenta");
+        else if (code === "36") classes.push("ansi-cyan");
+        else if (code === "37") classes.push("ansi-white");
+        else if (code === "90") classes.push("ansi-bright-black");
+        else if (code === "91") classes.push("ansi-bright-red");
+        else if (code === "92") classes.push("ansi-bright-green");
+        else if (code === "93") classes.push("ansi-bright-yellow");
+        else if (code === "94") classes.push("ansi-bright-blue");
+        else if (code === "95") classes.push("ansi-bright-magenta");
+        else if (code === "96") classes.push("ansi-bright-cyan");
+        else if (code === "97") classes.push("ansi-bright-white");
       }
-      lastIndex = match.index! + match[0].length;
+      currentClass = classes.join(" ");
+      lastIndex = match.index + match[0].length;
     }
-    if (lastIndex < decoded.length) {
-      parts.push({ text: decoded.slice(lastIndex), color: currentColor });
+    if (lastIndex < allContent.length) {
+      parts.push({ text: allContent.slice(lastIndex), className: currentClass || undefined });
     }
 
     return parts.map((part, i) =>
-      part.text ? <span key={i} style={{ color: part.color }}>{part.text}</span> : null
+      part.text ? <span key={i} className={part.className}>{part.text}</span> : null
     );
   }
 
   return <div className="logPane">
-    <div className="logTop">
-      <span className="logTitle">Logs</span>
-      <label className="logAutoFollow">
-        <input type="checkbox" checked={autoFollow} onChange={(e) => setAutoFollow(e.target.checked)} />
-        Auto-follow
-      </label>
-    </div>
-    <div className="logBody" ref={containerRef} onScroll={handleScroll}>
+    <div className="logBody logBodyStatic" ref={containerRef}>
       {lines.length === 0 && !busy && <div className="logEmpty">No logs</div>}
-      {lines.map((line, idx) => (
-        <div key={line.id || idx} className="logLine">
-          <span className="logTimestamp">{new Date(line.timestamp).toLocaleTimeString()}</span>
-          <span className="logContent">{renderLine(line.content)}</span>
-        </div>
-      ))}
       {busy && <div className="logLoading">Loading...</div>}
+      <pre className="logContent">{renderLogs()}</pre>
     </div>
     <div className="logActions">
       {error && <span className="logError">{error}</span>}
-      <span>{lines.length} lines</span>
+      <span>{lines.length} chunks</span>
       <button disabled={busy || !hasMore} onClick={() => void loadPage()}>{busy ? "Loading..." : hasMore ? "More" : "End"}</button>
     </div>
   </div>;

@@ -302,33 +302,6 @@ button.row { min-height: 42px; justify-content: stretch; }
   flex-direction: column;
   background: #101214;
 }
-.logTop {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #2e363b;
-  background: #1a1f22;
-}
-.logTitle {
-  font-size: 13px;
-  font-weight: 600;
-  color: #e8ecef;
-}
-.logAutoFollow {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #93a0a7;
-  font-size: 12px;
-}
-.logAutoFollow input {
-  margin: 0;
-  width: 16px;
-  height: 16px;
-}
 .logBody {
   flex: 1;
   min-height: 0;
@@ -340,30 +313,21 @@ button.row { min-height: 42px; justify-content: stretch; }
   background: #101214;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
-.logLine {
-  display: flex;
-  gap: 10px;
-  padding: 2px 0;
-  border-bottom: 1px solid rgba(46, 54, 59, 0.3);
+.logBodyStatic {
+  padding: 10px;
 }
-.logLine:last-child {
-  border-bottom: 0;
-}
-.logTimestamp {
-  flex-shrink: 0;
-  width: 72px;
-  color: #6a7f8c;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  opacity: 0.75;
-}
-.logContent {
-  flex: 1;
-  min-width: 0;
-  word-break: break-word;
+.logBody pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 .logEmpty {
   height: 100%;
@@ -374,6 +338,13 @@ button.row { min-height: 42px; justify-content: stretch; }
 .logLoading {
   padding: 10px;
   color: #66737b;
+}
+.logError {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #ffb1aa;
 }
 .logActions {
   min-height: 38px;
@@ -1016,3 +987,23 @@ button.row { min-height: 42px; justify-content: stretch; }
     padding: 0 8px;
   }
 }
+
+/* ANSI color styles for log viewer */
+.ansi-bold { font-weight: bold; }
+.ansi-underline { text-decoration: underline; }
+.ansi-black { color: #2e3436; }
+.ansi-red { color: #cc0000; }
+.ansi-green { color: #4e9a06; }
+.ansi-yellow { color: #c4a000; }
+.ansi-blue { color: #3465a4; }
+.ansi-magenta { color: #75507b; }
+.ansi-cyan { color: #06989a; }
+.ansi-white { color: #d3d7cf; }
+.ansi-bright-black { color: #555753; }
+.ansi-bright-red { color: #ef2929; }
+.ansi-bright-green { color: #8ae234; }
+.ansi-bright-yellow { color: #fce94f; }
+.ansi-bright-blue { color: #729fcf; }
+.ansi-bright-magenta { color: #ad7fa8; }
+.ansi-bright-cyan { color: #34e2e2; }
+.ansi-bright-white { color: #eeeeec; }
