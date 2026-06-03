@@ -542,39 +542,16 @@ function App() {
   }
 
   async function load() {
-    if (connections.length === 0) return [] as ConnectedSession[];
+    if (connections.length === 0 || !activeConnection) return [] as ConnectedSession[];
     try {
       const query = showAll ? "" : "?status=running";
-      const results = await Promise.allSettled(connections.map(async (connection) => {
-        try {
-          const items = await api(`/api/v1/sessions${query}`, {}, connection) as Session[];
-          return {
-            connection,
-            sessions: items.map((session) => ({
-              ...session,
-              connection,
-              key: connectionKey(connection.id, session.id)
-            }))
-          };
-        } catch (err) {
-          return {
-            connection,
-            sessions: [] as ConnectedSession[],
-            error: err instanceof Error ? err.message : String(err)
-          };
-        }
+      const items = await api(`/api/v1/sessions${query}`, {}, activeConnection) as Session[];
+      const nextSessions = items.map((session) => ({
+        ...session,
+        connection: activeConnection,
+        key: connectionKey(activeConnection.id, session.id)
       }));
-      const loaded = results
-        .filter((result): result is PromiseFulfilledResult<{ connection: OrbitConnection; sessions: ConnectedSession[]; error?: string }> => result.status === "fulfilled")
-        .map((result) => result.value);
-      const nextSessions = loaded.flatMap((result) => result.sessions);
       setSessions(nextSessions);
-      const failures = loaded.filter((result) => result.error);
-      if (failures.length > 0) {
-        setMessage(`${failures.length}${CONNECTION_FAILED_MESSAGE_SUFFIX}`);
-      } else {
-        setMessage((current) => current.endsWith(CONNECTION_FAILED_MESSAGE_SUFFIX) ? "" : current);
-      }
       return nextSessions;
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -652,7 +629,7 @@ function App() {
     if (!activeConnectionId && connections[0]) setActiveConnectionId(connections[0].id);
   }, [activeConnectionId, connections]);
   useEffect(() => { if (authed) void loadBackends(); }, [authed, activeConnection?.id]);
-  useEffect(() => { if (authed) void load(); }, [authed, showAll, connections]);
+  useEffect(() => { if (authed) void load(); }, [authed, showAll, activeConnection?.id]);
   useEffect(() => {
     if (selectedKey && !sessions.some((session) => session.key === selectedKey)) setSelectedKey(null);
   }, [sessions, selectedKey]);
