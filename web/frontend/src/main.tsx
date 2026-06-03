@@ -1371,6 +1371,8 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   const [hasMore, setHasMore] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [autoFollow, setAutoFollow] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   async function loadPage(reset = false) {
     if (busy) return;
@@ -1402,13 +1404,91 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
     void loadPage(true);
   }, [session.key]);
 
-  const text = useMemo(() => lines.map((line) => decodeBytes(line.content)).join(""), [lines]);
+  useEffect(() => {
+    if (autoFollow && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [lines, autoFollow]);
+
+  function handleScroll() {
+    if (containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+      setAutoFollow(scrollHeight - scrollTop - clientHeight < 100);
+    }
+  }
+
+  const ansiRegex = /\x1b\[([0-9;]*)m/g;
+  const ansiColors: Record<string, string> = {
+    "0": "#e8ecef",  // reset
+    "1": "#f5f7fa",  // bold
+    "30": "#2e3436", // black
+    "31": "#cc0000", // red
+    "32": "#4e9a06", // green
+    "33": "#c4a000", // yellow
+    "34": "#3465a4", // blue
+    "35": "#75507b", // magenta
+    "36": "#06989a", // cyan
+    "37": "#d3d7cf", // white
+    "90": "#555753", // bright black
+    "91": "#ef2929", // bright red
+    "92": "#8ae234", // bright green
+    "93": "#fce94f", // bright yellow
+    "94": "#729fcf", // bright blue
+    "95": "#ad7fa8", // bright magenta
+    "96": "#34e2e2", // bright cyan
+    "97": "#eeeeec"  // bright white
+  };
+
+  function renderLine(content: string) {
+    const decoded = decodeBytes(content);
+    const parts: { text: string; color?: string }[] = [];
+    let currentColor = "#e8ecef";
+    let lastIndex = 0;
+
+    for (const match of decoded.matchAll(ansiRegex)) {
+      if (match.index > lastIndex) {
+        parts.push({ text: decoded.slice(lastIndex, match.index), color: currentColor });
+      }
+      const codes = match[1].split(";").filter(Boolean);
+      for (const code of codes) {
+        if (code === "0") {
+          currentColor = "#e8ecef";
+        } else if (code in ansiColors) {
+          currentColor = ansiColors[code];
+        }
+      }
+      lastIndex = match.index! + match[0].length;
+    }
+    if (lastIndex < decoded.length) {
+      parts.push({ text: decoded.slice(lastIndex), color: currentColor });
+    }
+
+    return parts.map((part, i) =>
+      part.text ? <span key={i} style={{ color: part.color }}>{part.text}</span> : null
+    );
+  }
 
   return <div className="logPane">
-    <pre className="logBody">{text || (busy ? "Loading..." : "No logs")}</pre>
+    <div className="logTop">
+      <span className="logTitle">Logs</span>
+      <label className="logAutoFollow">
+        <input type="checkbox" checked={autoFollow} onChange={(e) => setAutoFollow(e.target.checked)} />
+        Auto-follow
+      </label>
+    </div>
+    <div className="logBody" ref={containerRef} onScroll={handleScroll}>
+      {lines.length === 0 && !busy && <div className="logEmpty">No logs</div>}
+      {lines.map((line, idx) => (
+        <div key={line.id || idx} className="logLine">
+          <span className="logTimestamp">{new Date(line.timestamp).toLocaleTimeString()}</span>
+          <span className="logContent">{renderLine(line.content)}</span>
+        </div>
+      ))}
+      {busy && <div className="logLoading">Loading...</div>}
+    </div>
     <div className="logActions">
       {error && <span className="logError">{error}</span>}
-      <span>{lines.length} chunks</span>
+      <span>{lines.length} lines</span>
       <button disabled={busy || !hasMore} onClick={() => void loadPage()}>{busy ? "Loading..." : hasMore ? "More" : "End"}</button>
     </div>
   </div>;
