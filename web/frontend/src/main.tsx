@@ -1594,16 +1594,17 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
 
     const isAtBottom = () => term.buffer.active.baseY - term.buffer.active.viewportY <= 1;
     const followBottom = () => {
-      if (!autoFollowRef.current) return;
-      requestAnimationFrame(() => term.scrollToBottom());
+      if (autoFollowRef.current) {
+        requestAnimationFrame(() => {
+          term.scrollToBottom();
+          updateScrollInfo(term);
+        });
+      }
     };
     const scroll = term.onScroll((viewportY) => {
       updateScrollInfo(term);
-      if (term.buffer.active.baseY - viewportY <= 1) {
-        autoFollowRef.current = true;
-      } else if (userScrollIntent) {
-        autoFollowRef.current = false;
-      }
+      const atBottom = term.buffer.active.baseY - viewportY <= 1;
+      autoFollowRef.current = atBottom;
     });
     const markUserScroll = (event: Event) => {
       userScrollIntent = true;
