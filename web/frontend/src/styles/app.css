@@ -297,6 +297,11 @@ button.row { min-height: 42px; justify-content: stretch; }
   overflow-y: hidden !important;
   overscroll-behavior: contain;
   scroll-behavior: auto;
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE/Edge */
+}
+.xtermHost .xterm-viewport::-webkit-scrollbar {
+  display: none !important; /* Chrome/Safari */
 }
 .xtermHost .xterm-screen {
   overflow-y: hidden;
