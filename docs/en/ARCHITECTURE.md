@@ -68,7 +68,7 @@ db/
   mod.rs  In-memory SQLite — sessions and session_logs tables
 
 auth/
-  token.rs  ~/.config/orbit/token load/create and Authorization header validation
+  token.rs  /etc/orbitd/token load/create and Authorization header validation
 
 adapter/
   mod.rs  Agent backend registry, default backends, and YAML backend config parser
@@ -103,7 +103,7 @@ On `attach`:
 
 ### Auth
 
-Token-based authentication using a random 32-byte secret stored at `~/.config/orbit/token`. Format:
+Token-based authentication using a random 32-byte secret stored at `/etc/orbitd/token`. Format:
 
 ```
 orbit_<base64url-nopad-32-bytes>
@@ -231,9 +231,10 @@ When a client sends a `detach` WebSocket message or disconnects, the writer is r
 Default file layout:
 
 ```text
-~/.config/orbit/config.toml       # TOML config (optional)
-~/.config/orbit/backends.yaml     # Optional backend registry override
-~/.config/orbit/token             # Bearer token (auto-generated)
+/etc/orbitd/config.yaml           # orbitd YAML config — includes backends (optional, ORBITD_CONFIG)
+/etc/orbitd/token                 # orbitd Bearer token (auto-generated, ORBITD_TOKEN_PATH)
+~/.config/orbit/orb/config.yaml   # orb client config (optional, ORB_CONFIG)
+~/.config/orbit/orb/token         # orb client token (usually a symlink to /etc/orbitd/token, ORB_TOKEN_PATH)
 ~/.local/share/orbit/audit.jsonl  # JSONL audit trail (session lifecycles)
 ./tmp/<session-id>.log            # Raw PTY output (relative to orbitd CWD)
 ```
@@ -266,7 +267,7 @@ The audit log is a JSONL file at `~/.local/share/orbit/audit.jsonl`. Each line i
 
 ## TUI Client
 
-`orb` connects to `http://127.0.0.1:7777` and reads the token from `~/.config/orbit/token`.
+`orb` connects to `http://127.0.0.1:7777` and reads the token from `~/.config/orbit/orb/token`.
 
 Capabilities implemented directly (no external subprocess):
 
@@ -314,7 +315,7 @@ Session creation form fields: `tool` (backend ID from `orbitd`, ←/→ to cycle
 | `opencode` | `opencode` | _(none)_ |
 | `pi` | `pi` | _(none)_ |
 
-The default registry is replaced when `ORBIT_BACKENDS_CONFIG` or `backends = "/path/to/backends.yaml"` in `~/.config/orbit/config.toml` points to a YAML file:
+The default registry is replaced by defining an inline list under the `backends` key in `/etc/orbitd/config.yaml`:
 
 ```yaml
 backends:

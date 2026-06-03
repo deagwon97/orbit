@@ -15,6 +15,7 @@ REPO="deagwon97/orbit"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 SERVICE_NAME="orbitd"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+ORBITD_CONFIG_DIR="/etc/orbitd"
 
 # ── colors ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -165,6 +166,26 @@ install_from_source() {
     place_binaries "$orbitd_bin" "$orb_bin" "$install_dir"
 }
 
+# Pre-create /etc/orbitd so the daemon can write its token there as svc_user.
+prepare_orbitd_config_dir() {
+    local svc_user="$1"
+    mkdir -p "$ORBITD_CONFIG_DIR"
+    chown "$svc_user":"$(id -gn "$svc_user")" "$ORBITD_CONFIG_DIR"
+    chmod 700 "$ORBITD_CONFIG_DIR"
+    log "Prepared  ${ORBITD_CONFIG_DIR}  (owner=${svc_user}, mode=700)"
+}
+
+# Make orb (running as svc_user) able to read the daemon's token by linking
+# ~/.config/orbit/orb/token → /etc/orbitd/token.
+link_orb_token() {
+    local svc_user="$1"
+    local orb_dir
+    orb_dir=$(sudo -u "$svc_user" bash -lc 'echo "$HOME/.config/orbit/orb"')
+    sudo -u "$svc_user" mkdir -p "$orb_dir"
+    sudo -u "$svc_user" ln -sf "${ORBITD_CONFIG_DIR}/token" "${orb_dir}/token"
+    log "Linked    ${orb_dir}/token  →  ${ORBITD_CONFIG_DIR}/token"
+}
+
 # ── systemd service ───────────────────────────────────────────────────────────
 setup_systemd() {
     local orbitd_path="$1"   # absolute path to the installed orbitd binary
@@ -174,8 +195,11 @@ setup_systemd() {
     local svc_user
     svc_user=$(real_user)
 
-    # Backend commands use absolute paths in backends.yaml, so only standard
-    # system directories are needed here.
+    prepare_orbitd_config_dir "$svc_user"
+    link_orb_token "$svc_user"
+
+    # Backend commands typically use absolute paths in /etc/orbitd/config.yaml,
+    # so only standard system directories are needed here.
     local svc_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
     log "Installing systemd service: ${SERVICE_FILE}"

@@ -67,7 +67,7 @@ db/
   mod.rs  인메모리 SQLite — sessions 및 session_logs 테이블
 
 auth/
-  token.rs  ~/.config/orbit/token 로드/생성 및 Authorization 헤더 검증
+  token.rs  /etc/orbitd/token 로드/생성 및 Authorization 헤더 검증
 
 adapter/
   mod.rs  에이전트 백엔드 레지스트리, 기본 백엔드, YAML 백엔드 설정 파서
@@ -102,7 +102,7 @@ adapter/
 
 ### 인증
 
-`~/.config/orbit/token`에 저장된 무작위 32바이트 시크릿 기반 Bearer 토큰 인증.
+`/etc/orbitd/token`에 저장된 무작위 32바이트 시크릿 기반 Bearer 토큰 인증.
 
 ```
 orbit_<base64url-nopad-32-bytes>
@@ -230,9 +230,10 @@ PTY reader thread (std::thread의 blocking read)
 기본 파일 배치:
 
 ```text
-~/.config/orbit/config.toml       # TOML 설정 (선택)
-~/.config/orbit/backends.yaml     # 선택적 백엔드 레지스트리 override
-~/.config/orbit/token             # Bearer 토큰 (자동 생성)
+/etc/orbitd/config.yaml           # orbitd YAML 설정 — 백엔드 정의 포함 (선택, ORBITD_CONFIG로 override)
+/etc/orbitd/token                 # orbitd Bearer 토큰 (자동 생성, ORBITD_TOKEN_PATH)
+~/.config/orbit/orb/config.yaml   # orb 클라이언트 설정 (선택, ORB_CONFIG)
+~/.config/orbit/orb/token         # orb 클라이언트 토큰 (보통 /etc/orbitd/token 심볼릭 링크, ORB_TOKEN_PATH)
 ~/.local/share/orbit/audit.jsonl  # JSONL 감사 로그 (세션 생명주기)
 ./tmp/<session-id>.log            # Raw PTY 출력 (orbitd CWD 기준 상대 경로)
 ```
@@ -261,11 +262,11 @@ CREATE TABLE IF NOT EXISTS session_logs (
 );
 ```
 
-감사 로그는 `~/.local/share/orbit/audit.jsonl`의 JSONL 파일이다. 각 행은 `timestamp`, `action`(예: `session.create`, `session.attach`, `session.stop`, `session.delete`), `session_id`, 선택적 `detail`을 포함하는 JSON 객체다.
+감사 로그는 `~/.local/share/orbit/audit.jsonl`의 JSONL 파일이다 (orbitd 프로세스의 `$HOME` 기준). 각 행은 `timestamp`, `action`(예: `session.create`, `session.attach`, `session.stop`, `session.delete`), `session_id`, 선택적 `detail`을 포함하는 JSON 객체다.
 
 ## TUI 클라이언트
 
-`orb`는 `http://127.0.0.1:7777`에 연결하고 `~/.config/orbit/token`에서 토큰을 읽어 사용한다.
+`orb`는 `http://127.0.0.1:7777`에 연결하고 `~/.config/orbit/orb/token`에서 토큰을 읽어 사용한다.
 
 직접 구현하는 기능 (외부 서브프로세스 없음):
 
@@ -313,7 +314,7 @@ attach 로직은 `orb/internal/attach/`에 있다. 다음을 수행한다:
 | `opencode` | `opencode` | _(없음)_ |
 | `pi` | `pi` | _(없음)_ |
 
-`ORBIT_BACKENDS_CONFIG` 또는 `~/.config/orbit/config.toml`의 `backends = "/path/to/backends.yaml"`이 YAML 파일을 가리키면 기본 레지스트리를 대체한다:
+`/etc/orbitd/config.yaml`의 `backends` 키에 인라인으로 목록을 정의하면 기본 레지스트리를 대체한다:
 
 ```yaml
 backends:

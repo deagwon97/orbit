@@ -58,9 +58,16 @@ cargo run -p orbitd
 
 | 경로 | 용도 |
 |------|------|
-| `~/.config/orbit/token` | 클라이언트 인증용 Bearer 토큰 |
-| `~/.config/orbit/config.toml` | 선택적 설정 파일 |
+| `/etc/orbitd/token` | 클라이언트 인증용 Bearer 토큰 (자동 생성) |
+| `/etc/orbitd/config.yaml` | 선택적 설정 파일 (백엔드 정의 포함) |
 | `~/.local/share/orbit/audit.jsonl` | 세션 감사 로그 |
+
+`orb` 클라이언트는 자체 파일을 사용한다:
+
+| 경로 | 용도 |
+|------|------|
+| `~/.config/orbit/orb/config.yaml` | 선택적 클라이언트 설정 (orbitd URL) |
+| `~/.config/orbit/orb/token` | Bearer 토큰 (보통 `/etc/orbitd/token`에 대한 심볼릭 링크) |
 
 세션 메타데이터와 로그는 인메모리 SQLite 데이터베이스에 저장된다 — **`orbitd`가 종료되면 모든 데이터가 사라진다**. Raw PTY 출력은 오프라인 확인을 위해 `./tmp/<session-id>.log`에도 기록된다.
 
@@ -190,31 +197,57 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 
 ## 설정
 
-`orbitd`는 `~/.config/orbit/config.toml`이 존재하면 읽는다. 예시:
+### orbitd (데몬)
 
-```toml
-listen = "127.0.0.1:7777"
-backends = "/home/user/.config/orbit/backends.yaml"
+`orbitd`는 `/etc/orbitd/config.yaml`이 존재하면 읽는다. 백엔드 정의와 PTY 튜닝
+모두 이 한 파일에 들어간다:
 
-[pty]
-scrollback_lines = 10000
-scrollback_max_bytes = 104857600
+```yaml
+listen: "127.0.0.1:7777"
+
+pty:
+  scrollback_lines: 10000
+  scrollback_max_bytes: 104857600
+
+# 선택 — 내장 백엔드 레지스트리를 대체한다.
+backends:
+  - id: aider
+    name: Aider
+    command: aider
+    args:
+      - --yes-always
+  - id: local-agent
+    command: /usr/local/bin/local-agent
+    args: ["--mode", "workspace"]
 ```
 
 기본 경로와 런타임 설정:
 
-| 설정 | 기본값 |
-|------|--------|
-| `listen` | `127.0.0.1:7777` |
-| `config_dir` | `~/.config/orbit` |
-| `data_dir` | `~/.local/share/orbit` |
-| `session_logs_dir` | `./tmp` (orbitd 작업 디렉토리 기준) |
-| `audit_path` | `~/.local/share/orbit/audit.jsonl` |
-| `token_path` | `~/.config/orbit/token` |
-| `process_path` | 서버 환경의 `$PATH` |
-| `scrollback_lines` | 10,000 |
-| `scrollback_max_bytes` | 100 MB |
-| `backends_path` | `~/.config/orbit/backends.yaml` 또는 `$ORBIT_BACKENDS_CONFIG` |
+| 설정 | 기본값 | 환경 변수 override |
+|------|--------|-------------------|
+| `listen` | `127.0.0.1:7777` | — |
+| `config_path` | `/etc/orbitd/config.yaml` | `ORBITD_CONFIG` |
+| `token_path` | `/etc/orbitd/token` | `ORBITD_TOKEN_PATH` |
+| `data_dir` | `~/.local/share/orbit` | — |
+| `session_logs_dir` | `./tmp` (orbitd 작업 디렉토리 기준) | — |
+| `audit_path` | `~/.local/share/orbit/audit.jsonl` | — |
+| `process_path` | 서버 환경의 `$PATH` | — |
+| `scrollback_lines` | 10,000 | — |
+| `scrollback_max_bytes` | 100 MB | — |
+
+### orb (클라이언트)
+
+`orb`는 `~/.config/orbit/orb/config.yaml`이 존재하면 읽는다. 예시:
+
+```yaml
+url: "http://127.0.0.1:7777"
+```
+
+| 설정 | 기본값 | 환경 변수 override |
+|------|--------|-------------------|
+| `config_path` | `~/.config/orbit/orb/config.yaml` | `ORB_CONFIG` |
+| `token_path` | `~/.config/orbit/orb/token` | `ORB_TOKEN_PATH` |
+| `url` | `http://127.0.0.1:7777` (`config.yaml`에서) | — |
 
 ## 에이전트 백엔드
 
@@ -227,8 +260,7 @@ scrollback_max_bytes = 104857600
 | `opencode` | `opencode` | _(없음)_ |
 | `pi` | `pi` | _(없음)_ |
 
-기본 목록을 대체하려면 `ORBIT_BACKENDS_CONFIG=/path/to/backends.yaml` 환경 변수나 `~/.config/orbit/config.toml`의 `backends` 키로 YAML 파일을 지정한다.
-이 저장소에는 기본 백엔드와 호환되는 `backends.yaml`이 포함되어 있어 그대로 사용할 수 있다.
+기본 목록을 대체하려면 `/etc/orbitd/config.yaml`에 `backends` 항목을 추가한다:
 
 ```yaml
 backends:
@@ -295,7 +327,7 @@ cd web/frontend  && npm install && npm run dev
 
 ```bash
 export ORBITD_URL=http://127.0.0.1:7777
-export ORBIT_TOKEN="$(cat ~/.config/orbit/token)"
+export ORBIT_TOKEN="$(cat ~/.config/orbit/orb/token)"
 cd web/backend && npm run dev
 ```
 
@@ -305,7 +337,7 @@ cd web/backend && npm run dev
 |------|------|------|
 | Name | `local` | 웹 UI에 표시할 이름 |
 | URL | `http://127.0.0.1:7777` | 웹 백엔드에서 접근 가능한 `orbitd` HTTP 엔드포인트 |
-| Token | `~/.config/orbit/token` 내용 | `orbitd`가 생성한 Bearer token |
+| Token | `~/.config/orbit/orb/token` 내용 (또는 `/etc/orbitd/token`) | `orbitd`가 생성한 Bearer token |
 
 웹 백엔드는 다음 환경 변수를 지원한다:
 
@@ -361,7 +393,7 @@ created  →  running  →  stopped    (정상 종료)
 
 | 문제 | 확인할 사항 |
 |------|-----------|
-| TUI 인증 실패 | `~/.config/orbit/token`이 존재하는지 확인 — `orbitd`를 한 번 실행하면 생성됨 |
+| TUI 인증 실패 | `~/.config/orbit/orb/token`이 존재하는지 확인 (`/etc/orbitd/token`에 심볼릭 링크 가능). `orbitd`를 한 번 실행하면 원본 토큰이 생성됨 |
 | 연결 거부 | `orbitd`가 `127.0.0.1:7777`에서 실행 중인지 확인, 서버 로그 확인 |
 | 웹 UI 연결 실패 | 웹 백엔드가 3001번 포트에서 실행 중인지 확인. `ORBITD_URL`이 올바른지, `ORBIT_TOKEN` 환경 변수가 설정되었거나 로그인 화면에서 토큰을 입력했는지 확인 |
 | 세션 생성 실패 | 백엔드 ID가 `orb backends`에 있는지, 해당 명령이 `PATH`에 있거나 절대 경로로 설정되었는지 확인 |
