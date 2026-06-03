@@ -869,7 +869,7 @@ function ConnectionsWorkspace(props: {
       {props.connections.map((connection) => {
         const active = connection.id === props.activeConnectionId;
         return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id}>
-          <button className="connectionSelectButton" onClick={() => props.onSelect(connection.id)}>
+          <button className="connectionSelectButton" onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
             <span title={connection.label}>{connection.label}</span>
           </button>
           <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>
