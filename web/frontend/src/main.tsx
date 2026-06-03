@@ -269,7 +269,7 @@ type EntryTree = Record<string, FsEntry[]>;
 type TerminalModifier = "shift" | "ctrl" | "cmd" | "alt";
 
 const DEFAULT_MASTER_PANE_WIDTH = 600;
-const MIN_MASTER_PANE_WIDTH = 600;
+const MIN_MASTER_PANE_WIDTH = 280;
 const MAX_MASTER_PANE_WIDTH = 860;
 const MASTER_PANE_WIDTH_KEY = "orbit.masterPaneWidth";
 const CONNECTION_FAILED_MESSAGE_SUFFIX = " orbitd connection failed";
@@ -407,9 +407,8 @@ function isCoarsePointer() {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
 }
 
-function clampMasterPaneWidth(value: number, containerWidth = window.innerWidth) {
-  const maxByViewport = Math.max(MIN_MASTER_PANE_WIDTH, containerWidth - 360);
-  return Math.round(Math.max(MIN_MASTER_PANE_WIDTH, Math.min(value, MAX_MASTER_PANE_WIDTH, maxByViewport)));
+function clampMasterPaneWidth(value: number) {
+  return Math.round(Math.max(MIN_MASTER_PANE_WIDTH, Math.min(value, MAX_MASTER_PANE_WIDTH)));
 }
 
 function savedMasterPaneWidth() {
@@ -486,7 +485,7 @@ function App() {
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backends, setBackends] = useState<AgentBackend[]>(defaultBackends);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const showAll = true;
   const [tool, setTool] = useState("codex");
   const [name, setName] = useState("");
   const [cwd, setCwd] = useState("");
@@ -709,26 +708,26 @@ function App() {
     </button>}
     <section className="toolbar">
       <strong>Orbit</strong>
-      {activeConnection && (
-        <button
-          className="activeOrbitd"
-          title={`${activeConnection.label} · ${activeConnection.url}`}
-          onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
-        >
-          <Server size={14} />
-          <span className="activeOrbitdLabel">{activeConnection.label}</span>
-          <span className="activeOrbitdUrl">{activeConnection.url}</span>
-        </button>
-      )}
       <div className="toolbarActions">
+        {activeConnection && (
+          <button
+            className="activeOrbitd"
+            title={`${activeConnection.label} · ${activeConnection.url}`}
+            onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
+          >
+            <Server size={14} />
+            <span className="activeOrbitdLabel">{activeConnection.label}</span>
+            <span className="activeOrbitdUrl">{activeConnection.url}</span>
+          </button>
+        )}
         <button
-          className={connectionsOpen ? "activeButton" : ""}
+          className={`iconButton ${connectionsOpen ? "activeButton" : ""}`}
           title="Orbitd"
           onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
         >
           <Server size={16} />
         </button>
-        <button title="Refresh" onClick={load}><RefreshCcw size={16} /></button>
+        <button className="iconButton" title="Refresh" onClick={() => window.location.reload()}><RefreshCcw size={16} /></button>
       </div>
     </section>
     {message && <div className="statusLine">
@@ -759,7 +758,6 @@ function App() {
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
-            <button className={`sessionFilterButton${showAll ? " activeButton" : ""}`} onClick={() => setShowAll((value) => !value)}>{showAll ? "All" : "Running"}</button>
             <button className="iconButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} /></button>
           </div>
           <div className="sessions">
@@ -914,8 +912,8 @@ function ConnectionsWorkspace(props: {
       </div>
       {props.connections.map((connection) => {
         const active = connection.id === props.activeConnectionId;
-        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id}>
-          <button className="connectionSelectButton" onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
+        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id} onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
+          <button className="connectionSelectButton">
             <span title={connection.label}>{connection.label}</span>
           </button>
           <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>

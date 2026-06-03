@@ -29,7 +29,8 @@ input { min-width: 0; }
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior: none;
 }
 .toolbar {
@@ -46,11 +47,9 @@ input { min-width: 0; }
   display: flex;
   gap: 8px;
 }
-.toolbarActions button { width: 38px; min-height: 34px; padding: 0; }
+.toolbarActions .iconButton { width: 38px; min-height: 34px; padding: 0; }
 .activeOrbitd {
-  margin-left: 12px;
-  min-width: 0;
-  max-width: 360px;
+  margin-right: 8px;
   min-height: 32px;
   display: inline-flex;
   align-items: center;
@@ -121,9 +120,9 @@ input { min-width: 0; }
 }
 .statusLineClose:hover { background: #d4ede7; }
 
-.layout { flex: 1; display: grid; grid-template-columns: minmax(600px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.layout { flex: 1; display: grid; grid-template-columns: minmax(280px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .masterPane {
-  min-width: 0;
+  min-width: 280px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -176,6 +175,7 @@ input { min-width: 0; }
   background: #f8fafb;
 }
 .paneTabs button { min-height: 30px; font-size: 13px; }
+.paneTabs .iconButton { margin-left: auto; }
 .sessionFilterButton { margin-left: auto; width: 82px; flex: 0 0 82px; }
 .iconButton { width: 32px; padding: 0; }
 .sessions { flex: 1; min-height: 0; background: white; overflow: auto; overscroll-behavior: contain; }
@@ -855,10 +855,10 @@ button.row { min-height: 42px; justify-content: stretch; }
     padding: 8px max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
   }
   .toolbar strong { flex: 0 0 auto; }
-  .activeOrbitd { margin-left: 0; max-width: none; flex: 1 1 auto; }
+  .activeOrbitd { margin-left: 0; max-width: none; flex: 0 0 auto; width: auto; min-height: 40px; }
   .activeOrbitdUrl { display: none; }
   .toolbarActions { margin-left: auto; }
-  .toolbarActions button,
+  .toolbarActions button:not(.activeOrbitd),
   .iconButton {
     width: 40px;
     min-height: 40px;
