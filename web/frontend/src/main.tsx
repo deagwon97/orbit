@@ -1444,7 +1444,7 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
     const allContent = lines.map((line) => {
       const decoded = decodeBytes(line.content);
       return stripAnsiControlCodes(decoded);
-    }).join("");
+    }).join("\n");
     const html = ansiUp.ansi_to_html(allContent);
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
