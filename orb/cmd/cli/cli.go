@@ -218,18 +218,36 @@ func isTerminal(file *os.File) bool {
 }
 
 func sanitizeLogOutput(in []byte) []byte {
-	// Simple terminal emulation: process ANSI sequences to render final output
-	buf := newTerminalBuffer(80, 24)
-	buf.write(in)
-	return buf.render()
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); {
+		b := in[i]
+		switch {
+		case b == 0x1b:
+			i = skipEscapeSequence(in, i)
+		case b == '\b':
+			if len(out) > 0 && out[len(out)-1] != '\n' {
+				out = out[:len(out)-1]
+			}
+			i++
+		case b == '\r' || b == '\n':
+			out = append(out, '\n')
+			i++
+		case b == '\t' || (b >= 0x20 && b != 0x7f):
+			out = append(out, b)
+			i++
+		default:
+			i++
+		}
+	}
+	return appendNewline(compactBlankLines(out))
 }
 
 // terminalBuffer is a simple ANSI terminal emulator
 type terminalBuffer struct {
-	width    int
-	height   int
-	screen   [][]byte
-	x, y     int
+	width                   int
+	height                  int
+	screen                  [][]byte
+	x, y                    int
 	scrollTop, scrollBottom int
 }
 
@@ -239,12 +257,12 @@ func newTerminalBuffer(width, height int) *terminalBuffer {
 		screen[i] = make([]byte, 0, width)
 	}
 	return &terminalBuffer{
-		width:  width,
-		height: height,
-		screen: screen,
-		x:      0,
-		y:      0,
-		scrollTop: 0,
+		width:        width,
+		height:       height,
+		screen:       screen,
+		x:            0,
+		y:            0,
+		scrollTop:    0,
 		scrollBottom: height - 1,
 	}
 }
