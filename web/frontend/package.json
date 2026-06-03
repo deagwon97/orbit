@@ -23,6 +23,7 @@
     "@codemirror/lang-xml": "^6.1.0",
     "@codemirror/legacy-modes": "^6.5.3",
     "@vitejs/plugin-react": "^4.5.0",
+    "ansi_up": "^6.0.6",
     "codemirror": "^6.0.2",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.511.0",

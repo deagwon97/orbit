@@ -4,6 +4,7 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, Fol
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { marked } from "marked";
+import { AnsiUp } from "ansi_up";
 import { basicSetup, EditorView } from "codemirror";
 import { search } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting, StreamLanguage } from "@codemirror/language";
@@ -1417,55 +1418,16 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
     }
   }
 
-  const ansiRegex = /\x1b\[([0-9;]*)m/g;
+  const ansiUp = useMemo(() => {
+    const converter = new AnsiUp();
+    converter.use_classes = true;
+    return converter;
+  }, []);
 
   function renderLogs() {
     const allContent = lines.map((line) => decodeBytes(line.content)).join("");
-    const parts: { text: string; className?: string }[] = [];
-    let currentClass = "";
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = ansiRegex.exec(allContent)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push({ text: allContent.slice(lastIndex, match.index), className: currentClass || undefined });
-      }
-      const codes = match[1].split(";").filter(Boolean);
-      const classes: string[] = [];
-      for (const code of codes) {
-        if (code === "0") {
-          classes.length = 0;
-        } else if (code === "1") {
-          classes.push("ansi-bold");
-        } else if (code === "4") {
-          classes.push("ansi-underline");
-        } else if (code === "30") classes.push("ansi-black");
-        else if (code === "31") classes.push("ansi-red");
-        else if (code === "32") classes.push("ansi-green");
-        else if (code === "33") classes.push("ansi-yellow");
-        else if (code === "34") classes.push("ansi-blue");
-        else if (code === "35") classes.push("ansi-magenta");
-        else if (code === "36") classes.push("ansi-cyan");
-        else if (code === "37") classes.push("ansi-white");
-        else if (code === "90") classes.push("ansi-bright-black");
-        else if (code === "91") classes.push("ansi-bright-red");
-        else if (code === "92") classes.push("ansi-bright-green");
-        else if (code === "93") classes.push("ansi-bright-yellow");
-        else if (code === "94") classes.push("ansi-bright-blue");
-        else if (code === "95") classes.push("ansi-bright-magenta");
-        else if (code === "96") classes.push("ansi-bright-cyan");
-        else if (code === "97") classes.push("ansi-bright-white");
-      }
-      currentClass = classes.join(" ");
-      lastIndex = match.index + match[0].length;
-    }
-    if (lastIndex < allContent.length) {
-      parts.push({ text: allContent.slice(lastIndex), className: currentClass || undefined });
-    }
-
-    return parts.map((part, i) =>
-      part.text ? <span key={i} className={part.className}>{part.text}</span> : null
-    );
+    const html = ansiUp.ansi_to_html(allContent);
+    return <span dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
   return <div className="logPane">
