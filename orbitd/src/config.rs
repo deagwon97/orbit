@@ -44,11 +44,15 @@ impl Default for Config {
         let session_logs_dir = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("tmp");
+
+        // Get PATH from user's shell if available, otherwise from current env
+        let process_path = get_user_path().unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
+
         Self {
             listen: "127.0.0.1:7777".into(),
             audit_path: data_dir.join("audit.jsonl"),
             token_path: default_token_path(),
-            process_path: std::env::var("PATH").unwrap_or_default(),
+            process_path,
             backends: AgentBackends::default(),
             config_path: default_config_path(),
             data_dir,
@@ -57,6 +61,56 @@ impl Default for Config {
             scrollback_max_bytes: 100 * 1024 * 1024,
         }
     }
+}
+
+fn get_user_path() -> Result<String, Box<dyn std::error::Error>> {
+    // Try to get PATH from user's shell profile
+    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+
+    // Try reading from common shell config files
+    let shell_configs = [
+        PathBuf::from(&home).join(".profile"),
+        PathBuf::from(&home).join(".bash_profile"),
+        PathBuf::from(&home).join(".bashrc"),
+        PathBuf::from(&home).join(".zshrc"),
+        PathBuf::from(&home).join(".zprofile"),
+    ];
+
+    for config in &shell_configs {
+        if config.exists() {
+            if let Ok(content) = std::fs::read_to_string(config) {
+                // Look for PATH=... or export PATH=...
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.starts_with("export PATH=") || line.starts_with("PATH=") {
+                        if let Some(eq_pos) = line.find('=') {
+                            let path_value = line[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+                            if !path_value.is_empty() {
+                                // Expand $HOME and ~
+                                let expanded = path_value.replace("$HOME", &home).replace("~", &home);
+                                return Ok(expanded);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: try to run shell and get PATH
+    if let Ok(output) = std::process::Command::new("/bin/bash")
+        .args(["-c", "echo $PATH"])
+        .env("HOME", &home)
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(path) = String::from_utf8(output.stdout) {
+                return Ok(path.trim().to_string());
+            }
+        }
+    }
+
+    Err("Could not determine user PATH".into())
 }
 
 #[derive(Debug, Deserialize)]
