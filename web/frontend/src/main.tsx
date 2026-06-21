@@ -1519,6 +1519,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   const termRef = useRef<XTermTerminal | null>(null);
   const autoFollowRef = useRef(true);
   const sendInputRef = useRef<(data: string) => void>(() => {});
+  const scrollbarDragOffsetRef = useRef(0);
   const [modifiers, setModifiers] = useState<Record<TerminalModifier, boolean>>({
     shift: false,
     ctrl: false,
@@ -1535,16 +1536,38 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     setScrollInfo({ top: Math.max(0, Math.min(1, top)), size, scrollable });
   }
 
-  function scrollToRatio(clientY: number, target: HTMLElement) {
+  function scrollToRatio(clientY: number, target: HTMLElement, dragOffset: number) {
     const term = termRef.current;
     if (!term) return;
     const rect = target.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const thumbHeight = rect.height * scrollInfo.size;
+    const travel = Math.max(0, rect.height - thumbHeight);
+    const thumbTop = Math.max(0, Math.min(travel, clientY - rect.top - dragOffset));
+    const ratio = travel > 0 ? thumbTop / travel : 1;
     const maxLine = term.buffer.active.baseY;
     const targetLine = Math.round(maxLine * ratio);
     term.scrollToLine(targetLine);
     autoFollowRef.current = maxLine - targetLine <= 1;
     updateScrollInfo(term);
+  }
+
+  function startScrollbarDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (!scrollInfo.scrollable) return;
+    const track = event.currentTarget;
+    const thumb = track.firstElementChild as HTMLElement | null;
+    const thumbRect = thumb?.getBoundingClientRect();
+    scrollbarDragOffsetRef.current = event.target === thumb && thumbRect
+      ? event.clientY - thumbRect.top
+      : (thumbRect?.height ?? 0) / 2;
+    track.setPointerCapture(event.pointerId);
+    scrollToRatio(event.clientY, track, scrollbarDragOffsetRef.current);
+    event.preventDefault();
+  }
+
+  function moveScrollbarDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    scrollToRatio(event.clientY, event.currentTarget, scrollbarDragOffsetRef.current);
+    event.preventDefault();
   }
 
   useEffect(() => {
@@ -1731,10 +1754,12 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     return modifierValue === 1 ? `\x1b[${code}` : `\x1b[1;${modifierValue}${code}`;
   }
 
-  function sendShortcut(key: "tab" | "left" | "up" | "down" | "right") {
-    const data = key === "tab"
-      ? `${modifiers.alt || modifiers.cmd ? "\x1b" : ""}${modifiers.shift ? "\x1b[Z" : "\t"}`
-      : arrowSequence(key);
+  function sendShortcut(key: "esc" | "tab" | "left" | "up" | "down" | "right") {
+    const data = key === "esc"
+      ? "\x1b"
+      : key === "tab"
+        ? `${modifiers.alt || modifiers.cmd ? "\x1b" : ""}${modifiers.shift ? "\x1b[Z" : "\t"}`
+        : arrowSequence(key);
     sendInputRef.current(data);
     termRef.current?.focus();
   }
@@ -1742,8 +1767,28 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   return <div className="xtermShell">
     <div className="xtermSurface">
       <div className="xtermHost" ref={ref} />
+      <div
+        className={`terminalScrollbar${scrollInfo.scrollable ? "" : " disabled"}`}
+        role="scrollbar"
+        aria-label="Terminal scrollback"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(scrollInfo.top * 100)}
+        onPointerDown={startScrollbarDrag}
+        onPointerMove={moveScrollbarDrag}
+      >
+        <div
+          className="terminalScrollbarThumb"
+          style={{
+            height: `${scrollInfo.size * 100}%`,
+            top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
+          }}
+        />
+      </div>
     </div>
     <div className="terminalKeyBar" aria-label="Terminal shortcut keys">
+      <button type="button" onClick={() => sendShortcut("esc")}>Esc</button>
       <button type="button" onClick={() => sendShortcut("tab")}>Tab</button>
       <button type="button" className={modifiers.shift ? "activeKey" : ""} onClick={() => toggleModifier("shift")}>Shift</button>
       <button type="button" className={modifiers.ctrl ? "activeKey" : ""} onClick={() => toggleModifier("ctrl")}>Ctrl</button>

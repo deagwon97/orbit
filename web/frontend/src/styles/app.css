@@ -285,6 +285,32 @@ button.row { min-height: 42px; justify-content: stretch; }
   min-height: 0;
   display: flex;
 }
+.terminalScrollbar {
+  position: relative;
+  flex: 0 0 18px;
+  padding: 3px;
+  background: #171c1f;
+  touch-action: none;
+  user-select: none;
+  cursor: pointer;
+}
+.terminalScrollbarThumb {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 999px;
+  background: #65727a;
+}
+.terminalScrollbar:hover .terminalScrollbarThumb,
+.terminalScrollbar:active .terminalScrollbarThumb {
+  background: #8b989f;
+}
+.terminalScrollbar.disabled {
+  pointer-events: none;
+}
+.terminalScrollbar.disabled .terminalScrollbarThumb {
+  opacity: 0;
+}
 .xtermHost {
   flex: 1;
   min-height: 0;
@@ -309,7 +335,7 @@ button.row { min-height: 42px; justify-content: stretch; }
 .terminalKeyBar {
   min-height: 44px;
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 4px;
   padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   border-top: 1px solid #2e363b;
