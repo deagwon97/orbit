@@ -2,7 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -405,6 +405,121 @@ function findScrollableParent(target: EventTarget | null) {
 
 function isCoarsePointer() {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+}
+
+// Bridges touch drags into xterm.js's mouse-based SelectionService (long-press
+// to start, since xterm has no native touch selection) so users can drag to
+// select terminal text on mobile the same way mouse-drag selection works on desktop.
+function createTouchSelectionController(term: XTermTerminal, onSelectionChange: (hasSelection: boolean) => void) {
+  const LONG_PRESS_MS = 350;
+  const MOVE_TOLERANCE = 10;
+  let longPressTimer: number | undefined;
+  let selecting = false;
+  let startX = 0;
+  let startY = 0;
+
+  const clearTimer = () => {
+    if (longPressTimer !== undefined) {
+      window.clearTimeout(longPressTimer);
+      longPressTimer = undefined;
+    }
+  };
+
+  const dispatchMouse = (type: string, touch: Touch) => {
+    term.element?.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      button: 0,
+      detail: 1
+    }));
+  };
+
+  return {
+    isSelecting: () => selecting,
+    handleTouchStart(touch: Touch) {
+      startX = touch.clientX;
+      startY = touch.clientY;
+      clearTimer();
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = undefined;
+        selecting = true;
+        navigator.vibrate?.(10);
+        dispatchMouse("mousedown", touch);
+        onSelectionChange(term.hasSelection());
+      }, LONG_PRESS_MS);
+    },
+    // Returns true when the move was consumed for selection, so callers should
+    // preventDefault() and skip their own scroll/gesture handling for this move.
+    handleTouchMove(touch: Touch): boolean {
+      if (selecting) {
+        dispatchMouse("mousemove", touch);
+        onSelectionChange(term.hasSelection());
+        return true;
+      }
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+      if (dx > MOVE_TOLERANCE || dy > MOVE_TOLERANCE) clearTimer();
+      return false;
+    },
+    handleTouchEnd(touch: Touch | undefined) {
+      clearTimer();
+      if (selecting) {
+        selecting = false;
+        if (touch) dispatchMouse("mouseup", touch);
+        onSelectionChange(term.hasSelection());
+      }
+    },
+    dispose() {
+      clearTimer();
+    }
+  };
+}
+
+// navigator.clipboard requires a secure context; orbit is often reached over
+// plain HTTP on a LAN, so fall back to the legacy execCommand copy path.
+async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to legacy fallback below
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(textarea);
+  return ok;
+}
+
+function SelectionCopyButton({ className, onCopy }: { className: string; onCopy: () => string }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+  return <button
+    type="button"
+    className={className}
+    onClick={async () => {
+      const text = onCopy();
+      if (!text) return;
+      const ok = await copyText(text);
+      setStatus(ok ? "copied" : "failed");
+      window.setTimeout(() => setStatus("idle"), 1200);
+    }}
+  >
+    <Copy size={14} />{status === "copied" ? "Copied" : status === "failed" ? "Failed" : "Copy"}
+  </button>;
 }
 
 function clampMasterPaneWidth(value: number) {
@@ -1418,6 +1533,7 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
 
   async function loadPage(reset = false) {
     if (busy) return;
@@ -1478,7 +1594,30 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
 
     setTimeout(() => fitAddon.fit(), 0);
 
+    const host = containerRef.current;
+    const selection = term.onSelectionChange(() => setHasSelection(term.hasSelection()));
+    const touchSelection = createTouchSelectionController(term, setHasSelection);
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (touch) touchSelection.handleTouchStart(touch);
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (touch && touchSelection.handleTouchMove(touch)) event.preventDefault();
+    };
+    const onTouchEnd = (event: TouchEvent) => touchSelection.handleTouchEnd(event.changedTouches[0]);
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: true });
+    host.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
     return () => {
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("touchcancel", onTouchEnd);
+      touchSelection.dispose();
+      selection.dispose();
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1506,6 +1645,10 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
 
   return <div className="logPane">
     <div className="logBody logBodyStatic" ref={containerRef}></div>
+    {hasSelection && <SelectionCopyButton
+      className="terminalCopyButton"
+      onCopy={() => terminalRef.current?.getSelection() ?? ""}
+    />}
     <div className="logActions">
       {error && <span className="logError">{error}</span>}
       <span>{lines.length} chunks</span>
@@ -1526,7 +1669,11 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     cmd: false,
     alt: false
   });
+  const modifiersRef = useRef(modifiers);
   const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
+  const [hasSelection, setHasSelection] = useState(false);
+
+  useEffect(() => { modifiersRef.current = modifiers; }, [modifiers]);
 
   function updateScrollInfo(term: XTermTerminal) {
     const totalRows = term.buffer.active.baseY + term.rows;
@@ -1588,6 +1735,21 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     fit.fit();
     term.focus();
 
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      const mods = modifiersRef.current;
+      if (mods.ctrl && !event.ctrlKey && event.key.length === 1) {
+        const lower = event.key.toLowerCase();
+        const code = lower.charCodeAt(0);
+        if (code >= 97 && code <= 122) {
+          sendInputRef.current(String.fromCharCode(code - 96));
+          setModifiers((prev) => ({ ...prev, ctrl: false }));
+          return false;
+        }
+      }
+      return true;
+    });
+
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const attachUrl = `${protocol}://${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/attach?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`;
     let ws: WebSocket | null = null;
@@ -1635,15 +1797,25 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       window.clearTimeout(userScrollTimer);
       userScrollTimer = window.setTimeout(() => { userScrollIntent = false; }, 800);
     };
+    const selectionChange = term.onSelectionChange(() => setHasSelection(term.hasSelection()));
+    const touchSelection = createTouchSelectionController(term, setHasSelection);
     let touchLastY = 0;
     let touchScrollRemainder = 0;
     const onTerminalTouchStart = (event: TouchEvent) => {
       touchLastY = event.touches[0]?.clientY ?? 0;
       touchScrollRemainder = 0;
       markUserScroll(event);
+      const touch = event.touches[0];
+      if (touch) touchSelection.handleTouchStart(touch);
     };
+    const onTerminalTouchEnd = (event: TouchEvent) => touchSelection.handleTouchEnd(event.changedTouches[0]);
     const onTerminalTouchMove = (event: TouchEvent) => {
-      const currentY = event.touches[0]?.clientY ?? touchLastY;
+      const touch = event.touches[0];
+      if (touch && touchSelection.handleTouchMove(touch)) {
+        event.preventDefault();
+        return;
+      }
+      const currentY = touch?.clientY ?? touchLastY;
       const delta = touchLastY - currentY;
       if (Math.abs(delta) < 1) return;
 
@@ -1666,6 +1838,8 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     host.addEventListener("wheel", markUserScroll, { passive: true });
     host.addEventListener("touchstart", onTerminalTouchStart, { passive: true });
     host.addEventListener("touchmove", onTerminalTouchMove, { passive: false });
+    host.addEventListener("touchend", onTerminalTouchEnd, { passive: true });
+    host.addEventListener("touchcancel", onTerminalTouchEnd, { passive: true });
     host.addEventListener("pointerdown", markUserScroll, { passive: true });
     const input = term.onData((data) => {
       if (isDetachInput(data)) {
@@ -1720,12 +1894,16 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       host.removeEventListener("wheel", markUserScroll);
       host.removeEventListener("touchstart", onTerminalTouchStart);
       host.removeEventListener("touchmove", onTerminalTouchMove);
+      host.removeEventListener("touchend", onTerminalTouchEnd);
+      host.removeEventListener("touchcancel", onTerminalTouchEnd);
       host.removeEventListener("pointerdown", markUserScroll);
       resizeObserver.disconnect();
       window.clearTimeout(userScrollTimer);
       window.clearTimeout(reconnectTimer);
       input.dispose();
       scroll.dispose();
+      selectionChange.dispose();
+      touchSelection.dispose();
       sendInputRef.current = () => {};
       sendDetach();
       ws?.close();
@@ -1786,6 +1964,10 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
           }}
         />
       </div>
+      {hasSelection && <SelectionCopyButton
+        className="terminalCopyButton"
+        onCopy={() => termRef.current?.getSelection() ?? ""}
+      />}
     </div>
     <div className="terminalKeyBar" aria-label="Terminal shortcut keys">
       <button type="button" onClick={() => sendShortcut("esc")}>Esc</button>

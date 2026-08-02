@@ -281,9 +281,26 @@ button.row { min-height: 42px; justify-content: stretch; }
   flex-direction: column;
 }
 .xtermSurface {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+}
+.terminalCopyButton {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #365148;
+  border-color: #5c8375;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
 .terminalScrollbar {
   position: relative;
@@ -355,6 +372,7 @@ button.row { min-height: 42px; justify-content: stretch; }
   background: #365148;
 }
 .logPane {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
