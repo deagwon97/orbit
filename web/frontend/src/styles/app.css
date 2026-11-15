@@ -328,6 +328,24 @@ button.row { min-height: 42px; justify-content: stretch; }
 .terminalScrollbar.disabled .terminalScrollbarThumb {
   opacity: 0;
 }
+.terminalAppScroll {
+  flex: 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  background: #171c1f;
+  touch-action: none;
+}
+.terminalAppScroll button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #252c30;
+  color: #cbd5da;
+}
 .xtermHost {
   flex: 1;
   min-height: 0;

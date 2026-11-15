@@ -1657,6 +1657,28 @@ function SessionLogs({ session }: { session: ConnectedSession }) {
   </div>;
 }
 
+// Alternate-screen applications own their history. Let xterm encode wheel input
+// using the application's active mouse protocol instead of moving its empty buffer.
+function scrollTerminal(term: XTermTerminal, lines: number, point?: { clientX: number; clientY: number }) {
+  if (term.buffer.active.type !== "alternate") {
+    term.scrollLines(lines);
+    return;
+  }
+  const screen = term.element?.querySelector(".xterm-screen");
+  if (!screen) return;
+  const rect = screen.getBoundingClientRect();
+  for (let i = 0; i < Math.min(50, Math.abs(lines)); i++) {
+    screen.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaMode: WheelEvent.DOM_DELTA_LINE,
+      deltaY: Math.sign(lines),
+      clientX: Math.max(rect.left + 1, Math.min(rect.right - 1, point?.clientX ?? rect.left + rect.width / 2)),
+      clientY: Math.max(rect.top + 1, Math.min(rect.bottom - 1, point?.clientY ?? rect.top + rect.height / 2))
+    }));
+  }
+}
+
 function Terminal({ session, reload }: { session: ConnectedSession; reload: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTermTerminal | null>(null);
@@ -1670,7 +1692,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     alt: false
   });
   const modifiersRef = useRef(modifiers);
-  const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false });
+  const [scrollInfo, setScrollInfo] = useState({ top: 1, size: 1, scrollable: false, application: false });
   const [hasSelection, setHasSelection] = useState(false);
 
   useEffect(() => { modifiersRef.current = modifiers; }, [modifiers]);
@@ -1680,7 +1702,12 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
     const scrollable = term.buffer.active.baseY > 0;
     const top = scrollable ? term.buffer.active.viewportY / term.buffer.active.baseY : 1;
     const size = scrollable ? Math.max(0.12, Math.min(1, term.rows / totalRows)) : 1;
-    setScrollInfo({ top: Math.max(0, Math.min(1, top)), size, scrollable });
+    setScrollInfo({ top: Math.max(0, Math.min(1, top)), size, scrollable, application: term.buffer.active.type === "alternate" });
+  }
+
+  function scrollApplication(lines: number) {
+    const term = termRef.current;
+    if (term) scrollTerminal(term, lines);
   }
 
   function scrollToRatio(clientY: number, target: HTMLElement, dragOffset: number) {
@@ -1827,7 +1854,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       touchScrollRemainder += delta / Math.max(1, rowHeight);
       const lines = Math.trunc(touchScrollRemainder);
       if (lines !== 0) {
-        term.scrollLines(lines);
+        scrollTerminal(term, lines, touch);
         touchScrollRemainder -= lines;
         if (!isAtBottom()) autoFollowRef.current = false;
         updateScrollInfo(term);
@@ -1849,6 +1876,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       }
       sendInputRef.current(data);
     });
+    const binaryInput = term.onBinary((data) => send({ type: "stdin", data: btoa(data) }));
 
     const connect = () => {
       if (disposed) return;
@@ -1901,6 +1929,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
       window.clearTimeout(userScrollTimer);
       window.clearTimeout(reconnectTimer);
       input.dispose();
+      binaryInput.dispose();
       scroll.dispose();
       selectionChange.dispose();
       touchSelection.dispose();
@@ -1945,7 +1974,19 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
   return <div className="xtermShell">
     <div className="xtermSurface">
       <div className="xtermHost" ref={ref} />
-      <div
+      {scrollInfo.application ? <div
+        className="terminalAppScroll"
+        role="group"
+        aria-label="Application scroll controls"
+        onWheel={(event) => {
+          if (!event.deltaY) return;
+          scrollApplication(Math.sign(event.deltaY) * 3);
+          event.preventDefault();
+        }}
+      >
+        <button type="button" aria-label="Scroll application up" title="Scroll up" onClick={() => scrollApplication(-3)}><ChevronUp size={16} /></button>
+        <button type="button" aria-label="Scroll application down" title="Scroll down" onClick={() => scrollApplication(3)}><ChevronDown size={16} /></button>
+      </div> : <div
         className={`terminalScrollbar${scrollInfo.scrollable ? "" : " disabled"}`}
         role="scrollbar"
         aria-label="Terminal scrollback"
@@ -1963,7 +2004,7 @@ function Terminal({ session, reload }: { session: ConnectedSession; reload: () =
             top: `${scrollInfo.top * (1 - scrollInfo.size) * 100}%`
           }}
         />
-      </div>
+      </div>}
       {hasSelection && <SelectionCopyButton
         className="terminalCopyButton"
         onCopy={() => termRef.current?.getSelection() ?? ""}
