@@ -346,6 +346,10 @@ button.row { min-height: 42px; justify-content: stretch; }
 .xtermHost .xterm-viewport::-webkit-scrollbar {
   display: none !important; /* Chrome/Safari */
 }
+/* xterm 6 renders its own scrollbar separately from the native viewport scrollbar. */
+.xtermHost .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+}
 .xtermHost .xterm-screen {
   overflow-y: hidden;
 }
