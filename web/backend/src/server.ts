@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { WebSocket } from "ws";
 import { config } from "./config.js";
+import { terminalModePrefix } from "./terminal-state.js";
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
@@ -184,38 +185,50 @@ app.get("/api/v1/sessions/:id/attach", { websocket: true }, (socket, req: any) =
     socket.close(1008, "invalid orbitd url");
     return;
   }
-  const upstream = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/sessions/${encodeURIComponent(req.params.id)}/attach`, {
-    headers: authHeader(req)
-  });
+  let upstream: WebSocket | null = null;
   let upstreamOpen = false;
   const pending: WebSocket.RawData[] = [];
 
-  upstream.on("open", () => {
-    upstreamOpen = true;
-    for (const data of pending.splice(0)) upstream.send(data.toString());
-  });
   socket.on("message", (data) => {
-    if (upstreamOpen && upstream.readyState === WebSocket.OPEN) {
+    if (upstreamOpen && upstream?.readyState === WebSocket.OPEN) {
       upstream.send(data.toString());
     } else {
       pending.push(data);
     }
   });
-  upstream.on("message", (data) => {
-    if (socket.readyState === WebSocket.OPEN) socket.send(data.toString());
-  });
-  upstream.on("error", (err) => {
-    req.log.warn({ err, sessionId: req.params.id }, "attach upstream websocket failed");
-    if (socket.readyState === WebSocket.OPEN) socket.close(1011, "attach upstream failed");
-  });
   socket.on("error", (err) => {
     req.log.warn({ err, sessionId: req.params.id }, "attach client websocket failed");
-    upstream.close();
+    upstream?.close();
   });
-  socket.on("close", () => upstream.close());
-  upstream.on("close", () => {
-    if (socket.readyState === WebSocket.OPEN) socket.close();
-  });
+  socket.on("close", () => upstream?.close());
+  void (async () => {
+    try {
+      const prefix = await terminalModePrefix(base, req.params.id, authHeader(req));
+      if (socket.readyState !== WebSocket.OPEN) return;
+      if (prefix) socket.send(JSON.stringify({ type: "stdout", data: Buffer.from(prefix).toString("base64") }));
+    } catch (err) {
+      req.log.warn({ err, sessionId: req.params.id }, "terminal mode recovery failed; using PTY replay");
+    }
+    if (socket.readyState !== WebSocket.OPEN) return;
+    const remote = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/sessions/${encodeURIComponent(req.params.id)}/attach`, {
+      headers: authHeader(req)
+    });
+    upstream = remote;
+    remote.on("open", () => {
+      upstreamOpen = true;
+      for (const data of pending.splice(0)) remote.send(data.toString());
+    });
+    remote.on("message", (data) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(data.toString());
+    });
+    remote.on("error", (err) => {
+      req.log.warn({ err, sessionId: req.params.id }, "attach upstream websocket failed");
+      if (socket.readyState === WebSocket.OPEN) socket.close(1011, "attach upstream failed");
+    });
+    remote.on("close", () => {
+      if (socket.readyState === WebSocket.OPEN) socket.close();
+    });
+  })();
 });
 
 await app.listen({ port: config.port, host: "0.0.0.0" });
