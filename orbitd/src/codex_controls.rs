@@ -44,6 +44,7 @@ fn no_args(args: &str) -> Result<()> {
 }
 fn catalog() -> Value {
     json!([
+        {"name":"resume","description":"이전 대화 검색 · 현재 세션에서 이어가기","usage":"/resume [검색어 또는 대화 ID]","duringTask":true},
         {"name":"status","description":"세션 설정 · 토큰 사용량","duringTask":true},
         {"name":"model","description":"모델 · 추론 강도 선택","usage":"/model [모델] [추론 강도]","duringTask":true},
         {"name":"permissions","description":"작업 권한 선택","usage":"/permissions [read-only|workspace-write|full-access]","duringTask":true},
@@ -64,7 +65,7 @@ fn catalog() -> Value {
     ])
 }
 impl CodexSession {
-    pub(super) fn gate(&self) -> Result<SendingGuard> {
+    pub(crate) fn gate(&self) -> Result<SendingGuard> {
         let guard = self
             .sending
             .clone()
@@ -86,6 +87,7 @@ impl CodexSession {
         let (name, args) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
         (args.trim().is_empty()
             && [
+                "/resume",
                 "/help",
                 "/?",
                 "/status",
@@ -132,6 +134,9 @@ impl CodexSession {
             bail!("연결이 종료되었습니다. 다시 연결한 뒤 추가하세요.");
         }
         let mut live = self.state.lock().unwrap();
+        if !live.connected || live.switching {
+            bail!("연결이 종료되었거나 대화를 전환하고 있습니다. 다시 연결하세요.");
+        }
         if live.queue.len() >= 20 {
             bail!("대기 메시지는 최대 20개입니다.");
         }
@@ -328,6 +333,26 @@ impl CodexSession {
             "help" => {
                 no_args(args)?;
                 json!({"type":"help","commands":commands})
+            }
+            "resume" => {
+                if args.len() > 200 {
+                    bail!("검색어는 200바이트 이하로 입력하세요.");
+                }
+                let cursor = body.get("cursor").cloned().unwrap_or(Value::Null);
+                if !cursor.is_null() && cursor.as_str().filter(|s| s.len() <= 4096).is_none() {
+                    bail!("Invalid resume cursor");
+                }
+                let all = body["allWorkspaces"] == true;
+                let mut params = json!({"limit":30,"cursor":cursor,"sortKey":"updated_at","sortDirection":"desc","modelProviders":[],"archived":false});
+                if !args.is_empty() {
+                    params["searchTerm"] = json!(args);
+                }
+                if !all {
+                    params["cwd"] = settings["cwd"].clone();
+                }
+                let result = self.rpc("thread/list", params).await?;
+                let rows: Vec<Value>=result["data"].as_array().context("Invalid conversation list")?.iter().map(|t|json!({"id":t["id"],"name":t["name"],"preview":t["preview"],"cwd":t["cwd"],"updatedAt":t["updatedAt"],"status":t["status"]})).collect();
+                json!({"type":"resume","data":rows,"nextCursor":result["nextCursor"],"search":args,"allWorkspaces":all,"currentThreadId":thread_id})
             }
             "status" => {
                 no_args(args)?;

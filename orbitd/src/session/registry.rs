@@ -189,6 +189,91 @@ impl SessionRegistry {
         web.insert(session.id, handle.clone());
         Ok(handle)
     }
+    pub async fn resume_web_thread(&self, ident: &str, thread_id: &str) -> Result<Session> {
+        let thread_id = Uuid::parse_str(thread_id)
+            .context("올바른 Codex 대화 ID를 입력하세요.")?
+            .to_string();
+        let mut web = self.web.lock().await;
+        let previous = self.get_session(ident)?;
+        if previous.mode != SessionMode::Web || previous.tool != "codex" {
+            bail!("Codex Web 세션에서만 사용할 수 있습니다.");
+        }
+        if previous.codex_thread_id.as_deref() == Some(&thread_id) {
+            bail!("이미 현재 대화입니다.");
+        }
+        if self
+            .list_sessions(ListSessionsQuery::default())?
+            .iter()
+            .any(|s| {
+                s.id != previous.id
+                    && s.mode == SessionMode::Web
+                    && s.status == SessionStatus::Running
+                    && s.codex_thread_id.as_deref() == Some(&thread_id)
+            })
+        {
+            bail!("다른 Orb 세션에서 열려 있는 대화입니다. 해당 세션에서 이어가세요.");
+        }
+        let old = web
+            .get(&previous.id)
+            .context("세션을 다시 연결한 뒤 재시도하세요.")?
+            .clone();
+        let _guard = old.gate()?;
+        let _switch = old.begin_switch()?;
+        let next = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        next.bind_uploads(&previous.id);
+        let prepared = async {
+            let thread = next.saved_thread(&thread_id).await?;
+            if thread["status"]["type"] == "active" {
+                bail!("선택한 대화에서 작업이 실행 중입니다. 완료 후 다시 시도하세요.");
+            }
+            let cwd = std::path::PathBuf::from(
+                thread["cwd"]
+                    .as_str()
+                    .context("저장된 작업 폴더가 없습니다.")?,
+            );
+            if !cwd.is_absolute() || !cwd.is_dir() {
+                bail!("저장된 작업 폴더가 없습니다: {}", cwd.display());
+            }
+            next.resume(&thread_id, &cwd).await?;
+            next.history(None).await?;
+            if !next.snapshot()["activeTurn"].is_null() {
+                bail!("선택한 대화에서 작업이 시작되었습니다. 완료 후 다시 시도하세요.");
+            }
+            let mut session = previous.clone();
+            session.cwd = cwd;
+            session.codex_thread_id = Some(thread_id.clone());
+            session.status = SessionStatus::Running;
+            session.exit_code = None;
+            session.name = thread["name"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| thread["preview"].as_str())
+                .unwrap_or("Codex")
+                .chars()
+                .take(100)
+                .collect();
+            // Resumed history must never be mistaken for a replaceable empty thread.
+            self.has_input.lock().unwrap().insert(session.id.clone());
+            self.save_web_session(&session)?;
+            if let Err(error) = self.db.update_web_session(&session) {
+                let _ = self.save_web_session(&previous);
+                return Err(error);
+            }
+            Ok::<Session, anyhow::Error>(session)
+        }
+        .await;
+        match prepared {
+            Ok(session) => {
+                web.insert(session.id.clone(), next);
+                old.close().await;
+                Ok(session)
+            }
+            Err(error) => {
+                next.close().await;
+                Err(error)
+            }
+        }
+    }
     pub fn mark_web_input(&self, ident: &str) -> Result<()> {
         let session = self.get_session(ident)?;
         self.has_input.lock().unwrap().insert(session.id.clone());
@@ -433,6 +518,91 @@ mod tests {
         );
         restored.delete_session(&session.id).await.unwrap();
         assert!(restored.get_session(&session.id).is_err());
+    }
+    #[tokio::test]
+    async fn resume_switches_the_same_orb_session_preserves_saved_settings_and_survives_restart() {
+        let f = crate::codex::tests::fixture().await;
+        let mut config = Config::default();
+        config.codex_socket = f.socket.clone();
+        config.data_dir = f.directory.join("data");
+        config.audit_path = f.directory.join("audit.jsonl");
+        let registry = SessionRegistry::new(database(), config.clone());
+        let session = registry
+            .create_session(
+                serde_json::from_value(
+                    serde_json::json!({"tool":"codex","mode":"web","cwd":f.directory}),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let old = registry.codex_session(&session.id).await.unwrap();
+        assert_eq!(
+            old.snapshot()["settings"]["sandboxPolicy"]["type"],
+            "dangerFullAccess"
+        );
+        assert_eq!(old.snapshot()["settings"]["approvalPolicy"], "never");
+        let target = "11111111-1111-4111-8111-111111111111";
+        let list = old
+            .operation(&serde_json::json!({"op":"command","command":"/resume"}))
+            .await
+            .unwrap();
+        assert_eq!(list["data"][0]["id"], target);
+        assert!(registry
+            .resume_web_thread(&session.id, "../../etc/passwd")
+            .await
+            .is_err());
+        assert!(old.connected());
+        let next = registry
+            .resume_web_thread(&session.id, target)
+            .await
+            .unwrap();
+        assert_eq!(session.id, next.id);
+        assert_eq!(next.codex_thread_id.as_deref(), Some(target));
+        assert_eq!(
+            registry
+                .list_sessions(ListSessionsQuery::default())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(!old.connected());
+        let handle = registry.codex_session(&session.id).await.unwrap();
+        assert_eq!(
+            handle.snapshot()["settings"]["approvalPolicy"],
+            "on-request"
+        );
+        assert_eq!(
+            handle.snapshot()["settings"]["sandboxPolicy"]["type"],
+            "workspaceWrite"
+        );
+        handle
+            .operation(&serde_json::json!({"op":"send","text":"working"}))
+            .await
+            .unwrap();
+        assert!(registry
+            .resume_web_thread(&session.id, "22222222-2222-4222-8222-222222222222")
+            .await
+            .is_err());
+        assert_eq!(handle.thread_id(), target);
+        handle
+            .operation(&serde_json::json!({"op":"interrupt"}))
+            .await
+            .unwrap();
+        let switching = handle.begin_switch().unwrap();
+        assert!(handle
+            .operation(&serde_json::json!({"op":"queue","text":"racing input"}))
+            .await
+            .is_err());
+        drop(switching);
+        handle.close().await;
+        drop(registry);
+        let restored = SessionRegistry::new(database(), config);
+        let saved = restored.get_session(&session.id).unwrap();
+        assert_eq!(saved.codex_thread_id.as_deref(), Some(target));
+        let resumed = restored.codex_session(&session.id).await.unwrap();
+        assert_eq!(resumed.thread_id(), target);
+        resumed.close().await;
     }
     #[tokio::test]
     async fn only_known_empty_missing_threads_can_be_recreated_after_restart() {

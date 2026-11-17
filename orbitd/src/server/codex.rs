@@ -54,7 +54,9 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                 let Some(Ok(Message::Text(text))) = message else { break; };
                 if text.len() > 256_000 { break; }
                 let Ok(body) = serde_json::from_str::<Value>(&text) else { continue; };
-                let allowed = state.registry.get_session(&id).map(|session| crate::codex::CodexSession::read_operation(&body) || session.status == orb_common::SessionStatus::Running).unwrap_or(false);
+                let resume_arg = if body["op"]=="command" { body["command"].as_str().and_then(|text|text.trim().strip_prefix("/resume")).filter(|tail|tail.is_empty() || tail.starts_with(char::is_whitespace)).map(str::trim) } else { None };
+                let resume_id=resume_arg.filter(|arg|uuid::Uuid::parse_str(arg).is_ok());
+                let allowed = state.registry.get_session(&id).map(|session| resume_arg.is_some() || crate::codex::CodexSession::read_operation(&body) || session.status == orb_common::SessionStatus::Running).unwrap_or(false);
                 if !allowed {
                     if send.send(Message::Text(json!({"type":"error","id":body["id"],"error":"This session is stopped or removed"}).to_string())).await.is_err() { break; }
                     continue;
@@ -66,13 +68,17 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                         continue;
                     }
                 }
-                match connection.operation(&body).await {
+                let result=if let Some(thread_id)=resume_id {
+                    state.registry.resume_web_thread(&id,thread_id).await.map(|session|json!({"type":"resumeOpened","session":session}))
+                } else {connection.operation(&body).await};
+                match result {
                     Ok(result) => json!({"type":"result","id":body["id"],"op":body["op"],"result":result}),
                     Err(error) => json!({"type":"error","id":body["id"],"error":format!("{error:#}")}),
                 }
             }
         };
-        let disconnected = outgoing["type"] == "disconnected";
+        let disconnected =
+            outgoing["type"] == "disconnected" || outgoing["result"]["type"] == "resumeOpened";
         if send
             .send(Message::Text(outgoing.to_string()))
             .await

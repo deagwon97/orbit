@@ -902,6 +902,7 @@ function App() {
             onDetach={() => { setSelectedKey(null); setDetailOpen(false); }}
             onDelete={() => void deleteSession(selected)}
             reload={load}
+            onSessionChange={session => setSessions(items => items.map(item => item.key === selected.key ? { ...session, connection: selected.connection, key: selected.key } : item))}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
       </>}
@@ -1088,6 +1089,7 @@ function NewSessionModal(props: {
           <option value="cli">CLI · Terminal</option>
           <option value="web" disabled={!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web")}>Web · Chat</option>
         </select>
+        {props.sessionMode === "web" && <small>새 대화 기본 권한: YOLO · 전체 접근 · 승인 안 함</small>}
         {!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web") && <small>Web mode requires an updated orbitd connected to a Codex daemon.</small>}
       </label>}
       <label className="fieldLabel">
@@ -1519,6 +1521,7 @@ function ConnectionModal(props: {
 }
 
 function SessionPane(props: {
+  onSessionChange: (session: Session) => void;
   session: ConnectedSession;
   onDetach: () => void;
   onDelete: () => void;
@@ -1541,7 +1544,7 @@ function SessionPane(props: {
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
     {props.session.mode !== "web" && <div className="terminalLocation" aria-label="현재 세션 실행 위치"><span>CLI</span><strong title={props.session.connection.url}>{props.session.connection.label}</strong><code title={props.session.cwd}>{props.session.cwd}</code></div>}
-    {props.session.mode === "web" ? <CodexChat key={props.session.key} session={props.session} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
+    {props.session.mode === "web" ? <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
   </div>;
 }
 

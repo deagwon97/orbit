@@ -19,7 +19,7 @@ use uuid::Uuid;
 #[path = "codex_controls.rs"]
 mod controls;
 
-struct SendingGuard {
+pub(crate) struct SendingGuard {
     _guard: Option<tokio::sync::OwnedMutexGuard<()>>,
     events: broadcast::Sender<Value>,
 }
@@ -27,6 +27,14 @@ impl Drop for SendingGuard {
     fn drop(&mut self) {
         drop(self._guard.take());
         let _ = self.events.send(json!({"type":"drain"}));
+    }
+}
+pub(crate) struct SwitchingGuard {
+    state: Arc<Mutex<LiveState>>,
+}
+impl Drop for SwitchingGuard {
+    fn drop(&mut self) {
+        self.state.lock().unwrap().switching = false;
     }
 }
 type Reply = oneshot::Sender<Result<Value, String>>;
@@ -40,6 +48,7 @@ struct LiveState {
     connected: bool,
     thread_id: String,
     upload_session: String,
+    switching: bool,
     active: Option<String>,
     completed: HashSet<String>,
     approvals: HashMap<String, Value>,
@@ -58,6 +67,20 @@ pub struct CodexSession {
     sending: Arc<tokio::sync::Mutex<()>>,
 }
 impl CodexSession {
+    pub(crate) fn begin_switch(&self) -> Result<SwitchingGuard> {
+        let mut live = self.state.lock().unwrap();
+        if live.switching
+            || live.active.is_some()
+            || !live.queue.is_empty()
+            || !live.approvals.is_empty()
+        {
+            bail!("현재 작업과 대기 메시지를 정리한 뒤 대화를 전환하세요.");
+        }
+        live.switching = true;
+        Ok(SwitchingGuard {
+            state: self.state.clone(),
+        })
+    }
     pub(crate) fn bind_uploads(&self, session: &str) {
         self.state.lock().unwrap().upload_session = session.into();
     }
@@ -215,13 +238,13 @@ impl CodexSession {
     }
     pub fn snapshot(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true}})
+        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true}})
     }
     pub async fn create(&self, cwd: &Path) -> Result<String> {
         let result = self
             .rpc(
                 "thread/start",
-                json!({"cwd":cwd,"approvalPolicy":"on-request","sandbox":"workspace-write"}),
+                json!({"cwd":cwd,"approvalPolicy":"never","sandbox":"danger-full-access"}),
             )
             .await?;
         let id = result["thread"]["id"]
@@ -231,6 +254,15 @@ impl CodexSession {
         self.state.lock().unwrap().settings = controls::resume_settings(&result);
         self.state.lock().unwrap().thread_id = id.clone();
         Ok(id)
+    }
+    pub(crate) async fn saved_thread(&self, thread_id: &str) -> Result<Value> {
+        Ok(self
+            .rpc(
+                "thread/read",
+                json!({"threadId":thread_id,"includeTurns":false}),
+            )
+            .await?["thread"]
+            .clone())
     }
     pub async fn resume(&self, thread_id: &str, cwd: &Path) -> Result<()> {
         let read = self
@@ -330,6 +362,9 @@ impl CodexSession {
         Ok(json!({"thread":thread,"nextCursor":next,"state":self.snapshot()}))
     }
     pub async fn operation(&self, body: &Value) -> Result<Value> {
+        if self.state.lock().unwrap().switching {
+            bail!("대화를 전환하고 있습니다. 잠시 후 다시 시도하세요.");
+        }
         match body["op"].as_str().unwrap_or("") {
             "history" => self.history(body["cursor"].as_str()).await,
             "command" => self.command(body).await,
@@ -515,6 +550,7 @@ pub(crate) mod tests {
                 let cwd = cwd.clone();
                 tokio::spawn(async move {
                     let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let mut thread_id = "test-thread".to_string();
                     let mut active = false;
                     let mut turn_seq = 0u32;
                     let mut active_turn = "turn-1".to_string();
@@ -536,18 +572,25 @@ pub(crate) mod tests {
                             "initialized" => continue,
                             "thread/start" => {
                                 assert_eq!(p["cwd"], cwd);
-                                assert_eq!(p["approvalPolicy"], "on-request");
-                                json!({"thread":{"id":"test-thread","cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
+                                assert_eq!(p["approvalPolicy"], "never");
+                                assert_eq!(p["sandbox"], "danger-full-access");
+                                settings["approvalPolicy"] = json!("never");
+                                settings["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
+                                json!({"thread":{"id":thread_id,"cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
                             }
                             "thread/resume" => {
+                                thread_id = p["threadId"].as_str().unwrap().to_string();
                                 assert_eq!(
                                     p,
-                                    &json!({"threadId":"test-thread","excludeTurns":true})
+                                    &json!({"threadId":p["threadId"],"excludeTurns":true})
                                 );
-                                json!({"thread":{"id":"test-thread","cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
+                                json!({"thread":{"id":thread_id,"cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
+                            }
+                            "thread/list" => {
+                                json!({"data":[{"id":"11111111-1111-4111-8111-111111111111","name":"Saved conversation","cwd":cwd,"preview":"saved answer","updatedAt":1700000000,"status":{"type":"notLoaded"}}],"nextCursor":null})
                             }
                             "thread/read" => {
-                                json!({"thread":{"id":"test-thread","cwd":cwd,"historyMode":"paginated"}})
+                                json!({"thread":{"id":p["threadId"],"name":"Saved conversation","cwd":cwd,"historyMode":"paginated","status":{"type":"notLoaded"}}})
                             }
                             "thread/turns/list" => {
                                 json!({"data":[{"id":active_turn,"status":if active {"inProgress"} else {"completed"}}],"nextCursor":null})
@@ -560,13 +603,13 @@ pub(crate) mod tests {
                                 {"id":"small","model":"small","defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low"}],"serviceTiers":[]}
                             ],"nextCursor":null}),
                             "thread/settings/update" => {
-                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["threadId"], thread_id);
                                 for (key, value) in p.as_object().unwrap() {
                                     if key != "threadId" {
                                         settings[key] = value.clone();
                                     }
                                 }
-                                ws.send(Message::Text(json!({"method":"thread/settings/updated","params":{"threadId":"test-thread","threadSettings":settings}}).to_string())).await.unwrap();
+                                ws.send(Message::Text(json!({"method":"thread/settings/updated","params":{"threadId":thread_id,"threadSettings":settings}}).to_string())).await.unwrap();
                                 json!({})
                             }
                             "config/read" => {
@@ -584,7 +627,7 @@ pub(crate) mod tests {
                             "thread/name/set"
                             | "thread/compact/start"
                             | "thread/backgroundTerminals/clean" => {
-                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["threadId"], thread_id);
                                 json!({})
                             }
                             "thread/backgroundTerminals/list" => {
@@ -594,41 +637,41 @@ pub(crate) mod tests {
                                 json!({"data":[{"cwd":cwd,"skills":[{"name":"test-skill","path":"/test/SKILL.md"}]}]})
                             }
                             "mcpServerStatus/list" => {
-                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["threadId"], thread_id);
                                 json!({"data":[],"nextCursor":null})
                             }
                             "turn/steer" => {
-                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["threadId"], thread_id);
                                 assert_eq!(p["expectedTurnId"], active_turn);
                                 assert!(active);
                                 json!({"turnId":active_turn})
                             }
                             "turn/start" => {
-                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["threadId"], thread_id);
                                 turn_seq += 1;
                                 active_turn = format!("turn-{turn_seq}");
                                 active = true;
-                                ws.send(Message::Text(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"inProgress"}}}).to_string())).await.unwrap();
+                                ws.send(Message::Text(json!({"method":"turn/started","params":{"threadId":thread_id,"turn":{"id":active_turn,"status":"inProgress"}}}).to_string())).await.unwrap();
                                 if p["input"][0]["text"]
                                     .as_str()
                                     .unwrap_or("")
                                     .starts_with("fast")
                                 {
                                     active = false;
-                                    ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"completed"}}}).to_string())).await.unwrap();
+                                    ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":thread_id,"turn":{"id":active_turn,"status":"completed"}}}).to_string())).await.unwrap();
                                 } else {
-                                    ws.send(Message::Text(json!({"id":101,"method":"item/commandExecution/requestApproval","params":{"threadId":"test-thread","turnId":active_turn,"command":"echo test","availableDecisions":["accept","decline"]}}).to_string())).await.unwrap();
+                                    ws.send(Message::Text(json!({"id":101,"method":"item/commandExecution/requestApproval","params":{"threadId":thread_id,"turnId":active_turn,"command":"echo test","availableDecisions":["accept","decline"]}}).to_string())).await.unwrap();
                                 }
                                 json!({"turn":{"id":active_turn,"status":"inProgress","items":[{"id":format!("user-{turn_seq}"),"type":"userMessage","content":p["input"]}]}})
                             }
                             "turn/interrupt" => {
                                 active = false;
-                                ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"interrupted"}}}).to_string())).await.unwrap();
+                                ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":thread_id,"turn":{"id":active_turn,"status":"interrupted"}}}).to_string())).await.unwrap();
                                 json!({})
                             }
                             "" if m["id"] == 101 => {
                                 active = false;
-                                ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"completed"}}}).to_string())).await.unwrap();
+                                ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":thread_id,"turn":{"id":active_turn,"status":"completed"}}}).to_string())).await.unwrap();
                                 continue;
                             }
                             other => panic!("Unexpected fake RPC {other}"),

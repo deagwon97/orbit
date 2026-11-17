@@ -17,14 +17,26 @@ function ModelPicker({ result, busy, readOnly, run }: Pick<Props, 'result' | 'bu
     <button disabled={busy || readOnly || !model}>적용</button>
   </form>;
 }
+function ResumePicker({result,busy,running,run}: Pick<Props,'result'|'busy'|'running'|'run'>) {
+  const [search,setSearch]=useState(result.search || ''),[all,setAll]=useState(!!result.allWorkspaces);
+  useEffect(()=>{setSearch(result.search || '');setAll(!!result.allWorkspaces);},[result.search,result.allWorkspaces]);
+  return <><p>현재 Orb 세션에서 선택한 대화로 전환합니다. 저장된 작업 폴더와 설정을 이어받습니다.</p>
+    {running && <p className="codexControlsNotice">현재 작업을 마치거나 중단하고 대기 메시지를 정리한 뒤 전환하세요.</p>}
+    <form className="codexResumeSearch" onSubmit={event=>{event.preventDefault();void run(`/resume${search.trim() ? ' '+search.trim() : ''}`,{allWorkspaces:all});}}><input aria-label="이전 대화 검색" placeholder="대화 이름 검색 또는 대화 ID" maxLength={200} value={search} onChange={e=>setSearch(e.target.value)}/><button disabled={busy}>검색</button><label><input type="checkbox" checked={all} onChange={e=>setAll(e.target.checked)}/>모든 작업 폴더</label></form>
+    <div className="codexResumeList">{(result.data || []).map((thread:any)=><button type="button" key={thread.id} disabled={busy || running || thread.id===result.currentThreadId || thread.status?.type==='active'} onClick={()=>void run(`/resume ${thread.id}`)}><strong>{thread.name || thread.preview?.split('\n')[0] || '이름 없는 대화'}</strong><span>{thread.cwd}</span><small>{thread.id} · {thread.updatedAt ? new Date(thread.updatedAt*1000).toLocaleString() : ''}{thread.id===result.currentThreadId ? ' · 현재 대화' : thread.status?.type==='active' ? ' · 작업 중' : ''}</small></button>)}</div>
+    {!result.data?.length && <p>일치하는 대화가 없습니다. 검색어나 작업 폴더 범위를 변경하세요.</p>}
+    {result.nextCursor && <button disabled={busy} onClick={()=>void run(`/resume${result.search ? ' '+result.search : ''}`,{cursor:result.nextCursor,allWorkspaces:result.allWorkspaces})}>이전 대화 더 보기</button>}
+  </>;
+}
 export function CodexControls(props: Props) {
   const { result, busy, running, readOnly, run } = props;
   const [confirmFull, setConfirmFull] = useState(false);
   const state = result.state || {}, settings = state.settings || {};
-  const titles: Record<string, string> = { status: '세션 상태', model: '모델 및 추론 강도', permissions: '작업 권한', fast: 'Fast 모드', usage: '계정 사용량', plan: 'Plan 모드', help: '대화 명령', skills: '스킬', mcp: 'MCP 서버', ps: '백그라운드 터미널', rename: '대화 이름', pwd: '작업 폴더' };
+  const titles: Record<string, string> = { resume: '이전 대화 이어가기', status: '세션 상태', model: '모델 및 추론 강도', permissions: '작업 권한', fast: 'Fast 모드', usage: '계정 사용량', plan: 'Plan 모드', help: '대화 명령', skills: '스킬', mcp: 'MCP 서버', ps: '백그라운드 터미널', rename: '대화 이름', pwd: '작업 폴더' };
   return <div className="codexControlsBackdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) props.close(); }}><section className="codexControls" role="dialog" onKeyDown={event => { if (event.key === 'Escape' && !busy) props.close(); }} aria-modal="true" aria-label={titles[result.type] || '명령 결과'}>
     <header><strong>/{result.type} · {titles[result.type] || '명령 결과'}</strong><button type="button" autoFocus aria-label="명령 창 닫기" onClick={props.close}>×</button></header>
     {running && ['model', 'permissions', 'fast'].includes(result.type) && <p className="codexControlsNotice">현재 작업은 계속 진행하며 변경 사항은 이후 턴에 적용됩니다.</p>}
+    {result.type === 'resume' && <ResumePicker {...props} />}
     {result.type === 'status' && <><Fields rows={[
       ['모델', settings.model], ['공급자', settings.modelProvider], ['추론 강도', settings.effort], ['속도', settings.serviceTier || 'default'],
       ['권한', settings.sandboxPolicy?.type], ['승인 정책', settings.approvalPolicy], ['대화 모드', settings.collaborationMode?.mode], ['작업 폴더', settings.cwd], ['Codex thread', result.threadId], ['실행 상태', state.activeTurn ? '작업 중' : '대기 중'], ['대기 메시지', state.queue?.items?.length || 0]
