@@ -142,7 +142,7 @@ app.get("/api/v1/sessions", async (req, reply) => {
 });
 
 // Binary uploads go to the selected execution host, never the API container's /tmp.
-app.post("/api/v1/sessions/:id/images", { bodyLimit: 10 * 1024 * 1024 }, async (req: any, reply) => {
+app.post("/api/v1/sessions/:id/images", { bodyLimit: 50 * 1024 * 1024 }, async (req: any, reply) => {
   const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/images`, {
     method: "POST", headers: { ...authHeader(req), "content-type": req.headers["content-type"] || "application/octet-stream" }, body: req.body
   });

@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
 };
 use uuid::Uuid;
-pub const MAX_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_BYTES: usize = 50 * 1024 * 1024;
 static UPLOAD: Mutex<()> = Mutex::new(());
 fn private_dir(path: &Path) -> Result<()> {
     match DirBuilder::new().mode(0o700).create(path) {
@@ -89,7 +89,7 @@ fn private_existing(dir: &Path) -> Result<()> {
 }
 pub fn save(session: &str, mime: &str, bytes: &[u8]) -> Result<serde_json::Value> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
-        bail!("이미지는 파일당 최대 10 MiB입니다.");
+        bail!("이미지는 파일당 최대 50 MiB입니다.");
     }
     let ext = extension(mime, bytes)?;
     let _guard = UPLOAD.lock().unwrap();
@@ -100,8 +100,8 @@ pub fn save(session: &str, mime: &str, bytes: &[u8]) -> Result<serde_json::Value
         .filter_map(|e| e.metadata().ok())
         .map(|m| m.len())
         .sum();
-    if entries.len() >= 128 || size + bytes.len() as u64 > 100 * 1024 * 1024 {
-        bail!("이 세션의 임시 이미지 한도(100 MiB / 128개)에 도달했습니다.");
+    if entries.len() >= 128 || size + bytes.len() as u64 > 512 * 1024 * 1024 {
+        bail!("이 세션의 임시 이미지 한도(512 MiB / 128개)에 도달했습니다.");
     }
     let id = format!("{}.{}", Uuid::new_v4(), ext);
     let path = dir.join(&id);
@@ -133,6 +133,22 @@ pub fn read(session: &str, id: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn accepts_fifty_mib_and_rejects_larger_files() {
+        let session = Uuid::new_v4().simple().to_string()[..12].to_string();
+        let mut bytes = vec![0; MAX_BYTES];
+        bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let upload = save(&session, "image/png", &bytes).unwrap();
+        assert_eq!(
+            fs::metadata(upload["path"].as_str().unwrap())
+                .unwrap()
+                .len(),
+            MAX_BYTES as u64
+        );
+        bytes.push(0);
+        assert!(save(&session, "image/png", &bytes).is_err());
+        fs::remove_dir_all(directory(&session, false).unwrap()).unwrap();
+    }
     #[test]
     fn images_are_private_session_scoped_and_cannot_resolve_arbitrary_files() {
         let session = Uuid::new_v4().simple().to_string()[..12].to_string();

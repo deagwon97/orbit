@@ -6,26 +6,30 @@ const MIME = new Set(['image/png','image/jpeg','image/webp','image/gif']);
 export function imageHeaders(session: ImageSession) { return { Authorization: `Bearer ${session.connection.token}`, 'x-orbitd-url': session.connection.url }; }
 export function useImages(session: ImageSession, enabled: boolean, report: (text: string) => void) {
   const [items,setItems] = useState<ImageDraft[]>([]);
-  const current = useRef<ImageDraft[]>([]), controllers = useRef(new Map<string,AbortController>()), alive = useRef(true);
+  const current = useRef<ImageDraft[]>([]), controllers = useRef(new Map<string,AbortController>()), alive = useRef(true), uploads = useRef<Promise<void>>(Promise.resolve());
   const update = (change: (items: ImageDraft[]) => ImageDraft[]) => { current.current=change(current.current); if(alive.current) setItems(current.current); };
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;controllers.current.forEach(c=>c.abort());current.current.forEach(i=>URL.revokeObjectURL(i.preview));};},[]);
-  async function upload(item: ImageDraft) {
+  function upload(item: ImageDraft) {
     const controller=new AbortController();controllers.current.set(item.key,controller);
     update(items=>items.map(i=>i.key===item.key?{...i,status:'uploading',error:undefined}:i));
-    try {
+    const job = async () => { try {
+      if (controller.signal.aborted || !alive.current) return;
       const response=await fetch(`/api/v1/sessions/${encodeURIComponent(session.id)}/images`,{method:'POST',headers:{...imageHeaders(session),'Content-Type':item.file.type},body:item.file,signal:controller.signal});
-      const text=await response.text();let result: any;try{result=JSON.parse(text);}catch{throw Error(response.status===413?'이미지는 파일당 최대 10 MiB입니다.':`업로드 실패 (${response.status}). orbitd 버전을 확인하세요.`);}
+      const text=await response.text();let result: any;try{result=JSON.parse(text);}catch{throw Error(response.status===413?'이미지는 파일당 최대 50 MiB입니다.':`업로드 실패 (${response.status}). orbitd 버전을 확인하세요.`);}
       if(!response.ok)throw Error(result.error||`업로드 실패 (${response.status})`);
       if(!result.id||!result.path)throw Error('업로드 결과에 경로가 없습니다.');
       update(items=>items.map(i=>i.key===item.key?{...i,...result,status:'ready'}:i));
     }catch(error){if(!controller.signal.aborted)update(items=>items.map(i=>i.key===item.key?{...i,status:'error',error:String(error)}:i));}
     finally{controllers.current.delete(item.key);}
+    };
+    uploads.current = uploads.current.then(job,job);
+    return uploads.current;
   }
   function add(files: File[]) {
     if(!enabled){report('이미지 첨부는 orbitd 업데이트 후 실행 중인 Codex Web 세션에서 사용할 수 있습니다.');return;}
     for(const file of files){
       if(!MIME.has(file.type)){report('PNG, JPEG, WebP, GIF 이미지만 첨부할 수 있습니다.');continue;}
-      if(file.size===0||file.size>10*1024*1024){report('이미지는 파일당 최대 10 MiB입니다.');continue;}
+      if(file.size===0||file.size>50*1024*1024){report('이미지는 파일당 최대 50 MiB입니다.');continue;}
       if(current.current.length>=8){report('이미지는 한 메시지에 최대 8개입니다.');break;}
       const item: ImageDraft={key:Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''),name:file.name||'클립보드 이미지',file,preview:URL.createObjectURL(file),status:'uploading'};
       update(items=>[...items,item]);void upload(item);
@@ -38,7 +42,7 @@ export function ImagePicker({enabled,add}: {enabled:boolean;add:(files:File[])=>
   const input=useRef<HTMLInputElement>(null),[open,setOpen]=useState(false);
   return <div className="codexImagePicker"><input ref={input} type="file" aria-label="첨부할 이미지 선택" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={e=>{add(Array.from(e.target.files||[]));e.target.value='';setOpen(false);}} />
     <button type="button" className="codexIconButton" aria-label="이미지 첨부" title={enabled?'이미지 첨부 · 드래그 또는 붙여넣기도 가능':'orbitd 업데이트 후 사용할 수 있습니다.'} aria-expanded={open} disabled={!enabled} onClick={()=>setOpen(!open)}><Plus size={22} /></button>
-    {open&&<div className="codexAttachmentMenu" onKeyDown={e=>{if(e.key==='Escape')setOpen(false);}}><button type="button" onClick={()=>input.current?.click()}><ImagePlus size={18}/>이미지 선택</button><small>드래그 앤 드롭 · 클립보드 붙여넣기<br/>파일당 10 MiB · 최대 8개</small><button type="button" onClick={()=>setOpen(false)}>닫기</button></div>}
+    {open&&<div className="codexAttachmentMenu" onKeyDown={e=>{if(e.key==='Escape')setOpen(false);}}><button type="button" onClick={()=>input.current?.click()}><ImagePlus size={18}/>이미지 선택</button><small>드래그 앤 드롭 · 클립보드 붙여넣기<br/>파일당 50 MiB · 최대 8개</small><button type="button" onClick={()=>setOpen(false)}>닫기</button></div>}
   </div>;
 }
 export function ImageDrafts({items,remove,retry,report}: {items:ImageDraft[];remove:(keys:string[])=>void;retry:(item:ImageDraft)=>void;report:(text:string)=>void}) {

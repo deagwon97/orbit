@@ -5,7 +5,7 @@ const fs=require('node:fs');const {chromium}=require('/app/node_modules/playwrig
  const page=await browser.newPage({viewport:{width:1440,height:1000}}),name=`Codex Images QA ${Date.now()}`,errors=[];let session;
  page.on('pageerror',e=>errors.push(e.message));
  const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
- const small=Buffer.from(png,'base64'),large=Buffer.concat([small,Buffer.alloc(2*1024*1024)]);
+ const small=Buffer.from(png,'base64'),large=Buffer.concat([small,Buffer.alloc(12*1024*1024)]);
  async function seed(p){await p.goto(c.webUrl);await p.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'images-qa',label:'Images QA',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','images-qa');},c);await p.reload();}
  async function paste(p,name){await p.getByRole('textbox',{name:'Codex 메시지'}).evaluate((node,{png,name})=>{const file=new File([Uint8Array.from(atob(png),x=>x.charCodeAt(0))],name,{type:'image/png'}),data=new DataTransfer();data.items.add(file);node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));},{png,name});}
  async function ready(p,count){await p.waitForFunction(count=>document.querySelectorAll('.codexImageDraft.ready').length===count,count);}
@@ -35,7 +35,7 @@ const fs=require('node:fs');const {chromium}=require('/app/node_modules/playwrig
   await seed(mock);await mock.locator('.sessions .row').filter({hasText:name}).click();await mock.getByText('Codex 연결됨',{exact:true}).waitFor();await paste(mock,'steer.png');await ready(mock,1);await mock.getByRole('textbox',{name:'Codex 메시지'}).press('Enter');await mock.waitForFunction(()=>!document.querySelector('.codexImageDraft'));
   if(!ops.some(o=>o.op==='steer'&&o.text===''&&o.images.length===1))throw Error('Image-only steer lost attachment');
   await paste(mock,'queued.png');await ready(mock,1);await mock.getByRole('textbox',{name:'Codex 메시지'}).press('Tab');await mock.locator('.codexQueue').filter({hasText:'이미지 1개'}).waitFor();if(!ops.some(o=>o.op==='queue'&&o.images.length===1))throw Error('Queue lost attachment');await mock.close();
-  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({filePicker:true,drop:true,paste:true,hostTmp:true,binary2MiB:true,retry:true,mobile:true,nativeInference:!!c.inference,historyPreview:!!c.inference,imageOnlySteer:true,imageQueue:true}));
+  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({filePicker:true,drop:true,paste:true,hostTmp:true,binary12MiB:true,retry:true,mobile:true,nativeInference:!!c.inference,historyPreview:!!c.inference,imageOnlySteer:true,imageQueue:true}));
  }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText().catch(()=>'' )).slice(-1200));throw e;}
  finally{await page.evaluate(async({c,name})=>{const headers={Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl};const r=await fetch('/api/v1/sessions',{headers});if(!r.ok)return;const s=(await r.json()).find(s=>s.name===name&&s.mode==='web');if(s)await fetch('/api/v1/sessions/'+s.id,{method:'DELETE',headers});},{c,name}).catch(()=>{});await browser.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
