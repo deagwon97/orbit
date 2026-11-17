@@ -26,7 +26,10 @@ pub(super) fn resume_settings(result: &Value) -> Value {
 pub(super) fn message_text(body: &Value) -> Result<&str> {
     let text = body["text"]
         .as_str()
-        .filter(|t| !t.trim().is_empty() && t.len() <= 100_000)
+        .filter(|t| {
+            (!t.trim().is_empty() || body["images"].as_array().is_some_and(|v| !v.is_empty()))
+                && t.len() <= 100_000
+        })
         .context("Enter a message of 1–100,000 bytes")?;
     if text.trim_start().starts_with('/') {
         bail!("슬래시 명령은 명령으로 실행하세요. /help에서 지원 명령을 확인할 수 있습니다.");
@@ -124,6 +127,7 @@ impl CodexSession {
     }
     pub(super) fn enqueue(&self, body: &Value) -> Result<Value> {
         let text = message_text(body)?;
+        self.message_input(body)?;
         if !self.connected() {
             bail!("연결이 종료되었습니다. 다시 연결한 뒤 추가하세요.");
         }
@@ -131,7 +135,7 @@ impl CodexSession {
         if live.queue.len() >= 20 {
             bail!("대기 메시지는 최대 20개입니다.");
         }
-        let entry = json!({"id":Uuid::new_v4().to_string(),"text":text});
+        let entry = json!({"id":Uuid::new_v4().to_string(),"text":text,"images":body.get("images").cloned().unwrap_or(json!([]))});
         live.queue.push_back(entry.clone());
         drop(live);
         self.publish_state();
@@ -153,7 +157,7 @@ impl CodexSession {
                 return;
             };
             self.publish_state();
-            if let Err(error) = self.start_text(entry["text"].as_str().unwrap_or("")).await {
+            if let Err(error) = self.start_message(&entry).await {
                 let mut live = self.state.lock().unwrap();
                 live.queue.push_front(entry);
                 live.queue_paused = true;
@@ -166,8 +170,39 @@ impl CodexSession {
             }
         }
     }
-    pub(super) async fn start_text(&self, text: &str) -> Result<Value> {
-        let result = self.rpc("turn/start", json!({"threadId":self.thread_id(),"input":[{"type":"text","text":text,"text_elements":[]}]})).await?;
+    pub(super) fn message_input(&self, body: &Value) -> Result<Vec<Value>> {
+        let text = message_text(body)?;
+        let mut input = Vec::new();
+        if !text.trim().is_empty() {
+            input.push(json!({"type":"text","text":text,"text_elements":[]}));
+        }
+        if let Some(images) = body.get("images") {
+            let images = images.as_array().context("Invalid attachments")?;
+            if images.len() > 8 {
+                bail!("이미지는 한 메시지에 최대 8개입니다.");
+            }
+            let session = self.state.lock().unwrap().upload_session.clone();
+            let mut seen = HashSet::new();
+            for id in images {
+                let id = id.as_str().context("Invalid image ID")?;
+                if !seen.insert(id) {
+                    bail!("Duplicate image");
+                }
+                let path = crate::images::path(&session, id)
+                    .context("임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.")?;
+                input.push(json!({"type":"localImage","path":path}));
+            }
+        }
+        Ok(input)
+    }
+    pub(super) async fn start_message(&self, body: &Value) -> Result<Value> {
+        let input = self.message_input(body)?;
+        let result = self
+            .rpc(
+                "turn/start",
+                json!({"threadId":self.thread_id(),"input":input}),
+            )
+            .await?;
         let mut live = self.state.lock().unwrap();
         if let Some(id) = result["turn"]["id"].as_str() {
             if result["turn"]["status"] == "inProgress" && !live.completed.contains(id) {
@@ -589,6 +624,50 @@ mod tests {
             h.snapshot()["settings"]["collaborationMode"]["mode"],
             "plan"
         );
+        h.close().await;
+    }
+    #[tokio::test]
+    async fn uploaded_images_become_native_image_inputs_and_survive_queuing() {
+        let (_f, h) = setup().await;
+        let session = Uuid::new_v4().simple().to_string()[..12].to_string();
+        h.bind_uploads(&session);
+        let upload =
+            crate::images::save(&session, "image/png", b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let body = json!({"op":"send","text":"","images":[upload["id"]]});
+        let expected = json!({"type":"localImage","path":upload["path"]});
+        let result = h.operation(&body).await.unwrap();
+        assert_eq!(result["turn"]["items"][0]["content"], json!([expected]));
+        h.operation(&json!({"op":"steer","text":"detail","images":[upload["id"]]}))
+            .await
+            .unwrap();
+        h.operation(&json!({"op":"queue","text":"next","images":[upload["id"]]}))
+            .await
+            .unwrap();
+        assert_eq!(
+            h.snapshot()["queue"]["items"][0]["images"],
+            json!([upload["id"]])
+        );
+        assert!(h
+            .message_input(&json!({"text":"","images":["/etc/passwd"]}))
+            .is_err());
+        assert!(h
+            .message_input(&json!({"text":"","images":[upload["path"]]}))
+            .is_err());
+        let foreign = crate::images::save(
+            &Uuid::new_v4().simple().to_string()[..12],
+            "image/png",
+            b"\x89PNG\r\n\x1a\nfixture",
+        )
+        .unwrap();
+        assert!(h
+            .message_input(&json!({"text":"","images":[foreign["id"]]}))
+            .is_err());
+        h.operation(&json!({"op":"interrupt"})).await.unwrap();
+        std::fs::remove_file(upload["path"].as_str().unwrap()).unwrap();
+        h.operation(&json!({"op":"queue/resume"})).await.unwrap();
+        assert_eq!(h.snapshot()["queue"]["paused"], true);
+        assert_eq!(h.snapshot()["queue"]["items"].as_array().unwrap().len(), 1);
+        std::fs::remove_file(foreign["path"].as_str().unwrap()).unwrap();
         h.close().await;
     }
     #[tokio::test]

@@ -84,3 +84,79 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
     }
     // Dropping a browser connection does not stop the turn or the shared daemon.
 }
+
+fn image_session(
+    state: &AppState,
+    id: &str,
+    upload: bool,
+) -> Result<orb_common::Session, (StatusCode, String)> {
+    let session = state
+        .registry
+        .get_session(id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    if session.mode != orb_common::SessionMode::Web
+        || session.tool != "codex"
+        || (upload && session.status != orb_common::SessionStatus::Running)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "실행 중인 Codex Web 세션에만 첨부할 수 있습니다.".into(),
+        ));
+    }
+    Ok(session)
+}
+pub async fn upload_image(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    bytes: axum::body::Bytes,
+) -> Response {
+    let session = match image_session(&state, &id, true) {
+        Ok(s) => s,
+        Err(e) => return e.into_response(),
+    };
+    let mime = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    match tokio::task::spawn_blocking(move || crate::images::save(&session.id, &mime, &bytes)).await
+    {
+        Ok(Ok(value)) => axum::Json(value).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error":e.to_string()})),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+pub async fn read_image(
+    State(state): State<AppState>,
+    Path((id, image)): Path<(String, String)>,
+) -> Response {
+    let session = match image_session(&state, &id, false) {
+        Ok(s) => s,
+        Err(e) => return e.into_response(),
+    };
+    let mime = match crate::images::mime(&image) {
+        Ok(m) => m,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || crate::images::read(&session.id, &image)).await {
+        Ok(Ok(bytes)) => (
+            [
+                ("content-type", mime),
+                ("x-content-type-options", "nosniff"),
+                ("cache-control", "private, no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        _ => (
+            StatusCode::NOT_FOUND,
+            "임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.",
+        )
+            .into_response(),
+    }
+}

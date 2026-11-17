@@ -66,6 +66,7 @@ impl SessionRegistry {
                 bail!("Working directory is not a directory");
             }
             let handle = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+            handle.bind_uploads(&session.id);
             let id = match handle.create(&session.cwd).await {
                 Ok(id) => id,
                 Err(error) => {
@@ -145,6 +146,7 @@ impl SessionRegistry {
             .get(&session.id)
             .map(|handle| handle.snapshot()["queue"].clone());
         let handle = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        handle.bind_uploads(&session.id);
         if let Some(queue) = previous_queue {
             handle.restore_queue(&queue);
         }
@@ -167,6 +169,7 @@ impl SessionRegistry {
                 // Codex has no saved conversation before the first message. Recreate only a known-empty thread.
                 let replacement =
                     crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+                replacement.bind_uploads(&session.id);
                 session.codex_thread_id = Some(replacement.create(&session.cwd).await?);
                 self.save_web_session(&session)?;
                 self.db.update_codex_thread(

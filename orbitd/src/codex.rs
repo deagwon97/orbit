@@ -39,6 +39,7 @@ enum Command {
 struct LiveState {
     connected: bool,
     thread_id: String,
+    upload_session: String,
     active: Option<String>,
     completed: HashSet<String>,
     approvals: HashMap<String, Value>,
@@ -57,6 +58,9 @@ pub struct CodexSession {
     sending: Arc<tokio::sync::Mutex<()>>,
 }
 impl CodexSession {
+    pub(crate) fn bind_uploads(&self, session: &str) {
+        self.state.lock().unwrap().upload_session = session.into();
+    }
     pub async fn connect(path: &Path) -> Result<Self> {
         let stream = timeout(Duration::from_secs(10), UnixStream::connect(path))
             .await?
@@ -211,7 +215,7 @@ impl CodexSession {
     }
     pub fn snapshot(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true}})
+        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true}})
     }
     pub async fn create(&self, cwd: &Path) -> Result<String> {
         let result = self
@@ -364,13 +368,17 @@ impl CodexSession {
                 if !self.connected() {
                     bail!("Codex connection is closed");
                 }
-                let text = controls::message_text(body)?;
+                let input = self.message_input(body)?;
                 let active = self.state.lock().unwrap().active.clone();
                 if let Some(active) = active {
                     if body["op"] != "steer" {
                         bail!("작업 중에는 즉시 반영 또는 대기열 추가를 선택하세요.");
                     }
-                    self.rpc("turn/steer", json!({"threadId":self.thread_id(),"expectedTurnId":active,"input":[{"type":"text","text":text,"text_elements":[]}]})).await?;
+                    self.rpc(
+                        "turn/steer",
+                        json!({"threadId":self.thread_id(),"expectedTurnId":active,"input":input}),
+                    )
+                    .await?;
                     return Ok(json!({"steered":true}));
                 }
                 if !self.state.lock().unwrap().queue.is_empty() {
@@ -381,7 +389,7 @@ impl CodexSession {
                     live.queue_paused = false;
                     live.queue_error = None;
                 }
-                let result = self.start_text(text).await?;
+                let result = self.start_message(body).await?;
                 drop(_guard);
                 self.drain_queue().await;
                 Ok(result)
@@ -601,13 +609,17 @@ pub(crate) mod tests {
                                 active_turn = format!("turn-{turn_seq}");
                                 active = true;
                                 ws.send(Message::Text(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"inProgress"}}}).to_string())).await.unwrap();
-                                if p["input"][0]["text"].as_str().unwrap().starts_with("fast") {
+                                if p["input"][0]["text"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .starts_with("fast")
+                                {
                                     active = false;
                                     ws.send(Message::Text(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":active_turn,"status":"completed"}}}).to_string())).await.unwrap();
                                 } else {
                                     ws.send(Message::Text(json!({"id":101,"method":"item/commandExecution/requestApproval","params":{"threadId":"test-thread","turnId":active_turn,"command":"echo test","availableDecisions":["accept","decline"]}}).to_string())).await.unwrap();
                                 }
-                                json!({"turn":{"id":active_turn,"status":"inProgress"}})
+                                json!({"turn":{"id":active_turn,"status":"inProgress","items":[{"id":format!("user-{turn_seq}"),"type":"userMessage","content":p["input"]}]}})
                             }
                             "turn/interrupt" => {
                                 active = false;

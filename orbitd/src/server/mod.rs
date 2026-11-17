@@ -4,7 +4,7 @@ pub mod ws;
 
 use crate::{auth::token::TokenConfig, session::registry::SessionRegistry};
 use axum::{
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::Response,
@@ -35,6 +35,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/sessions/:id/logs", get(api::get_logs))
         .route("/api/v1/sessions/:id/attach", get(ws::attach))
         .route("/api/v1/sessions/:id/codex", get(codex::attach))
+        .route(
+            "/api/v1/sessions/:id/images",
+            post(codex::upload_image).layer(DefaultBodyLimit::max(crate::images::MAX_BYTES)),
+        )
+        .route("/api/v1/sessions/:id/images/:image", get(codex::read_image))
         .route("/api/v1/fs/dirs", get(api::list_dirs).post(api::create_dir))
         .route("/api/v1/fs/entries", get(api::list_entries))
         .route("/api/v1/fs/files", get(api::read_file).put(api::write_file))

@@ -54,6 +54,18 @@ POST /api/v1/sessions
 
 구버전 orbitd에서는 capability를 확인해 새 명령과 실행 중 입력을 비활성화한다. 새 프론트와 함께 orbitd 바이너리를 교체해야 기능이 활성화된다.
 
+## 이미지 첨부
+
+입력창의 **+ → 이미지 선택**, 채팅 화면에 드래그 앤 드롭, 클립보드 이미지 붙여넣기를 지원한다. 모바일에서는 파일 선택기와 붙여넣기를 사용한다. PNG/JPEG/WebP/GIF를 파일당 10 MiB, 메시지당 8개까지 첨부한다. 업로드 중이거나 실패한 첨부가 있으면 전송을 막고 재시도·첨부 해제를 제공한다.
+
+이미지는 Orb API 컨테이너가 아닌 **선택한 orbitd 실행 호스트**의 `/tmp/orbit-codex-images-<uid>/<orb-session-id>/<image-uuid>.<확장자>`에 저장한다. 디렉터리는 0700, 파일은 0600이며 API 인증·세션 범위·파일 형식을 확인한다. 세션당 임시 저장 한도는 100 MiB / 128개다. 클라이언트는 업로드 ID만 전송하고 임의 경로를 지정할 수 없다.
+
+경로는 첨부 카드에서 확인·복사할 수 있고 Codex에는 경로 문자열만 적는 대신 `localImage` 입력으로 전달한다. 이미지 단독 입력, 실행 중 즉시 반영, 다음 턴 대기열에서도 같은 첨부를 보낸다. 전송에 실패하면 첨부와 입력을 유지한다. 대화 이력에도 세션별 인증을 거쳐 미리보기를 표시하고 Markdown 내보내기에는 이미지 경로를 포함한다.
+
+`POST /api/v1/sessions/:id/images`는 이미지 MIME의 바이너리를 받고 `{id,path,mime,size}`를 반환한다. `GET /api/v1/sessions/:id/images/:image`는 인증된 미리보기이며 임의 파일 읽기를 제공하지 않는다. WebSocket `send`·`steer`·`queue`의 `images`는 업로드 ID 배열이다. 새 orbitd의 `capabilities.images`가 있어야 첨부 UI가 활성화된다.
+
+첨부 해제는 메시지에서만 제외한다. 업로드 파일은 재연결·orbitd 재시작 이후에도 임시 파일이 남아 있는 동안 사용할 수 있다. `/tmp`는 영구 보관소가 아니므로 OS의 임시 파일 정리나 호스트 재부팅으로 사라질 수 있다. 삭제된 이미지는 다시 첨부해야 한다. 대기열 자체의 orbitd 재시작 제한은 동일하다.
+
 ## 저장과 생명주기
 
 Web 세션 메타데이터는 `$ORBIT_DATA_DIR/codex-sessions/<orb-session-id>.json`에 원자적으로 저장한다. 디렉터리 권한은 0700, 파일은 0600이다. Orb 세션 ID, 작업 폴더, 실행 방식, Codex thread ID, 상태를 보관하고 orbitd 재시작 시 복원한다. CLI 세션/PTY의 기존 인메모리 저장 동작은 변경하지 않는다.
@@ -95,3 +107,5 @@ Rust 테스트는 네이티브 Unix WebSocket 연결, thread 범위, 페이지 �
 `web/frontend/test/codex-ui.e2e.cjs`는 개발 Playwright 컨테이너에서 실행한다. 설정과 인증 토큰은 stdin JSON으로 전달한다. `inference: true`는 모델을 한 번 호출하므로 사용량이 발생한다. 실제 생성·응답·새로고침 복원·모바일과 구버전 capability 차단을 검사하고, 도구 실행 없는 WebSocket 테스트로 승인·파일 diff·질문 UI를 검사한다. 토큰을 명령 인수나 파일에 저장하지 않는다.
 
 `web/frontend/test/codex-commands-ui.e2e.cjs`는 실제 개발 데몬에서 명령 UI와 설정 적용을 검증하고, WebSocket fixture로 실행 중 입력·대기열을 확인한다. 설정/토큰은 같은 방식으로 stdin으로만 전달한다. 모델 추론을 호출하지 않는다.
+
+`web/frontend/test/codex-images-ui.e2e.cjs`는 파일 선택·드롭·붙여넣기·재시도·2 MiB 바이너리 왕복·모바일과 이미지 대기열을 확인한다. `inference: true`일 때 실제 Codex 이미지 입력과 새로고침 후 미리보기를 검증하며 모델 호출이 한 번 발생한다.

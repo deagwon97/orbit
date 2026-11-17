@@ -34,6 +34,7 @@ chrono.workspace = true
 orb-common = { path = "orb-common" }
 portable-pty = "0.9"
 rand = "0.9"
+libc = "0.2"
 rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
 serde.workspace = true
 serde_json.workspace = true

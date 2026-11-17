@@ -4,6 +4,7 @@ mod auth;
 mod codex;
 mod config;
 mod db;
+mod images;
 mod pty;
 mod server;
 mod session;

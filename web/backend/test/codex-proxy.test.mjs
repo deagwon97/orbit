@@ -23,6 +23,21 @@ test('Codex WebSocket proxy routes the selected session and forwards authenticat
     await new Promise(resolve => setTimeout(resolve, 20));
     if (i === 99) throw new Error('Proxy did not start');
   }
+  const bytes = Buffer.alloc(2 * 1024 * 1024, 7);
+  upstream.on('request', (req,res) => {
+    if (!req.url.includes('/images')) return;
+    assert.equal(req.headers.authorization, 'Bearer image-test');
+    if(req.method==='POST') {
+      assert.equal(req.url,'/api/v1/sessions/image-session/images');
+      assert.equal(req.headers['content-type'],'image/png');
+      const chunks=[];req.on('data',chunk=>chunks.push(chunk));req.on('end',()=>{assert.deepEqual(Buffer.concat(chunks),bytes);res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'image.png',path:'/tmp/example.png'}));});
+    } else { assert.equal(req.url,'/api/v1/sessions/image-session/images/image.png');res.setHeader('content-type','image/png');res.end(bytes); }
+  });
+  const headers={Authorization:'Bearer image-test','x-orbitd-url':`http://127.0.0.1:${upstream.address().port}`};
+  const uploaded=await fetch(`http://127.0.0.1:${port}/api/v1/sessions/image-session/images`,{method:'POST',headers:{...headers,'content-type':'image/png'},body:bytes});
+  assert.equal(uploaded.status,200);assert.equal((await uploaded.json()).path,'/tmp/example.png');
+  const image=await fetch(`http://127.0.0.1:${port}/api/v1/sessions/image-session/images/image.png`,{headers});
+  assert.equal(image.headers.get('content-type'),'image/png');assert.equal(image.headers.get('x-content-type-options'),'nosniff');assert.deepEqual(Buffer.from(await image.arrayBuffer()),bytes);
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/sessions/session-123/codex?token=example-token&orbitd=${encodeURIComponent(`http://127.0.0.1:${upstream.address().port}`)}`);
   t.after(() => ws.terminate()); await once(ws, 'open');
   const response = once(ws, 'message'); ws.send(JSON.stringify({ id: 1, op: 'history' }));
