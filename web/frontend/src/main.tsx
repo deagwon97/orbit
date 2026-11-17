@@ -1530,9 +1530,9 @@ function SessionPane(props: {
     setMode("attach");
   }, [props.session.key]);
 
-  return <div className="terminalBox">
+  return <div className={`terminalBox${props.session.mode === "web" ? " codexSessionPane" : ""}`}>
     <div className="terminalTop">
-      <div className="sessionTitle"><span>{props.session.name}</span><small>{props.session.cwd}</small></div>
+      <div className="sessionTitle"><span>{props.session.name}</span><small title={props.session.connection.url}>{props.session.connection.label} · {props.session.mode === "web" ? "Web" : "CLI"} · {props.session.cwd}</small></div>
       {props.session.mode === "web" ? <span className="pill running">Codex Web</span> : <>
       <button className={mode === "attach" ? "activeDark" : ""} onClick={() => setMode("attach")}><TerminalIcon size={14} />Attach</button>
       <button className={mode === "logs" ? "activeDark" : ""} onClick={() => setMode("logs")}><FileText size={14} />Logs</button>
@@ -1540,6 +1540,7 @@ function SessionPane(props: {
       <button onClick={props.onDetach}><LogOut size={14} />Detach</button>
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
+    {props.session.mode !== "web" && <div className="terminalLocation" aria-label="현재 세션 실행 위치"><span>CLI</span><strong title={props.session.connection.url}>{props.session.connection.label}</strong><code title={props.session.cwd}>{props.session.cwd}</code></div>}
     {props.session.mode === "web" ? <CodexChat key={props.session.key} session={props.session} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
   </div>;
 }

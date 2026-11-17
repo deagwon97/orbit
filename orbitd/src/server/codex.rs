@@ -46,7 +46,7 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
     loop {
         let outgoing = tokio::select! {
             event = events.recv() => match event {
-                Ok(event) => event,
+                Ok(event) => { if event["type"] == "drain" { continue; } event },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => json!({"type":"resync"}),
                 Err(_) => break,
             },
@@ -54,13 +54,13 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                 let Some(Ok(Message::Text(text))) = message else { break; };
                 if text.len() > 256_000 { break; }
                 let Ok(body) = serde_json::from_str::<Value>(&text) else { continue; };
-                let allowed = state.registry.get_session(&id).map(|session| body["op"] == "history" || session.status == orb_common::SessionStatus::Running).unwrap_or(false);
+                let allowed = state.registry.get_session(&id).map(|session| crate::codex::CodexSession::read_operation(&body) || session.status == orb_common::SessionStatus::Running).unwrap_or(false);
                 if !allowed {
                     if send.send(Message::Text(json!({"type":"error","id":body["id"],"error":"This session is stopped or removed"}).to_string())).await.is_err() { break; }
                     continue;
                 }
                 // Mark before submitting: after a crash, an attempted input must never be mistaken for an empty conversation.
-                if body["op"] == "send" {
+                if ["send", "steer", "queue"].contains(&body["op"].as_str().unwrap_or("")) || (body["op"] == "command" && body["command"].as_str().is_some_and(|c| c.trim() == "/compact" || c.starts_with("/review"))) {
                     if let Err(error) = state.registry.mark_web_input(&id) {
                         if send.send(Message::Text(json!({"type":"error","id":body["id"],"error":error.to_string()}).to_string())).await.is_err() { break; }
                         continue;

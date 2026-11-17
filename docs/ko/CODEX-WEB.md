@@ -6,7 +6,7 @@
 - CLI: 기존 orbitd PTY, xterm Attach, 터미널 로그 경로를 사용한다.
 - Web: 선택한 orbitd 호스트의 기존 Codex App Server 데몬에 Unix WebSocket으로 연결한다. PTY와 Codex CLI 프로세스를 생성하지 않는다.
 - 채팅에 포함: 입력, 스트리밍, 페이지 이력, 요약·계획·도구 출력, 중단, 명령/파일 승인, 사용자 질문 응답.
-- 세션 목록·생성·삭제·파일 탐색·서버 선택은 기존 Orb 화면을 사용한다. 별도 Codex 계정 화면, 모델/권한/Fast 설정, 사용량 명령, 입력 대기열은 포함하지 않는다.
+- 세션 목록·생성·삭제·파일 탐색·서버 선택은 기존 Orb 화면을 사용한다. 별도 Codex 계정 로그인 화면은 제공하지 않는다. 대화 안에서 모델·권한·Fast 설정과 사용량 조회, 추가 입력·대기열을 사용한다.
 - Web의 새 대화는 작업 폴더 수정 가능·필요 시 승인 정책으로 생성한다. 세션별 Environment 입력은 지원하지 않으며 데몬의 실행 환경을 사용한다.
 
 ## 서버 준비
@@ -32,7 +32,27 @@ POST /api/v1/sessions
 
 응답은 `mode: "web"`, `pid: null`, `codex_thread_id`를 포함한다. WebSocket `/api/v1/sessions/:id/codex`는 기존 Bearer 인증을 사용하며, Web 백엔드가 선택한 orbitd로 연결과 인증을 전달한다. 브라우저는 세션 ID로만 접근하고 임의 RPC·소켓 경로·Codex thread ID를 지정할 수 없다.
 
-허용 작업은 `history`, `send`, `interrupt`, `reply`다. 새 입력은 현재 턴이 끝난 뒤 보낼 수 있다. 복수 브라우저의 중복 입력과 승인 응답은 서버에서 검사한다. 서버가 제공하는 추론 요약만 표시하며 raw reasoning은 표시하지 않는다.
+허용 작업은 `history`, `send`, `steer`, `queue`, `queue/remove`, `queue/resume`, `command`, `interrupt`, `reply`다. 실행 중 Enter는 현재 턴에 추가 지시를 반영하고, Tab 또는 다음 턴 버튼은 완료 후 순차 전송할 대기열에 넣는다. 복수 브라우저의 중복 입력과 승인 응답은 서버에서 검사한다. 서버가 제공하는 추론 요약만 표시하며 raw reasoning은 표시하지 않는다.
+
+## 대화 명령과 입력
+
+`/`를 입력하면 서버가 제공하는 명령 목록이 열린다. 방향키로 선택하고 Tab으로 완성한다. 지원하지 않는 명령은 모델에 전송하지 않고 입력창에 남긴다.
+
+- `/status`: 현재 세션 설정, 토큰 사용량.
+- `/model [모델] [추론 강도]`: 실제 사용 가능한 모델 목록과 추론 강도 선택.
+- `/permissions [read-only|workspace-write|full-access]`: 현재 대화의 권한 변경. 전체 접근은 선택 창에서 명시적으로 확인한다.
+- `/fast [on|off]`, `/usage`: Fast 설정과 계정 사용 한도. 서버 정책과 모델이 지원할 때만 Fast를 적용한다.
+- `/plan [on|off]`, `/compact`, `/review [지침]`: Plan, 문맥 압축, 변경 리뷰. 실행 중인 작업이 끝난 뒤 사용한다.
+- `/rename 이름`, `/pwd`, `/skills`, `/mcp`, `/ps`, `/stop`: 대화 이름·폴더·스킬·MCP·현재 대화의 백그라운드 터미널 조회/정리.
+- `/copy`, `/export`, `/help`: 마지막 답변 복사, 대화 Markdown 다운로드, 지원 명령 안내.
+
+모델·권한·Fast·상태 조회는 작업 중에도 사용할 수 있다. 설정은 해당 Codex thread에만 적용한다. 임의 RPC나 전역 설정 파일 쓰기는 허용하지 않는다. CLI의 계정 로그인, TUI 전환 등 모든 명령을 지원하는 것은 아니며 실제 지원 목록은 `/help`로 확인한다. 종료된 세션에서는 조회 명령만 허용한다.
+
+대기열은 최대 20개이며 항목별 취소가 가능하다. 중단·실패·연결 종료 시 자동 전송을 멈추고, 사용자가 이력을 확인한 뒤 재시작한다. 브라우저를 닫아도 orbitd가 대기열을 처리하지만 **orbitd 프로세스를 재시작하면 아직 보내지 않은 대기열은 사라진다**.
+
+화면 상단에 실행 호스트·작업 폴더·Web 구분을, 입력창 아래에 모델·추론 강도·Fast 상태를 표시한다. 모바일 키보드 버튼은 입력창에 포커스를 주고 Tab·줄바꿈·명령·Esc 버튼을 연다. CLI의 터미널 단축키 바도 유지한다. 출력은 최대 높이와 위·아래 접기 버튼을 유지하며 빈 추론 요약은 표시하지 않는다.
+
+구버전 orbitd에서는 capability를 확인해 새 명령과 실행 중 입력을 비활성화한다. 새 프론트와 함께 orbitd 바이너리를 교체해야 기능이 활성화된다.
 
 ## 저장과 생명주기
 
@@ -73,3 +93,5 @@ npm run build --prefix web/frontend
 Rust 테스트는 네이티브 Unix WebSocket 연결, thread 범위, 페이지 이력, 첫 입력 전 빈 이력, 승인 검증·중복 응답, 중단, 완료/응답 순서 역전, 저장·복원, 기존 CLI PTY 경로를 확인한다. Web 프록시 테스트는 선택한 호스트와 Bearer 전달을 검사하고, 프론트 테스트는 이력/스트리밍 병합과 승인 복원을 검사한다.
 
 `web/frontend/test/codex-ui.e2e.cjs`는 개발 Playwright 컨테이너에서 실행한다. 설정과 인증 토큰은 stdin JSON으로 전달한다. `inference: true`는 모델을 한 번 호출하므로 사용량이 발생한다. 실제 생성·응답·새로고침 복원·모바일과 구버전 capability 차단을 검사하고, 도구 실행 없는 WebSocket 테스트로 승인·파일 diff·질문 UI를 검사한다. 토큰을 명령 인수나 파일에 저장하지 않는다.
+
+`web/frontend/test/codex-commands-ui.e2e.cjs`는 실제 개발 데몬에서 명령 UI와 설정 적용을 검증하고, WebSocket fixture로 실행 중 입력·대기열을 확인한다. 설정/토큰은 같은 방식으로 stdin으로만 전달한다. 모델 추론을 호출하지 않는다.

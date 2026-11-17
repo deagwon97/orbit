@@ -1096,3 +1096,9 @@ button.row { min-height: 42px; justify-content: stretch; }
 .ansiup .ansi-bright-magenta { color: #ad7fa8; }
 .ansiup .ansi-bright-cyan { color: #34e2e2; }
 .ansiup .ansi-bright-white { color: #eeeeec; }
+
+.codexSessionPane .terminalTop { background:#202124; border-bottom-color:#303238; }.codexSessionPane .terminalTop button { background:#303238; border-color:#454850; border-radius:18px; }.codexSessionPane .sessionTitle small { color:#9aa0a6; }.codexSessionPane .pill.running { background:#303b50; color:#a8c7fa; }
+@media(max-width:700px) { .mobileDetailOpen:has(.codexChat) .mobileChromeToggle { width:36px; min-height:36px; top:8px; right:12px; border-radius:50%; box-shadow:none; background:#303238; border-color:#454850; color:#e8eaed; } }
+
+.terminalLocation { display:none; }
+@media(max-width:700px) { .terminalLocation { display:flex; align-items:center; gap:8px; padding:10px 60px 10px 12px; background:#1a1f22; font-size:10px; color:#bdc1c6; min-width:0; }.terminalLocation span { background:#303b50; color:#a8c7fa; padding:2px 6px; border-radius:5px; }.terminalLocation strong { font-weight:500; flex:none; }.terminalLocation code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#b7cdb6; } }

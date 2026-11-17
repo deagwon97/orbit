@@ -1,7 +1,7 @@
 export type CodexItem = { id: string; type: string; [key: string]: any };
 export function newChatState() {
   return { items: new Map<string, CodexItem>(), order: [] as string[], versions: new Map<string, number>(), revision: 0,
-    lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null };
+    lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null, settings: {} as any, tokenUsage: null as any, capabilities: {} as any, queue: { items: [] as any[], paused: false, error: null as string | null, version: 0 } };
 }
 export type ChatState = ReturnType<typeof newChatState>;
 export function putItem(state: ChatState, item: CodexItem) {
@@ -12,6 +12,8 @@ export function putItem(state: ChatState, item: CodexItem) {
 }
 export function observe(state: ChatState, message: any) {
   const p = message.params || {}, method = message.method;
+  if (method === 'thread/settings/updated') state.settings = p.threadSettings;
+  if (method === 'thread/tokenUsage/updated') state.tokenUsage = p.tokenUsage;
   if (method === 'turn/started') {
     state.active = p.turn.id; state.lifecycle = ++state.revision;
     for (const item of p.turn.items || []) putItem(state, { ...item, turnId: p.turn.id });
@@ -48,6 +50,10 @@ export function observe(state: ChatState, message: any) {
   }
 }
 export function applyLiveState(state: ChatState, live: any, since: number) {
+  if (live.settings) state.settings = live.settings;
+  if (live.tokenUsage) state.tokenUsage = live.tokenUsage;
+  if (live.capabilities) state.capabilities = live.capabilities;
+  if (live.queue && (live.queue.version || 0) >= state.queue.version) state.queue = live.queue;
   if (state.lifecycle <= since) state.active = live.activeTurn && !state.completed.has(live.activeTurn) ? live.activeTurn : null;
   if (state.approvalsRevision <= since) state.approvals = new Map((live.approvals || []).map((r: any) => [JSON.stringify(r.id), r]));
 }

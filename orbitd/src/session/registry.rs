@@ -141,7 +141,13 @@ impl SessionRegistry {
         if let Some(handle) = web.get(&session.id).filter(|handle| handle.connected()) {
             return Ok(handle.clone());
         }
+        let previous_queue = web
+            .get(&session.id)
+            .map(|handle| handle.snapshot()["queue"].clone());
         let handle = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        if let Some(queue) = previous_queue {
+            handle.restore_queue(&queue);
+        }
         if let Err(error) = handle
             .resume(
                 session
