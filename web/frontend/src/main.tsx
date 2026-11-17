@@ -1,5 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 
+import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
@@ -228,6 +229,8 @@ const cmHighlight = HighlightStyle.define([
 ]);
 
 type Session = {
+  mode?: "cli" | "web";
+  codex_thread_id?: string | null;
   id: string;
   name: string;
   tool: string;
@@ -239,7 +242,7 @@ type Session = {
   exit_code?: number | null;
 };
 
-type AgentBackend = { id: string; name: string; command: string; args: string[] };
+type AgentBackend = { id: string; name: string; command: string; args: string[]; modes?: ("cli" | "web")[] };
 type OrbitConnection = { id: string; label: string; url: string; token: string };
 type ConnectedSession = Session & { connection: OrbitConnection; key: string };
 type LogLine = { id: number; timestamp: string; content: string };
@@ -598,10 +601,12 @@ function App() {
   const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
   const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
-  const [backends, setBackends] = useState<AgentBackend[]>(defaultBackends);
+  const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const showAll = true;
   const [tool, setTool] = useState("codex");
+  const [sessionMode, setSessionMode] = useState<"cli" | "web">("cli");
+  useEffect(() => setSessionMode("cli"), [activeConnectionId]);
   const [name, setName] = useState("");
   const [cwd, setCwd] = useState("");
   const [env, setEnv] = useState("");
@@ -628,6 +633,7 @@ function App() {
   const activeConnection = useMemo(() => {
     return connections.find((connection) => connection.id === activeConnectionId) ?? connections[0] ?? null;
   }, [connections, activeConnectionId]);
+  const backends = backendCatalog[activeConnection?.id || ""] || defaultBackends;
   const selected = useMemo(() => sessions.find((session) => session.key === selectedKey) ?? null, [sessions, selectedKey]);
   const layoutStyle = { "--master-pane-width": `${masterPaneWidth}px` } as React.CSSProperties;
 
@@ -672,7 +678,7 @@ function App() {
     if (!activeConnection) return;
     try {
       const items = await api("/api/v1/backends", {}, activeConnection) as AgentBackend[];
-      if (items.length > 0) setBackends(items);
+      if (items.length > 0) setBackendCatalog(current => ({ ...current, [activeConnection.id]: items }));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     }
@@ -700,7 +706,8 @@ function App() {
     if (!activeConnection) return;
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { tool, env: parseEnv(env) };
+      if (sessionMode === "web" && (tool !== "codex" || !backends.find(backend => backend.id === tool)?.modes?.includes("web"))) throw new Error("This orbitd does not support Codex Web yet");
+      const body: Record<string, unknown> = { tool, mode: sessionMode, env: sessionMode === "web" ? {} : parseEnv(env) };
       if (name.trim()) body.name = name.trim();
       if (cwd.trim()) body.cwd = cwd.trim();
       const session = await api("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }, activeConnection) as Session;
@@ -882,7 +889,7 @@ function App() {
               <span title={session.id}>{session.id}</span>
               <span title={session.name}>{session.name}</span>
               <span>{session.tool}</span>
-              <span className={`pill ${session.status}`}>{session.status}</span>
+              <span className={`pill ${session.status}`}>{session.mode === "web" ? "web · " : ""}{session.status}</span>
               <span>{session.pid ?? "-"}</span>
             </button>)}
           </div>
@@ -908,7 +915,9 @@ function App() {
       env={env}
       attachAfterRun={attachAfterRun}
       busy={busy}
-      onTool={setTool}
+      sessionMode={sessionMode}
+      onSessionMode={setSessionMode}
+      onTool={(value) => { setTool(value); setSessionMode("cli"); }}
       onName={setName}
       onCwd={setCwd}
       onEnv={setEnv}
@@ -1044,6 +1053,8 @@ function NewSessionModal(props: {
   connection: OrbitConnection;
   backends: AgentBackend[];
   tool: string;
+  sessionMode: "cli" | "web";
+  onSessionMode: (value: "cli" | "web") => void;
   name: string;
   cwd: string;
   env: string;
@@ -1071,6 +1082,14 @@ function NewSessionModal(props: {
           {props.backends.map((backend) => <option value={backend.id} key={backend.id}>{backend.name || backend.id}</option>)}
         </select>
       </label>
+      {props.tool === "codex" && <label className="fieldLabel">
+        <span>Open with</span>
+        <select value={props.sessionMode} onChange={event => props.onSessionMode(event.target.value as "cli" | "web")}>
+          <option value="cli">CLI · Terminal</option>
+          <option value="web" disabled={!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web")}>Web · Chat</option>
+        </select>
+        {!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web") && <small>Web mode requires an updated orbitd connected to a Codex daemon.</small>}
+      </label>}
       <label className="fieldLabel">
         <span>Name</span>
         <input placeholder="optional session name" value={props.name} onChange={(event) => props.onName(event.target.value)} />
@@ -1082,10 +1101,10 @@ function NewSessionModal(props: {
           <button type="button" title="Browse folders" onClick={props.onBrowse}><FolderOpen size={16} /></button>
         </div>
       </label>
-      <label className="fieldLabel">
+      {props.sessionMode === "cli" && <label className="fieldLabel">
         <span>Environment</span>
         <input placeholder="KEY=VALUE" value={props.env} onChange={(event) => props.onEnv(event.target.value)} />
-      </label>
+      </label>}
       <label className="check"><input type="checkbox" checked={props.attachAfterRun} onChange={(event) => props.onAttachAfterRun(event.target.checked)} />Attach after run</label>
       <div className="modalActions">
         <button type="button" onClick={props.onClose}>Cancel</button>
@@ -1514,12 +1533,14 @@ function SessionPane(props: {
   return <div className="terminalBox">
     <div className="terminalTop">
       <div className="sessionTitle"><span>{props.session.name}</span><small>{props.session.cwd}</small></div>
+      {props.session.mode === "web" ? <span className="pill running">Codex Web</span> : <>
       <button className={mode === "attach" ? "activeDark" : ""} onClick={() => setMode("attach")}><TerminalIcon size={14} />Attach</button>
       <button className={mode === "logs" ? "activeDark" : ""} onClick={() => setMode("logs")}><FileText size={14} />Logs</button>
+      </>}
       <button onClick={props.onDetach}><LogOut size={14} />Detach</button>
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
-    {mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
+    {props.session.mode === "web" ? <CodexChat key={props.session.key} session={props.session} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
   </div>;
 }
 

@@ -48,8 +48,23 @@ impl std::str::FromStr for SessionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionMode {
+    #[default]
+    Cli,
+    Web,
+}
+impl SessionMode {
+    pub fn as_str(self) -> &'static str { match self { Self::Cli => "cli", Self::Web => "web" } }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub mode: SessionMode,
+    #[serde(default)]
+    pub codex_thread_id: Option<String>,
     pub id: String,
     pub name: String,
     pub tool: ToolType,
@@ -63,6 +78,8 @@ pub struct Session {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
+    #[serde(default)]
+    pub mode: SessionMode,
     pub tool: ToolType,
     pub name: Option<String>,
     pub cwd: Option<PathBuf>,

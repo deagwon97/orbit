@@ -1,6 +1,7 @@
 mod adapter;
 mod audit;
 mod auth;
+mod codex;
 mod config;
 mod db;
 mod pty;

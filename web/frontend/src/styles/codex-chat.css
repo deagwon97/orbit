@@ -1,0 +1,34 @@
+.codexChat { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; background:#fff; color:#24352d; }
+.codexConnection { display:flex; justify-content:space-between; align-items:center; padding:8px 20px; border-bottom:1px solid #edf1ee; color:#7a8c81; font-size:11px; }
+.codexConnection button { font-size:11px; min-height:26px; }
+.codexMessages { flex:1; min-height:0; overflow:auto; padding:22px max(20px, calc((100% - 900px) / 2)); overscroll-behavior:contain; overflow-wrap:anywhere; }
+.codexMessage { margin:0 0 25px; line-height:1.8; font-size:14px; }
+.codexMessage.userMessage { margin-left:12%; padding:11px 16px; border-radius:12px; background:#f0f5f2; }
+.codexMessage.system { color:#946148; font-size:12px; }
+.codexMessage small { display:block; font-weight:600; color:#89958e; margin-bottom:7px; }
+.codexProse { white-space:pre-wrap; }
+.codexCode { margin:12px 0; min-width:0; }
+.codexCode pre { white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:280px; margin:0; border:1px solid #e0e8e3; padding:13px; background:#f6f8f7; border-radius:7px; font:12px/1.7 ui-monospace,monospace; }
+.codexCode.expanded pre { max-height:none; }
+.codexCode button { width:100%; min-height:28px; font-size:11px; background:#f1f5f3; border-color:#e0e8e3; }
+.codexWork { margin:17px 0; font:12px/1.65 ui-monospace,monospace; color:#7a8780; min-width:0; }
+.codexWorkHeading { display:flex; gap:8px; align-items:baseline; min-width:0; }
+.codexWorkHeading strong { flex-shrink:0; color:#45564b; }
+.codexDot { display:inline-block; align-self:center; flex:none; width:6px; height:6px; border-radius:50%; background:#79a88a; }
+.codexWork.running .codexDot { box-shadow:0 0 0 3px #e6f2eb; }
+.codexWork.failed .codexDot { background:#c67260; }
+.codexWork button { border:0; background:none; color:#839389; padding:0; min-height:24px; font:inherit; font-size:11px; }
+.codexWorkHeading > button:last-child:not(.codexCommand) { margin-left:auto; }
+.codexWork .codexCommand { flex:1; display:block; min-width:0; color:#367f99; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.codexWorkBody { border-left:1px solid #e2e9e5; padding-left:12px; margin:5px 0 0 17px; min-width:0; }
+.codexWorkBody pre { margin:5px 0; padding:0; background:none; font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
+.codexWorkBody .codexOutputPreview { max-height:5em; white-space:pre; overflow:hidden; }
+.codexWorkBody > button { display:block; }
+.codexAction { display:flex; gap:10px; min-width:0; }.codexAction span:first-child { color:#367f99; flex-shrink:0; }.codexAction span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.codexFile { color:#367f99; }.codexWorking { display:flex; align-items:center; gap:10px; padding:10px 0; font-size:12px; color:#809587; }
+.codexComposerArea { padding:12px max(20px, calc((100% - 900px) / 2)) 16px; }.codexComposerArea > small { display:block; margin-top:6px; color:#98a49d; font-size:10px; }
+.codexComposer { border:1px solid #d7e2db; border-radius:12px; padding:12px; }.codexComposer textarea { width:100%; min-height:70px; max-height:180px; border:0; outline:none; resize:vertical; background:transparent; color:inherit; }.codexComposer > div { display:flex; justify-content:flex-end; gap:8px; }.codexComposer button { font-size:12px; }
+.codexError { display:flex; justify-content:space-between; align-items:center; gap:8px; background:#fff3ea; padding:8px 12px; border-radius:7px; margin-bottom:8px; font-size:12px; overflow-wrap:anywhere; }.codexError button { flex-shrink:0; }
+.codexApproval { border:1px solid #d6e5db; background:#f2f8f4; border-radius:9px; padding:12px; margin-bottom:10px; max-height:40vh; overflow:auto; font-size:13px; }.codexApproval label { display:block; margin:10px 0; }.codexApproval input { display:block; width:100%; margin:7px 0; }.codexApproval button { font-size:12px; margin:4px 5px 4px 0; }.codexApprovalActions { display:flex; flex-wrap:wrap; gap:5px; }
+.codexOlder,.codexLatest { display:block; margin:0 auto 12px; font-size:11px; min-height:28px; }.codexEmpty { color:#93a398; text-align:center; padding:60px 0; font-size:13px; }
+@media(max-width:700px) { .codexMessages { padding:15px; }.codexComposerArea { padding:10px 15px; }.codexMessage { font-size:13px; }.codexWork { font-size:11px; }.codexWork .codexCommand { font-size:11px; }.codexConnection { padding:7px 15px; } }

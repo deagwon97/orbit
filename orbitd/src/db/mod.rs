@@ -27,7 +27,9 @@ impl Db {
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 last_attached_at TEXT,
-                exit_code INTEGER
+                exit_code INTEGER,
+                mode TEXT NOT NULL DEFAULT 'cli',
+                codex_thread_id TEXT
             );
             CREATE TABLE IF NOT EXISTS session_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +46,7 @@ impl Db {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO sessions (id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO sessions (id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code, mode, codex_thread_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 session.id,
                 session.name,
@@ -54,12 +56,21 @@ impl Db {
                 session.status.to_string(),
                 session.created_at.to_rfc3339(),
                 session.last_attached_at.map(|v| v.to_rfc3339()),
-                session.exit_code
+                session.exit_code,
+                session.mode.as_str(),
+                session.codex_thread_id
             ],
         )?;
         Ok(())
     }
 
+    pub fn update_codex_thread(&self, id: &str, thread: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE sessions SET codex_thread_id = ?2 WHERE id = ?1",
+            params![id, thread],
+        )?;
+        Ok(())
+    }
     pub fn update_runtime(
         &self,
         id: &str,
@@ -84,7 +95,7 @@ impl Db {
 
     pub fn list_sessions(&self, filter: &ListSessionsQuery) -> Result<Vec<Session>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code FROM sessions ORDER BY created_at DESC")?;
+        let mut stmt = conn.prepare("SELECT id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code, mode, codex_thread_id FROM sessions ORDER BY created_at DESC")?;
         let rows = stmt.query_map([], row_to_session)?;
         let mut out = Vec::new();
         for row in rows {
@@ -113,7 +124,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code FROM sessions WHERE id = ?1 OR name = ?1 LIMIT 1",
+                "SELECT id, name, tool, pid, cwd, status, created_at, last_attached_at, exit_code, mode, codex_thread_id FROM sessions WHERE id = ?1 OR name = ?1 LIMIT 1",
                 [ident],
                 row_to_session,
             )
@@ -199,16 +210,19 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, content FROM session_logs WHERE session_id = ?1 AND id > ?2 AND id <= ?3 ORDER BY id ASC LIMIT ?4",
         )?;
-        let rows = stmt.query_map(params![session.id, after, until, (limit + 1) as i64], |row| {
-            let ts: String = row.get(1)?;
-            Ok(LogLine {
-                id: row.get(0)?,
-                timestamp: DateTime::parse_from_rfc3339(&ts)
-                    .unwrap()
-                    .with_timezone(&Utc),
-                content: row.get(2)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![session.id, after, until, (limit + 1) as i64],
+            |row| {
+                let ts: String = row.get(1)?;
+                Ok(LogLine {
+                    id: row.get(0)?,
+                    timestamp: DateTime::parse_from_rfc3339(&ts)
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    content: row.get(2)?,
+                })
+            },
+        )?;
         let mut lines = rows.collect::<Result<Vec<_>, _>>()?;
         let has_more = lines.len() > limit;
         if has_more {
@@ -245,5 +259,11 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
                 .with_timezone(&Utc)
         }),
         exit_code: row.get(8)?,
+        mode: if row.get::<_, String>(9)? == "web" {
+            orb_common::SessionMode::Web
+        } else {
+            orb_common::SessionMode::Cli
+        },
+        codex_thread_id: row.get(10)?,
     })
 }

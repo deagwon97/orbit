@@ -14,6 +14,7 @@ const ENV_TOKEN_PATH: &str = "ORBITD_TOKEN_PATH";
 #[derive(Debug, Clone)]
 pub struct Config {
     pub listen: String,
+    pub codex_socket: PathBuf,
     pub config_path: PathBuf,
     pub data_dir: PathBuf,
     pub session_logs_dir: PathBuf,
@@ -40,16 +41,27 @@ fn default_token_path() -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let data_dir = PathBuf::from(&home).join(".local/share/orbit");
+        let data_dir = std::env::var_os("ORBIT_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&home).join(".local/share/orbit"));
         let session_logs_dir = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("tmp");
 
         // Get PATH from user's shell if available, otherwise from current env
-        let process_path = get_user_path().unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
+        let process_path =
+            get_user_path().unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
 
         Self {
             listen: "127.0.0.1:7777".into(),
+            codex_socket: std::env::var_os("ORBIT_CODEX_SOCKET")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::var_os("CODEX_HOME")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from(&home).join(".codex"))
+                        .join("app-server-control/app-server-control.sock")
+                }),
             audit_path: data_dir.join("audit.jsonl"),
             token_path: default_token_path(),
             process_path,
@@ -91,10 +103,14 @@ fn get_user_path() -> Result<String, Box<dyn std::error::Error>> {
                     let line = line.trim();
                     if line.starts_with("export PATH=") || line.starts_with("PATH=") {
                         if let Some(eq_pos) = line.find('=') {
-                            let path_value = line[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+                            let path_value = line[eq_pos + 1..]
+                                .trim()
+                                .trim_matches('"')
+                                .trim_matches('\'');
                             if !path_value.is_empty() {
                                 // Expand $HOME and ~
-                                let expanded = path_value.replace("$HOME", &home).replace("~", &home);
+                                let expanded =
+                                    path_value.replace("$HOME", &home).replace("~", &home);
                                 return Ok(expanded);
                             }
                         }

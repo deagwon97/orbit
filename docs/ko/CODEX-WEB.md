@@ -1,0 +1,75 @@
+# Codex 세션의 CLI / Web 실행 방식
+
+새 Codex 세션을 만들 때 **Open with → CLI · Terminal / Web · Chat**을 선택한다.
+기존 세션과 `mode`를 생략한 API 요청은 CLI로 동작한다. 생성 후 실행 방식 변경과 기존 CLI 대화의 Web 인수는 제공하지 않는다.
+
+- CLI: 기존 orbitd PTY, xterm Attach, 터미널 로그 경로를 사용한다.
+- Web: 선택한 orbitd 호스트의 기존 Codex App Server 데몬에 Unix WebSocket으로 연결한다. PTY와 Codex CLI 프로세스를 생성하지 않는다.
+- 채팅에 포함: 입력, 스트리밍, 페이지 이력, 요약·계획·도구 출력, 중단, 명령/파일 승인, 사용자 질문 응답.
+- 세션 목록·생성·삭제·파일 탐색·서버 선택은 기존 Orb 화면을 사용한다. 별도 Codex 계정 화면, 모델/권한/Fast 설정, 사용량 명령, 입력 대기열은 포함하지 않는다.
+- Web의 새 대화는 작업 폴더 수정 가능·필요 시 승인 정책으로 생성한다. 세션별 Environment 입력은 지원하지 않으며 데몬의 실행 환경을 사용한다.
+
+## 서버 준비
+
+orbitd와 Codex 데몬은 같은 사용자 권한으로 실행한다. 이미 실행 중인 데몬에만 연결하며 자동 기동·업데이트·독립 서버 fallback은 하지 않는다.
+
+```sh
+codex app-server daemon version
+codex app-server daemon start  # 아직 실행하지 않은 경우에만
+```
+
+| 환경 변수 | 의미 |
+| --- | --- |
+| `ORBIT_CODEX_SOCKET` | Codex 데몬 소켓. 기본은 `$CODEX_HOME/app-server-control/app-server-control.sock`, CODEX_HOME 미설정 시 `~/.codex` 기준 |
+| `ORBIT_DATA_DIR` | Orbit 데이터 디렉터리. 기본 `~/.local/share/orbit` |
+
+`GET /api/v1/backends`는 `modes`를 제공한다. Codex 소켓이 있으면 `codex`는 `["cli","web"]`, 나머지는 `["cli"]`다. 구버전 서버나 소켓이 없는 서버에서는 Web 선택을 막는다. 소켓 존재 확인 이후 실제 연결 실패도 사용자에게 표시하며 CLI 세션으로 바꾸지 않는다.
+
+```json
+POST /api/v1/sessions
+{"tool":"codex","mode":"web","name":"작업","cwd":"/absolute/project","env":{}}
+```
+
+응답은 `mode: "web"`, `pid: null`, `codex_thread_id`를 포함한다. WebSocket `/api/v1/sessions/:id/codex`는 기존 Bearer 인증을 사용하며, Web 백엔드가 선택한 orbitd로 연결과 인증을 전달한다. 브라우저는 세션 ID로만 접근하고 임의 RPC·소켓 경로·Codex thread ID를 지정할 수 없다.
+
+허용 작업은 `history`, `send`, `interrupt`, `reply`다. 새 입력은 현재 턴이 끝난 뒤 보낼 수 있다. 복수 브라우저의 중복 입력과 승인 응답은 서버에서 검사한다. 서버가 제공하는 추론 요약만 표시하며 raw reasoning은 표시하지 않는다.
+
+## 저장과 생명주기
+
+Web 세션 메타데이터는 `$ORBIT_DATA_DIR/codex-sessions/<orb-session-id>.json`에 원자적으로 저장한다. 디렉터리 권한은 0700, 파일은 0600이다. Orb 세션 ID, 작업 폴더, 실행 방식, Codex thread ID, 상태를 보관하고 orbitd 재시작 시 복원한다. CLI 세션/PTY의 기존 인메모리 저장 동작은 변경하지 않는다.
+
+- 브라우저 종료·Detach: Codex 턴과 데몬을 종료하지 않는다. 같은 Orb 세션을 열면 이력과 진행 상태에 다시 연결한다.
+- 중단 버튼: 해당 대화의 실행 중인 턴만 중단한다.
+- 세션 Stop: 전송 중인 요청을 조율하고 실행 중인 턴을 중단한 뒤 해당 Codex 연결을 닫고 stopped로 저장한다. 종료된 Web 세션을 다시 열면 이력만 조회하고 새 입력은 서버에서도 차단한다.
+- 세션 Delete: 해당 세션을 중단하고 Orb의 연결 정보만 삭제한다. Codex 저장 대화를 삭제하거나 공유 데몬을 종료하지 않는다.
+- 재연결: 저장된 정확한 thread ID를 설정 override 없이 resume한다. 폴더가 다르거나 다른 writer 잠금이 있으면 오류를 표시한다. 입력을 시도한 기록이 없는 빈 thread가 Codex에서 사라진 경우에만 새 빈 thread로 연결을 갱신한다. 입력 시도 여부는 제출 전에 메타데이터에 저장해, 대화가 있는 세션을 새 대화로 바꾸지 않는다. 이전 버전 메타데이터처럼 입력 여부를 모르면 보수적으로 기존 thread만 사용한다.
+- 첫 입력 전 저장되지 않은 대화의 `not materialized yet` 이력 오류는 빈 이력으로 처리한다. 다른 오류는 숨기지 않는다.
+
+## 개발 환경
+
+운영 중인 `orbitd`는 재시작하면 기존 PTY 세션이 사라지므로 실행 중인 세션을 확인하고 교체한다. 이번 통합은 기존 7777 서비스를 유지한 채 별도 개발 인스턴스에서 검증했다.
+
+```sh
+./script/run-codex-web-dev.sh
+```
+
+개발용 서비스: `systemctl --user status orbitd-codex-web-dev.service`
+
+- 개발용 orbitd: `17777`, 데이터는 `tmp/codex-web-dev/data`
+- 기존 Orb 개발 Web: `14000`, Web 백엔드: `14001`
+- Docker 개발 Web의 Orbitd 연결에 `http://host.docker.internal:17777` 추가. 토큰은 기존 `/etc/orbitd/token`과 동일하다.
+- 이 서비스는 개발 검증용 transient user service이며 호스트 재부팅 후에는 다시 실행한다. 이미 실행 중이면 스크립트는 자동 재시작하지 않는다.
+
+## 검증
+
+```sh
+cargo test --manifest-path orbitd/Cargo.toml
+npm test --prefix web/backend
+npm test --prefix web/frontend
+npm run build --prefix web/frontend
+(cd orb && go test ./...)
+```
+
+Rust 테스트는 네이티브 Unix WebSocket 연결, thread 범위, 페이지 이력, 첫 입력 전 빈 이력, 승인 검증·중복 응답, 중단, 완료/응답 순서 역전, 저장·복원, 기존 CLI PTY 경로를 확인한다. Web 프록시 테스트는 선택한 호스트와 Bearer 전달을 검사하고, 프론트 테스트는 이력/스트리밍 병합과 승인 복원을 검사한다.
+
+`web/frontend/test/codex-ui.e2e.cjs`는 개발 Playwright 컨테이너에서 실행한다. 설정과 인증 토큰은 stdin JSON으로 전달한다. `inference: true`는 모델을 한 번 호출하므로 사용량이 발생한다. 실제 생성·응답·새로고침 복원·모바일과 구버전 capability 차단을 검사하고, 도구 실행 없는 WebSocket 테스트로 승인·파일 diff·질문 UI를 검사한다. 토큰을 명령 인수나 파일에 저장하지 않는다.

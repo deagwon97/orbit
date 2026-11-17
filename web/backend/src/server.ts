@@ -5,7 +5,15 @@ import { WebSocket } from "ws";
 import { config } from "./config.js";
 import { terminalModePrefix } from "./terminal-state.js";
 
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: {
+  serializers: { req: (req: any) => ({
+    method: req.method,
+    url: String(req.url).replace(/([?&]token=)[^&]*/g, "$1[REDACTED]"),
+    host: req.headers.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort
+  }) }
+} });
 await app.register(cors, { origin: true });
 await app.register(websocket);
 
@@ -229,6 +237,35 @@ app.get("/api/v1/sessions/:id/attach", { websocket: true }, (socket, req: any) =
       if (socket.readyState === WebSocket.OPEN) socket.close();
     });
   })();
+});
+
+// Structured Codex traffic follows the selected orbitd, just like PTY attach.
+app.get("/api/v1/sessions/:id/codex", { websocket: true }, (socket, req: any) => {
+  let base: string;
+  try { base = orbitdBase(req); } catch { socket.close(1008, "invalid orbitd url"); return; }
+  const remote = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/sessions/${encodeURIComponent(req.params.id)}/codex`, { headers: authHeader(req) });
+  const pending: string[] = [];
+  socket.on("message", data => {
+    const text = data.toString();
+    if (text.length > 256_000) { socket.close(1009, "message too large"); return; }
+    if (remote.readyState === WebSocket.OPEN) remote.send(text);
+    else if (remote.readyState === WebSocket.CONNECTING && pending.length < 32) pending.push(text);
+    else socket.close(1013, "upstream unavailable");
+  });
+  remote.on("open", () => {
+    if (socket.readyState !== WebSocket.OPEN) { remote.close(); return; }
+    for (const text of pending.splice(0)) remote.send(text);
+  });
+  remote.on("message", data => { if (socket.readyState === WebSocket.OPEN) socket.send(data.toString()); });
+  remote.on("error", () => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "error", error: "Cannot open Codex Web on this orbitd. Check its version, session mode and Codex daemon connection." }));
+      socket.close(1011, "Codex upstream unavailable");
+    }
+  });
+  remote.on("close", () => { if (socket.readyState === WebSocket.OPEN) socket.close(); });
+  socket.on("close", () => remote.close());
+  socket.on("error", () => remote.close());
 });
 
 await app.listen({ port: config.port, host: "0.0.0.0" });

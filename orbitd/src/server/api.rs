@@ -16,14 +16,28 @@ use std::path::PathBuf;
 use tokio::fs;
 
 pub async fn list_backends(State(state): State<AppState>) -> Response {
-    Json(state.registry.backends()).into_response()
+    let backends: Vec<_> = state
+        .registry
+        .backends()
+        .iter()
+        .map(|backend| {
+            let mut value = serde_json::to_value(backend).unwrap();
+            value["modes"] = if backend.id == "codex" && state.registry.codex_available() {
+                serde_json::json!(["cli", "web"])
+            } else {
+                serde_json::json!(["cli"])
+            };
+            value
+        })
+        .collect();
+    Json(backends).into_response()
 }
 
 pub async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Response {
-    match state.registry.create_session(req) {
+    match state.registry.create_session(req).await {
         Ok(session) => (StatusCode::CREATED, Json(session)).into_response(),
         Err(err) => (StatusCode::BAD_REQUEST, format!("{err:#}")).into_response(),
     }
@@ -51,14 +65,14 @@ pub async fn stop_session(
     Path(id): Path<String>,
     Json(_req): Json<StopRequest>,
 ) -> Response {
-    match state.registry.stop_session(&id) {
+    match state.registry.stop_session(&id).await {
         Ok(session) => Json(session).into_response(),
         Err(err) => (StatusCode::NOT_FOUND, err.to_string()).into_response(),
     }
 }
 
 pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    match state.registry.delete_session(&id) {
+    match state.registry.delete_session(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     }
@@ -140,17 +154,12 @@ pub async fn create_dir(
     State(_state): State<AppState>,
     Json(req): Json<CreateDirRequest>,
 ) -> Response {
-    let parent_input = req.parent.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let parent_input = req
+        .parent
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     let name = req.name.trim().to_owned();
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-    {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return (StatusCode::BAD_REQUEST, "invalid folder name").into_response();
     }
 
@@ -199,7 +208,11 @@ pub async fn list_entries(
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
 
-    if !fs::metadata(&current).await.map(|m| m.is_dir()).unwrap_or(false) {
+    if !fs::metadata(&current)
+        .await
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+    {
         return (StatusCode::BAD_REQUEST, "path is not a directory").into_response();
     }
 
@@ -317,7 +330,10 @@ pub async fn read_raw_file(
 }
 
 fn mime_for_path(path: &PathBuf) -> &'static str {
-    let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase());
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase());
     match ext.as_deref() {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
