@@ -12,7 +12,9 @@
   --orbit-ink: #172026;
   --orbit-secondary: #515c63;
   --orbit-accent: #315e9f;
+  --orbit-accent-hover: #244b86;
   --orbit-accent-soft: #edf3ff;
+  --orbit-accent-highlight: #dbe8ff;
   --orbit-selection-border: #adbfde;
   --orbit-hover: #e8edf2;
 }
@@ -40,7 +42,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   outline-offset: 2px;
 }
 .primaryButton { background: var(--orbit-accent); color: white; border-color: transparent; font-weight: 600; }
-.primaryButton:hover:not(:disabled) { background: #244b86; }
+.primaryButton:hover:not(:disabled) { background: var(--orbit-accent-hover); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent); }
 
 .app {
   height: 100%;
@@ -111,8 +114,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   gap: 8px;
   padding: 0 6px 0 14px;
   border-bottom: 1px solid #d8e0e5;
-  color: #355148;
-  background: #eef6f3;
+  color: var(--orbit-accent-hover);
+  background: var(--orbit-accent-soft);
 }
 .statusLineText {
   flex: 1;
@@ -128,14 +131,14 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   padding: 0;
   border: none;
   background: transparent;
-  color: #355148;
+  color: inherit;
   cursor: pointer;
   border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.statusLineClose:hover { background: #d4ede7; }
+.statusLineClose:hover { background: var(--orbit-accent-highlight); }
 
 .layout { flex: 1; display: grid; grid-template-columns: minmax(280px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .sessionListToggle { display: none; }
@@ -175,10 +178,10 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 }
 .paneResizer:hover::before,
 .paneResizer:focus-visible::before {
-  background: #5f8f80;
+  background: var(--orbit-accent);
 }
 .paneResizer:focus-visible {
-  outline: 2px solid #8db7a9;
+  outline: 2px solid var(--orbit-accent);
   outline-offset: -2px;
 }
 .paneResizing {
@@ -228,7 +231,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .sessionCwd { font-family: ui-monospace, monospace; }
 .sessions .pill { justify-self: end; font-size: 11px; }
 .pill { display: inline-flex; width: fit-content; max-width: 100%; min-height: 22px; align-items: center; border-radius: 999px; padding: 0 8px; background: #edf1f3; }
-.pill.running { background: #dcf2e6; color: #17613b; }
+.pill.running { background: var(--orbit-accent-soft); color: var(--orbit-accent); }
 .pill.stopped { background: #eceff1; color: #515c63; }
 .pill.crashed { background: #fee6e4; color: #9d2d25; }
 
@@ -357,8 +360,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   min-height: 30px;
   padding: 0 12px;
   border-radius: 999px;
-  background: #365148;
-  border-color: #5c8375;
+  background: var(--orbit-accent);
+  border-color: var(--orbit-selection-border);
   color: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
@@ -450,8 +453,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   font-size: 11px;
 }
 .terminalKeyBar button.activeKey {
-  border-color: #8db7a9;
-  background: #365148;
+  border-color: var(--orbit-selection-border);
+  background: var(--orbit-accent);
 }
 .logPane {
   position: relative;
@@ -626,7 +629,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 }
 .sessionModeOptions label:has(:checked) { color: var(--orbit-accent); border-color: var(--orbit-selection-border); background: var(--orbit-accent-soft); }
 .sessionModeOptions label:has(:disabled) { cursor: not-allowed; opacity: .6; }
-.sessionModeOptions input { flex: none; min-height: 0; margin: 0; padding: 0; accent-color: var(--orbit-accent); }
+.sessionModeOptions input { flex: none; min-height: 0; margin: 0; padding: 0; }
 .sessionModeOptions svg { flex: none; }
 .sessionModeOptions input:focus-visible { outline-offset: 3px; }
 .sessionModal .check { padding: 0 12px; }
@@ -802,7 +805,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .fileTab.muted { color: var(--orbit-secondary); }
 .fileViewActions { display: flex; align-items: center; gap: 6px; }
 .fileSaveButton:not(:disabled) { color: white; background: var(--orbit-accent); border-color: transparent; font-weight: 600; }
-.fileSaveButton:hover:not(:disabled) { background: #244b86; }
+.fileSaveButton:hover:not(:disabled) { background: var(--orbit-accent-hover); }
 .fileTabs button { min-height: 28px; font-size: 12px; padding: 0 10px; }
 .fileBreadcrumb {
   min-height: 30px;
@@ -893,7 +896,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   padding: 2px 5px;
   border-radius: 4px;
   background: #edf1f3;
-  color: #1a4a3a;
+  color: var(--orbit-ink);
 }
 .fileMarkdownPreview pre {
   background: #f4f6f8;
@@ -910,7 +913,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
   color: #172026;
 }
 .fileMarkdownPreview blockquote {
-  border-left: 3px solid #8db7a9;
+  border-left: 3px solid var(--orbit-selection-border);
   padding-left: 14px;
   margin: 0 0 14px;
   color: #41515a;
@@ -920,7 +923,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .fileMarkdownPreview th { background: #f4f6f8; font-weight: 600; }
 .fileMarkdownPreview img { max-width: 100%; border-radius: 4px; }
 .fileMarkdownPreview hr { border: 0; border-top: 1px solid #d8e0e5; margin: 16px 0; }
-.fileMarkdownPreview a { color: #2563a8; }
+.fileMarkdownPreview a { color: var(--orbit-accent); }
 
 .fileCodeHighlight {
   flex: 1;
