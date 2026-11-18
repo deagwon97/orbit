@@ -174,6 +174,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       let message: any; try { message = JSON.parse(event.data); } catch { return; }
       const s = state.current;
       if (message.type === 'ready') {
+        if (message.session?.id === session.id) onSessionChange(message.session);
         applyLiveState(s, message.state, s.revision);
         void request({ op: 'history' }).then(() => { if (!disposed) { setConnection('ready'); if (s.capabilities.commands) void request({ op: 'command', command: '/help' }).then(result => { if (!disposed) setCommands(result.commands); }).catch(e => { if (!disposed) setError(String(e)); }); } }).catch(e => { if (!disposed) setError(String(e)); });
       } else if (message.type === 'result' || message.type === 'error') {

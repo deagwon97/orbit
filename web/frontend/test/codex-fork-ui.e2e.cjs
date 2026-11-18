@@ -34,7 +34,7 @@ const { chromium } = require('/app/node_modules/playwright');
     await form.getByRole('button', { name: 'Run', exact: true }).click();
     await page.getByText('Codex 연결됨', { exact: true }).waitFor();
     const source = (await sessions()).find(session => session.name === name);
-    assert(source);
+    assert(source && Number.isInteger(source.pid) && source.pid > 0);
 
     for (const [index, word] of ['ORBIT_FORK_FIRST', 'ORBIT_FORK_SECOND'].entries()) {
       await textbox.fill(`도구를 실행하지 말고 ${word} 한 줄만 답해 주세요.`);
@@ -53,6 +53,8 @@ const { chromium } = require('/app/node_modules/playwright');
     const after = await sessions();
     const branch = after.find(session => session.name === branchName);
     assert(branch && branch.mode === 'web');
+    assert(Number.isInteger(branch.pid) && branch.pid > 0);
+    assert.notEqual(branch.pid, source.pid);
     assert.notEqual(branch.id, source.id);
     assert.notEqual(branch.codex_thread_id, source.codex_thread_id);
     assert.equal(branch.cwd, source.cwd);
@@ -62,6 +64,7 @@ const { chromium } = require('/app/node_modules/playwright');
     await row(name).click();
     await page.getByText('Codex 연결됨', { exact: true }).waitFor();
     await page.locator('.agentMessage').filter({ hasText: 'ORBIT_FORK_SECOND' }).waitFor();
+    assert.equal((await sessions()).find(session => session.id === source.id).pid, source.pid);
     console.log('Fork opened a separate Orbit session through the first completed turn and preserved the source history');
   } finally {
     await page.evaluate(async ({ name, branchName, headers }) => {

@@ -65,10 +65,18 @@ impl Db {
     }
 
     pub fn update_web_session(&self, session: &Session) -> Result<()> {
-        let changed=self.conn.lock().unwrap().execute("UPDATE sessions SET name=?2, cwd=?3, status=?4, codex_thread_id=?5, pid=NULL, exit_code=NULL WHERE id=?1 AND mode='web'",params![session.id,session.name,session.cwd.to_string_lossy(),session.status.to_string(),session.codex_thread_id])?;
+        let changed=self.conn.lock().unwrap().execute("UPDATE sessions SET name=?2, cwd=?3, status=?4, codex_thread_id=?5, pid=?6, exit_code=NULL WHERE id=?1 AND mode='web'",params![session.id,session.name,session.cwd.to_string_lossy(),session.status.to_string(),session.codex_thread_id,session.pid])?;
         anyhow::ensure!(changed == 1, "Web session no longer exists");
         Ok(())
     }
+    pub fn clear_web_pid(&self, id: &str, pid: u32) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE sessions SET pid=NULL WHERE id=?1 AND mode='web' AND pid=?2",
+            params![id, pid],
+        )?;
+        Ok(())
+    }
+    #[cfg(test)]
     pub fn update_codex_thread(&self, id: &str, thread: &str) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "UPDATE sessions SET codex_thread_id = ?2 WHERE id = ?1",

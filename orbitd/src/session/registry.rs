@@ -65,7 +65,7 @@ impl SessionRegistry {
             if !session.cwd.is_dir() {
                 bail!("Working directory is not a directory");
             }
-            let handle = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+            let handle = self.connect_web(true).await?;
             handle.bind_uploads(&session.id);
             let id = match handle.create(&session.cwd).await {
                 Ok(id) => id,
@@ -75,6 +75,7 @@ impl SessionRegistry {
                 }
             };
             session.codex_thread_id = Some(id);
+            session.pid = handle.pid();
             session.status = SessionStatus::Running;
             self.register_web_session(&session, handle, false).await?;
             audit::append(
@@ -126,6 +127,37 @@ impl SessionRegistry {
         self.config.codex_socket.exists()
     }
 
+    async fn connect_web(&self, managed: bool) -> Result<crate::codex::CodexSession> {
+        // Unit tests use a fixture socket without starting the orbitd executable.
+        if managed && !cfg!(test) {
+            crate::codex::CodexSession::connect_worker(&self.config.codex_socket).await
+        } else {
+            crate::codex::CodexSession::connect(&self.config.codex_socket).await
+        }
+    }
+
+    fn watch_web_worker(&self, id: &str, handle: &crate::codex::CodexSession) {
+        let Some(pid) = handle.pid() else { return };
+        let mut events = handle.events.subscribe();
+        let connected = handle.connected();
+        let db = self.db.clone();
+        let id = id.to_owned();
+        tokio::spawn(async move {
+            if connected {
+                loop {
+                    match events.recv().await {
+                        Ok(event) if event["type"] != "disconnected" => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        _ => break,
+                    }
+                }
+            }
+            if let Err(error) = db.clear_web_pid(&id, pid) {
+                tracing::warn!(session_id = %id, %pid, %error, "Cannot clear Web worker PID");
+            }
+        });
+    }
+
     async fn register_web_session(
         &self,
         session: &Session,
@@ -147,6 +179,7 @@ impl SessionRegistry {
             handle.close().await;
             return Err(error);
         }
+        self.watch_web_worker(&session.id, &handle);
         web.insert(session.id.clone(), handle);
         Ok(())
     }
@@ -169,7 +202,7 @@ impl SessionRegistry {
             "대화가 변경되었습니다. 다시 연결한 뒤 포크하세요."
         );
         let id = Uuid::new_v4().simple().to_string()[..12].to_string();
-        let child = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        let child = self.connect_web(true).await?;
         child.bind_uploads(&id);
         let (thread_id, cwd) = match child.fork(source_thread, turn_id).await {
             Ok(fork) => fork,
@@ -188,7 +221,7 @@ impl SessionRegistry {
             mode: SessionMode::Web,
             cwd,
             codex_thread_id: Some(thread_id),
-            pid: None,
+            pid: child.pid(),
             status: SessionStatus::Running,
             created_at: Utc::now(),
             last_attached_at: None,
@@ -208,18 +241,19 @@ impl SessionRegistry {
     }
 
     pub async fn codex_session(&self, ident: &str) -> Result<crate::codex::CodexSession> {
+        let mut web = self.web.lock().await;
         let mut session = self.get_session(ident)?;
         if session.mode != SessionMode::Web || session.tool != "codex" {
             bail!("This is not a Codex Web session");
         }
-        let mut web = self.web.lock().await;
         if let Some(handle) = web.get(&session.id).filter(|handle| handle.connected()) {
             return Ok(handle.clone());
         }
         let previous_queue = web
             .get(&session.id)
             .map(|handle| handle.snapshot()["queue"].clone());
-        let handle = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        let running = session.status == SessionStatus::Running;
+        let handle = self.connect_web(running).await?;
         handle.bind_uploads(&session.id);
         if let Some(queue) = previous_queue {
             handle.restore_queue(&queue);
@@ -241,15 +275,20 @@ impl SessionRegistry {
                 .is_some_and(|id| thread_missing(&error, id));
             if missing && !self.has_input.lock().unwrap().contains(&session.id) {
                 // Codex has no saved conversation before the first message. Recreate only a known-empty thread.
-                let replacement =
-                    crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+                let replacement = self.connect_web(running).await?;
                 replacement.bind_uploads(&session.id);
-                session.codex_thread_id = Some(replacement.create(&session.cwd).await?);
-                self.save_web_session(&session)?;
-                self.db.update_codex_thread(
-                    &session.id,
-                    session.codex_thread_id.as_deref().unwrap(),
-                )?;
+                let prepared = async {
+                    session.codex_thread_id = Some(replacement.create(&session.cwd).await?);
+                    session.pid = replacement.pid();
+                    self.save_web_session(&session)?;
+                    self.db.update_web_session(&session)
+                }
+                .await;
+                if let Err(error) = prepared {
+                    replacement.close().await;
+                    return Err(error);
+                }
+                self.watch_web_worker(&session.id, &replacement);
                 web.insert(session.id, replacement.clone());
                 return Ok(replacement);
             }
@@ -259,6 +298,16 @@ impl SessionRegistry {
         if let Err(error) = handle.history(None).await {
             handle.close().await;
             return Err(error);
+        }
+        if running {
+            if let Err(error) =
+                self.db
+                    .update_runtime(&session.id, handle.pid(), session.status, session.exit_code)
+            {
+                handle.close().await;
+                return Err(error);
+            }
+            self.watch_web_worker(&session.id, &handle);
         }
         web.insert(session.id, handle.clone());
         Ok(handle)
@@ -293,7 +342,7 @@ impl SessionRegistry {
             .clone();
         let _guard = old.gate()?;
         let _switch = old.begin_switch()?;
-        let next = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        let next = self.connect_web(true).await?;
         next.bind_uploads(&previous.id);
         let prepared = async {
             let thread = next.saved_thread(&thread_id).await?;
@@ -317,6 +366,7 @@ impl SessionRegistry {
             session.cwd = cwd;
             session.codex_thread_id = Some(thread_id.clone());
             session.status = SessionStatus::Running;
+            session.pid = next.pid();
             session.exit_code = None;
             session.name = thread["name"]
                 .as_str()
@@ -338,6 +388,7 @@ impl SessionRegistry {
         .await;
         match prepared {
             Ok(session) => {
+                self.watch_web_worker(&session.id, &next);
                 web.insert(session.id.clone(), next);
                 old.close().await;
                 Ok(session)
@@ -375,6 +426,8 @@ impl SessionRegistry {
             .mode(0o600)
             .open(&temporary)?;
         let mut metadata = serde_json::to_value(session)?;
+        // PIDs are local to the current orbitd process lifetime.
+        metadata["pid"] = serde_json::Value::Null;
         metadata["codex_has_input"] =
             serde_json::json!(self.has_input.lock().unwrap().contains(&session.id));
         file.write_all(&serde_json::to_vec(&metadata)?)?;
@@ -394,7 +447,8 @@ impl SessionRegistry {
             let restored = (|| -> Result<()> {
                 let metadata: serde_json::Value =
                     serde_json::from_slice(&std::fs::read(entry.path())?)?;
-                let session: Session = serde_json::from_value(metadata.clone())?;
+                let mut session: Session = serde_json::from_value(metadata.clone())?;
+                session.pid = None;
                 if session.mode != SessionMode::Web
                     || session.tool != "codex"
                     || session.codex_thread_id.is_none()
@@ -435,7 +489,7 @@ impl SessionRegistry {
         if session.mode == SessionMode::Web {
             if session.status == SessionStatus::Running {
                 match self.codex_session(&session.id).await {
-                    Ok(handle) => handle.stop().await?,
+                    Ok(_) => {}
                     Err(error)
                         if session
                             .codex_thread_id
@@ -443,14 +497,28 @@ impl SessionRegistry {
                             .is_some_and(|id| thread_missing(&error, id)) => {}
                     Err(error) => return Err(error),
                 }
-                self.web.lock().await.remove(&session.id);
+                let mut web = self.web.lock().await;
+                let current = self.get_session(&session.id)?;
+                if current.status != SessionStatus::Running {
+                    return Ok(current);
+                }
+                if let Some(handle) = web.get(&session.id) {
+                    handle.stop().await?;
+                }
+                web.remove(&session.id);
                 self.db
                     .update_runtime(&session.id, None, SessionStatus::Stopped, Some(0))?;
                 let stopped = self.get_session(&session.id)?;
                 self.save_web_session(&stopped)?;
                 return Ok(stopped);
             }
-            if let Some(handle) = self.web.lock().await.remove(&session.id) {
+            let mut web = self.web.lock().await;
+            if self.get_session(&session.id)?.status == SessionStatus::Running {
+                drop(web);
+                // A concurrent /resume may have reopened the session.
+                bail!("대화가 다시 열렸습니다. 세션 상태를 새로고침한 뒤 중단하세요.");
+            }
+            if let Some(handle) = web.remove(&session.id) {
                 handle.close().await;
             }
             return Ok(session);

@@ -1,15 +1,17 @@
-//! A session-scoped client of the existing local Codex daemon. Never spawns it.
+//! Session-scoped connections to the existing local Codex daemon.
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
+    os::fd::{AsFd, OwnedFd},
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{
     net::UnixStream,
+    process::{Child, Command as ProcessCommand},
     sync::{broadcast, mpsc, oneshot},
     time::timeout,
 };
@@ -18,6 +20,18 @@ use uuid::Uuid;
 
 #[path = "codex_controls.rs"]
 mod controls;
+
+pub(crate) async fn run_worker(path: &Path) -> Result<()> {
+    let fd = std::io::stdin().as_fd().try_clone_to_owned()?;
+    let transport = std::os::unix::net::UnixStream::from(fd);
+    transport.set_nonblocking(true)?;
+    let mut transport = UnixStream::from_std(transport)?;
+    let mut daemon = UnixStream::connect(path)
+        .await
+        .with_context(|| format!("Connect to existing Codex daemon at {}", path.display()))?;
+    tokio::io::copy_bidirectional(&mut transport, &mut daemon).await?;
+    Ok(())
+}
 
 pub(crate) struct SendingGuard {
     _guard: Option<tokio::sync::OwnedMutexGuard<()>>,
@@ -41,7 +55,7 @@ type Reply = oneshot::Sender<Result<Value, String>>;
 enum Command {
     Rpc(String, Value, Reply),
     Write(Value, Reply),
-    Close,
+    Close(oneshot::Sender<()>),
 }
 #[derive(Default)]
 struct LiveState {
@@ -61,10 +75,11 @@ struct LiveState {
 }
 #[derive(Clone)]
 pub struct CodexSession {
-    commands: mpsc::Sender<Command>,
+    commands: Arc<mpsc::Sender<Command>>,
     pub events: broadcast::Sender<Value>,
     state: Arc<Mutex<LiveState>>,
     sending: Arc<tokio::sync::Mutex<()>>,
+    pid: Option<u32>,
 }
 impl CodexSession {
     pub(crate) fn begin_switch(&self) -> Result<SwitchingGuard> {
@@ -88,6 +103,28 @@ impl CodexSession {
         let stream = timeout(Duration::from_secs(10), UnixStream::connect(path))
             .await?
             .with_context(|| format!("Connect to existing Codex daemon at {}", path.display()))?;
+        Self::connect_transport(stream, None).await
+    }
+    pub(crate) async fn connect_worker(path: &Path) -> Result<Self> {
+        let (client, worker) = std::os::unix::net::UnixStream::pair()?;
+        client.set_nonblocking(true)?;
+        let client = UnixStream::from_std(client)?;
+        let worker = ProcessCommand::new(std::env::current_exe()?)
+            .args([
+                std::ffi::OsStr::new("--web-session-worker"),
+                path.as_os_str(),
+            ])
+            .stdin(OwnedFd::from(worker))
+            .stdout(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Start Orbit Web session worker")?;
+        Self::connect_transport(client, Some(worker)).await
+    }
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+    async fn connect_transport(stream: UnixStream, mut worker: Option<Child>) -> Result<Self> {
         let (mut socket, _) = timeout(
             Duration::from_secs(10),
             client_async("ws://localhost/rpc", stream),
@@ -100,13 +137,15 @@ impl CodexSession {
             ..Default::default()
         }));
         let handle = Self {
-            commands,
+            commands: Arc::new(commands),
             events: events.clone(),
             state: state.clone(),
             sending: Arc::new(tokio::sync::Mutex::new(())),
+            pid: worker.as_ref().and_then(Child::id),
         };
         tokio::spawn(async move {
             let mut pending: HashMap<String, Reply> = HashMap::new();
+            let mut closed = None;
             loop {
                 tokio::select! {
                     command = rx.recv() => match command {
@@ -120,7 +159,8 @@ impl CodexSession {
                             let result = socket.send(Message::Text(message.to_string())).await.map(|_| json!({})).map_err(|e| e.to_string());
                             let failed = result.is_err(); let _ = reply.send(result); if failed { break; }
                         },
-                        Some(Command::Close) | None => { let _ = socket.close(None).await; break; }
+                        Some(Command::Close(reply)) => { closed = Some(reply); break; }
+                        None => break,
                     },
                     frame = socket.next() => {
                         let Some(Ok(frame)) = frame else { break; };
@@ -168,6 +208,15 @@ impl CodexSession {
                     }
                 }
             }
+            drop(socket);
+            if let Some(worker) = &mut worker {
+                if timeout(Duration::from_secs(2), worker.wait())
+                    .await
+                    .is_err()
+                {
+                    let _ = worker.kill().await;
+                }
+            }
             {
                 let mut live = state.lock().unwrap();
                 live.connected = false;
@@ -180,28 +229,46 @@ impl CodexSession {
                 ));
             }
             let _ = events.send(json!({"type":"disconnected","error":"Codex daemon disconnected. Reconnect to resume this conversation."}));
+            if let Some(reply) = closed {
+                let _ = reply.send(());
+            }
         });
-        handle.rpc("initialize", json!({"clientInfo":{"name":"orbit_web","title":"Orbit Web","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
-        handle
-            .write(json!({"method":"initialized","params":{}}))
-            .await?;
-        let queue_handle = handle.clone();
+        let init = async {
+            handle.rpc("initialize", json!({"clientInfo":{"name":"orbit_web","title":"Orbit Web","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
+            handle.write(json!({"method":"initialized","params":{}})).await
+        }.await;
+        if let Err(error) = init {
+            handle.close().await;
+            return Err(error);
+        }
+        let queue_commands = Arc::downgrade(&handle.commands);
+        let queue_state = handle.state.clone();
+        let queue_events_tx = handle.events.clone();
+        let queue_sending = handle.sending.clone();
         let mut queue_events = handle.events.subscribe();
         tokio::spawn(async move {
             loop {
-                let event = match queue_events.recv().await {
-                    Ok(event) => event,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        queue_handle.drain_queue().await;
-                        continue;
-                    }
-                    Err(_) => break,
+                let (drain, publish) = match queue_events.recv().await {
+                    Ok(event) if event["type"] == "disconnected" => break,
+                    Ok(event) => (
+                        event["type"] == "drain" || event["message"]["method"] == "turn/completed",
+                        event["type"] != "drain",
+                    ),
+                    Err(broadcast::error::RecvError::Lagged(_)) => (true, false),
+                    Err(broadcast::error::RecvError::Closed) => break,
                 };
-                if event["type"] == "disconnected" {
-                    break;
-                }
-                if event["message"]["method"] == "turn/completed" || event["type"] == "drain" {
-                    if event["type"] != "drain" {
+                if drain {
+                    let Some(commands) = queue_commands.upgrade() else {
+                        break;
+                    };
+                    let queue_handle = Self {
+                        commands,
+                        events: queue_events_tx.clone(),
+                        state: queue_state.clone(),
+                        sending: queue_sending.clone(),
+                        pid: None,
+                    };
+                    if publish {
                         queue_handle.publish_state();
                     }
                     queue_handle.drain_queue().await;
@@ -556,7 +623,10 @@ impl CodexSession {
     }
     pub async fn close(&self) {
         self.state.lock().unwrap().connected = false;
-        let _ = self.commands.send(Command::Close).await;
+        let (reply, closed) = oneshot::channel();
+        if self.commands.send(Command::Close(reply)).await.is_ok() {
+            let _ = closed.await;
+        }
     }
 }
 fn approval_result(request: &Value, body: &Value) -> Result<Value> {

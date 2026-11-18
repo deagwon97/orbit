@@ -40,7 +40,7 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
     let (mut send, mut receive) = socket.split();
     let _ = send
         .send(Message::Text(
-            json!({"type":"ready","state":connection.snapshot()}).to_string(),
+            json!({"type":"ready","state":connection.snapshot(),"session":state.registry.get_session(&id).ok()}).to_string(),
         ))
         .await;
     let mut operations = tokio::task::JoinSet::<Value>::new();

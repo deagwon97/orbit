@@ -26,7 +26,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/app/node_modules
       const result = await fetch('/api/v1/sessions', { headers: { Authorization: `Bearer ${config.token}`, 'x-orbitd-url': config.orbitdUrl } });
       return (await result.json()).find(session => session.name === name);
     }, { name, config });
-    if (!session || session.pid !== null || session.mode !== 'web' || !session.codex_thread_id) throw Error('Web session mapping invalid');
+    if (!session || !Number.isInteger(session.pid) || session.pid <= 0 || session.mode !== 'web' || !session.codex_thread_id) throw Error('Web worker or thread mapping invalid');
     if (config.inference) {
       await page.getByRole('textbox', { name: 'Codex 메시지' }).fill('다른 도구를 실행하지 말고 ORB_WEB_OK 한 줄만 답해주세요.');
       await page.getByRole('button', { name: '전송 ↑', exact: true }).click();

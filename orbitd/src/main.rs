@@ -17,8 +17,20 @@ use session::registry::SessionRegistry;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
+fn main() -> anyhow::Result<()> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--web-session-worker")) {
+        let socket = args.next().context("Missing Codex daemon socket")?;
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(codex::run_worker(std::path::Path::new(&socket)));
+    }
+    run_server()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn run_server() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env().add_directive("orbitd=info".parse()?),
