@@ -1,4 +1,4 @@
-import { ArrowUp, Check, ChevronLeft, Copy, GitFork, Info, ListPlus, Mic, Minus, Plus, RefreshCcw, SlidersHorizontal, Square } from 'lucide-react';
+import { ArrowUp, Check, ChevronLeft, CircleAlert, Copy, GitFork, Info, ListPlus, Mic, Minus, Plus, RefreshCcw, SlidersHorizontal, Square } from 'lucide-react';
 import { Marked, Tokenizer, type Token, type Tokens } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
@@ -69,18 +69,21 @@ function CodeBlock({ text }: { text: string }) {
 
   const toggleLabel = expanded ? 'Collapse code' : 'Expand code';
   const ToggleIcon = expanded ? Minus : Plus;
-  const toggle = <button type="button" className="codexCodeToggle" aria-expanded={expanded}
+  const CopyIcon = copyStatus === 'copied' ? Check : copyStatus === 'failed' ? CircleAlert : Copy;
+  const feedback = copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : '';
+  const toggle = <button type="button" aria-expanded={expanded}
     aria-label={toggleLabel} title={toggleLabel} onClick={() => setExpanded(!expanded)}>
-    <ToggleIcon size={17} aria-hidden="true" />
+    <ToggleIcon size={14} aria-hidden="true" />
   </button>;
   return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>
     <div className="codexCodeToolbar">
       {(long || expanded) && toggle}
       <button type="button" className="codexCodeCopy" data-status={copyStatus} disabled={!text}
+        aria-label="Copy code" title={feedback || 'Copy code'}
         onClick={async () => setCopyStatus(await copyText(text) ? 'copied' : 'failed')}>
-        {copyStatus === 'copied' ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-        <span aria-live="polite">{copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy code'}</span>
+        <CopyIcon size={15} aria-hidden="true" />
       </button>
+      <span className="codexCodeCopyStatus" role="status">{feedback}</span>
     </div>
     <pre ref={pre}><code>{text}</code></pre>
     {expanded && <div className="codexCodeFooter">{toggle}</div>}
@@ -550,6 +553,8 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const working=specificActivity([...s.items.values()],s.approvals.size,s.active,s.activity);
   const host = (() => { try { return new URL(session.connection.url).host; } catch { return session.connection.url; } })();
   const cwd = s.settings.cwd || session.cwd;
+  const workingFolder = cwd?.replace(/\/+$/, '').split('/').pop();
+  const compactCwd = workingFolder && workingFolder !== cwd ? `…/${workingFolder}` : cwd;
   return <div className={`codexChat${dragging ? ' dragging' : ''}`} onDragEnter={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++;setDragging(true); } }} onDragOver={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault();event.dataTransfer.dropEffect='copy'; } }} onDragLeave={event => { event.preventDefault();if(--dragDepth.current<=0){dragDepth.current=0;setDragging(false);} }} onDrop={event => { if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);attachments.add(Array.from(event.dataTransfer.files)); }}>
     {dragging&&<div className="codexDropOverlay">여기에 파일을 놓아 첨부하세요</div>}
     <div className="codexConnection">
@@ -632,13 +637,26 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
           <button className="codexSend" aria-label={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영 ↑' : '전송 ↑'} title={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} disabled={voiceActive || (!commandInput && session.status !== 'running') || (commandInput && commandBusy) || connection !== 'ready' || (!draft.trim() && !availableAttachments.length) || !attachments.ready}><ArrowUp size={23} /></button>
         </div>
       </form>
-      <div className="codexComposerMeta"><button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</button>{s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}
-        <details className="codexDesktopDetails sessionDetailsDisclosure" onKeyDown={event => {
-          if (event.key === 'Escape' && event.currentTarget.open) {
-            event.currentTarget.open = false;
-            event.currentTarget.querySelector('summary')?.focus();
-          }
-        }}>
+      <div className="codexComposerMeta" onKeyDown={event => {
+        if (event.key !== 'Escape' || !(event.target instanceof HTMLElement)) return;
+        const disclosure = event.target.closest<HTMLDetailsElement>('details[open]');
+        if (disclosure) {
+          disclosure.open = false;
+          disclosure.querySelector('summary')?.focus();
+        }
+      }}>
+        {cwd && <details className="codexCwd" key={cwd}>
+          <summary aria-label={`작업 경로 ${cwd}`} title={cwd}>
+            <span className="codexCwdFull">{cwd}</span>
+            <span className="codexCwdCompact">{compactCwd}</span>
+          </summary>
+          <div className="sessionDetailsPopup"><code>{cwd}</code></div>
+        </details>}
+        <button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">
+          <span>{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</span>
+        </button>
+        {s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}
+        <details className="codexDesktopDetails sessionDetailsDisclosure">
           <summary aria-label="Session details" title="Session details"><Info size={16} /></summary>
           <div className="sessionDetailsPopup">
             <p>{session.connection.label || host} · <code>{cwd}</code></p>
