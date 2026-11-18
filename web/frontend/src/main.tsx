@@ -916,14 +916,14 @@ function App() {
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
             {!sessionsCollapsed && sessionListButton}
           </div>
-          <div className="sessionListHeader">
+          <div className="sessionListHeader paneListControls">
             <button className="primaryButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} />New session</button>
           </div>
-          <div className="sessions">
+          <div className="sessions paneList">
             {sessions.map(session => {
               const isSelected = session.key === selectedKey;
               return <div className="sessionCard" key={session.key}>
-                <button type="button" className={isSelected ? "row active" : "row"} aria-current={isSelected ? "true" : undefined} onClick={event => {
+                <button type="button" className={isSelected ? "row paneListItem active" : "row paneListItem"} aria-current={isSelected ? "true" : undefined} onClick={event => {
                   event.currentTarget.parentElement?.querySelector("details")?.removeAttribute("open");
                   setSelectedKey(session.key);
                   setDetailOpen(true);
@@ -1383,8 +1383,8 @@ function FileWorkspace(props: {
           : <FileText size={14} />;
       const row = <button
         key={entry.path}
-        className={`fileEntryRow${openedFile?.path === entry.path ? " active" : ""}`}
-        style={{ paddingLeft: 8 + depth * 14 }}
+        className={`fileEntryRow paneListItem${openedFile?.path === entry.path ? " active" : ""}`}
+        style={{ "--file-indent": `${depth * 14}px` } as React.CSSProperties}
         onClick={() => isDir ? void toggleDir(entry) : void openFile(entry.path)}
       >
         {isDir ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
@@ -1392,7 +1392,7 @@ function FileWorkspace(props: {
         <span>{entry.name}</span>
       </button>;
       const childRows = isDir && isExpanded ? [
-        ...(isLoading ? [<div key={`${entry.path}:loading`} className="fileEntryLoading" style={{ paddingLeft: 40 + depth * 14 }}>Loading...</div>] : []),
+        ...(isLoading ? [<div key={`${entry.path}:loading`} className="fileEntryLoading" style={{ "--file-indent": `${depth * 14}px` } as React.CSSProperties}>Loading...</div>] : []),
         ...renderTree(children, depth + 1)
       ] : [];
       return [row, ...childRows];
@@ -1407,13 +1407,15 @@ function FileWorkspace(props: {
         <button className="activeButton"><FolderOpen size={14} />Files</button>
       </div>
       {error && <div className="folderError">{error}</div>}
-      <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
-      <div className="fileExplorerActions">
-        <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
-        <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
-        <button className="fileRefreshButton" title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
+      <div className="paneListControls">
+        <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
+        <div className="fileExplorerActions">
+          <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
+          <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
+          <button className="iconButton fileRefreshButton" title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
+        </div>
       </div>
-      <div className="fileExplorerList">
+      <div className="fileExplorerList paneList">
         {listBusy && <div className="folderEmpty">Loading...</div>}
         {!listBusy && rootEntries.length === 0 && <div className="folderEmpty">Empty</div>}
         {!listBusy && renderTree(rootEntries)}

@@ -194,8 +194,19 @@ const sessionName = 'Build and test on ARM64';
         await row.waitFor();
       }
 
+      const sidebarAppearance = locator => locator.evaluate(panel => ({
+        width: panel.getBoundingClientRect().width,
+        background: getComputedStyle(panel).backgroundColor,
+        listPadding: getComputedStyle(panel.querySelector('.paneList')).padding,
+        rowRadius: getComputedStyle(panel.querySelector('.paneListItem')).borderRadius,
+      }));
+      const sessionsAppearance = await sidebarAppearance(page.locator('#session-list-pane'));
       await page.getByRole('button', { name: 'Files', exact: true }).click();
-      await page.getByRole('button', { name: 'README.md', exact: true }).click();
+      const fileRow = page.getByRole('button', { name: 'README.md', exact: true });
+      await fileRow.waitFor();
+      assert.deepEqual(await sidebarAppearance(page.locator('.fileExplorer')), sessionsAppearance);
+      assert.equal(await overflow('.fileExplorerList'), false, `file list overflows at ${width}px`);
+      await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
       await editor.getByRole('textbox').fill('# Updated on ' + width);
       await editor.getByRole('button', { name: 'Save', exact: true }).click();

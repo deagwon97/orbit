@@ -215,15 +215,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .paneTabs button { min-height: 30px; font-size: 13px; }
 .paneTabs .iconButton { margin-left: auto; }
 .iconButton { width: 32px; padding: 0; }
-.sessionListHeader { padding: 12px 12px 4px; }
+.paneListControls { padding: 12px 12px 4px; }
 .sessionListHeader button { width: 100%; min-height: 38px; }
-.sessions { flex: 1; min-height: 0; padding: 8px 12px 12px; overflow: auto; overscroll-behavior: contain; }
-.sessionCard { position: relative; margin-bottom: 8px; }
-.sessions .row {
+.paneList { flex: 1; min-height: 0; padding: 8px 12px 12px; overflow: auto; overscroll-behavior: contain; }
+.paneListItem {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 8px;
   align-items: center;
   justify-content: stretch;
   padding: 10px 12px;
@@ -232,8 +229,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   border-radius: 12px;
   color: inherit;
 }
-.sessions .row:hover { border-color: var(--orbit-selection-border); background: var(--orbit-subtle); }
-.sessions .row.active { background: var(--orbit-accent-soft); border-color: var(--orbit-selection-border); }
+.paneListItem:hover:not(:disabled) { border-color: var(--orbit-selection-border); background: var(--orbit-subtle); }
+.paneListItem.active, .paneListItem.active:hover:not(:disabled) { background: var(--orbit-accent-soft); border-color: var(--orbit-selection-border); }
+.sessionCard { position: relative; margin-bottom: 8px; }
+.sessions .row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 8px;
+}
 .sessionName, .sessionHost, .sessionCwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sessionName { font-size: 14px; font-weight: 600; }
 .sessionMeta, .sessionCwd { grid-column: 1 / -1; min-width: 0; color: var(--orbit-secondary); font-size: 11px; }
@@ -708,60 +710,37 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(600px, var(--master-pane-preview, var(--master-pane-width))) 1px minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--master-pane-preview, var(--master-pane-width))) 1px minmax(0, 1fr);
   grid-column: 1 / -1;
   overflow: hidden;
   background: var(--orbit-surface);
 }
-.fileExplorer {
-  background: var(--orbit-subtle);
-}
 .fileExplorerPath {
-  min-height: 34px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 0 0 8px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--orbit-secondary);
-  background: var(--orbit-subtle);
-  border-bottom: 1px solid var(--orbit-border-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fileExplorerActions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--orbit-border-subtle);
-}
-.fileExplorerActions button { min-height: 28px; font-size: 12px; padding: 0 8px; }
+.fileExplorerActions { display: flex; gap: 6px; align-items: center; }
+.fileExplorerActions button { min-height: 34px; font-size: 12px; }
 .fileRefreshButton { margin-left: auto; }
-.fileExplorerList {
-  flex: 1;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
 .fileEntryRow {
-  width: 100%;
-  min-height: 34px;
-  display: grid;
+  min-height: 38px;
   grid-template-columns: 14px 18px minmax(0, 1fr);
   gap: 6px;
-  padding: 0 10px 0 8px;
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--orbit-border-subtle);
-  text-align: left;
+  margin-bottom: 6px;
+  padding-inline-start: min(calc(12px + var(--file-indent)), 45%);
   font-size: 13px;
-  color: var(--orbit-ink);
 }
 .fileEntryRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fileEntryRow.active { background: var(--orbit-accent-soft); color: var(--orbit-accent); }
+.fileEntryRow.active { color: var(--orbit-accent); }
 .fileEntryLoading {
   min-height: 28px;
   display: flex;
   align-items: center;
+  padding-inline-start: min(calc(56px + var(--file-indent)), calc(45% + 44px));
   color: var(--orbit-secondary);
   font-size: 12px;
 }
@@ -1042,7 +1021,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   .terminalTop { min-height: 58px; gap: 5px; padding: 5px 8px; }
   .terminalTop button, .sessionDetailsDisclosure summary { min-height: 44px; }
   .sessionDetailsDisclosure summary { width: 44px; }
-  .sessionListHeader button { min-height: 44px; }
+  .sessionListHeader button, .fileExplorerActions button, .fileEntryRow { min-height: 44px; }
   .sessions .row { padding: 13px; }
   .sessions .pill { margin-right: 37px; }
   .sessionCardActions summary { top: 2px; }
