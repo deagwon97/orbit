@@ -1374,7 +1374,7 @@ function FileWorkspace(props: {
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
       const response = await api(`/api/v1/fs/entries${query}`, {}, connection) as ListEntriesResponse;
-      if (options.root || !listing) setListing(response);
+      setListing(current => options.root || !current || current.path === response.path ? response : current);
       setTree((current) => ({ ...current, [response.path]: response.entries }));
       setExpanded((current) => {
         const next = new Set(current);
