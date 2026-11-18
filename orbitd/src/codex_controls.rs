@@ -628,10 +628,13 @@ mod tests {
         }
         assert!(h.state.lock().unwrap().completed.is_empty());
         assert!(h.snapshot()["activeTurn"].is_null());
-        assert_eq!(
-            command(&h, "/status").await.unwrap()["state"]["settings"]["model"],
-            "test-model"
-        );
+        let status = command(&h, "/status").await.unwrap();
+        let settings = &status["state"]["settings"];
+        assert_eq!(settings["model"], "gpt-6.2-sol");
+        assert_eq!(settings["effort"], "medium");
+        assert_eq!(settings["serviceTier"], "priority");
+        assert_eq!(settings["approvalPolicy"], "never");
+        assert_eq!(settings["sandboxPolicy"]["type"], "dangerFullAccess");
         assert!(command(&h, "/status extra").await.is_err());
         assert!(command(&h, "/not-a-command").await.is_err());
         assert!(h
@@ -661,10 +664,10 @@ mod tests {
         );
         command(&h, "/permissions read-only").await.unwrap();
         assert_eq!(h.snapshot()["settings"]["approvalPolicy"], "on-request");
-        command(&h, "/fast on").await.unwrap();
-        assert_eq!(h.snapshot()["settings"]["serviceTier"], "priority");
         command(&h, "/fast off").await.unwrap();
         assert_eq!(h.snapshot()["settings"]["serviceTier"], "default");
+        command(&h, "/fast on").await.unwrap();
+        assert_eq!(h.snapshot()["settings"]["serviceTier"], "priority");
         for text in ["/plan on", "/compact", "/review", "/export"] {
             assert!(command(&h, text).await.is_err());
         }

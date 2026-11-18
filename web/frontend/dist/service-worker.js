@@ -1,5 +1,5 @@
-const CACHE_NAME = "orbit-pwa-v1";
-const APP_SHELL = ["/", "/index.html", "/manifest.json", "/icon.svg"];
+const CACHE_NAME = "orbit-pwa-v2";
+const APP_SHELL = ["/", "/index.html", "/manifest.json", "/icon.svg?v=2"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

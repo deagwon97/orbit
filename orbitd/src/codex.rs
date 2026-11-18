@@ -312,7 +312,14 @@ impl CodexSession {
         let result = self
             .rpc(
                 "thread/start",
-                json!({"cwd":cwd,"approvalPolicy":"never","sandbox":"danger-full-access"}),
+                json!({
+                    "cwd": cwd,
+                    "model": "gpt-6.2-sol",
+                    "config": {"model_reasoning_effort": "medium"},
+                    "serviceTier": "priority",
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
+                }),
             )
             .await?;
         let id = result["thread"]["id"]
@@ -740,8 +747,14 @@ pub(crate) mod tests {
                             "initialized" => continue,
                             "thread/start" => {
                                 assert_eq!(p["cwd"], cwd);
+                                assert_eq!(p["model"], "gpt-6.2-sol");
+                                assert_eq!(p["config"]["model_reasoning_effort"], "medium");
+                                assert_eq!(p["serviceTier"], "priority");
                                 assert_eq!(p["approvalPolicy"], "never");
                                 assert_eq!(p["sandbox"], "danger-full-access");
+                                settings["model"] = p["model"].clone();
+                                settings["effort"] = p["config"]["model_reasoning_effort"].clone();
+                                settings["serviceTier"] = p["serviceTier"].clone();
                                 settings["approvalPolicy"] = json!("never");
                                 settings["sandboxPolicy"] = json!({"type":"dangerFullAccess"});
                                 json!({"thread":{"id":thread_id,"cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
