@@ -17,7 +17,7 @@ export function progressLabel(item:CodexItem) {
     const actions=item.commandActions||[],exploring=actions.length>0&&actions.every((a:any)=>['read','search','listFiles'].includes(a.type));
     return exploring?(running?'Exploring':'Explored'):(running?'Running':failed?'Failed':'Ran');
   }
-  return ({reasoning:'추론 요약',plan:'작업 계획',fileChange:running?'파일 수정 중':'파일 변경',mcpToolCall:running?'Calling':'Called',dynamicToolCall:running?'Calling':'Called',functionCallOutput:'도구 결과',webSearch:running?'Searching':'Searched',collabAgentToolCall:'에이전트 작업',subAgentActivity:'에이전트 활동',contextCompaction:running?'Compacting context':'Context compacted',enteredReviewMode:'Review started',exitedReviewMode:'Review completed',terminalInteraction:'터미널 입력',imageView:'이미지 확인',imageGeneration:'이미지 생성',sleep:'Waiting',hook:running?'Hook running':'Hook completed',progressNotice:'진행 안내'} as Record<string,string>)[item.type]||item.type;
+  return ({reasoning:'Reasoning summary',plan:'Plan',fileChange:running?'Editing files':'File changes',mcpToolCall:running?'Calling':'Called',dynamicToolCall:running?'Calling':'Called',functionCallOutput:'Tool result',webSearch:running?'Searching':'Searched',collabAgentToolCall:'Agent task',subAgentActivity:'Agent activity',contextCompaction:running?'Compacting context':'Context compacted',enteredReviewMode:'Review started',exitedReviewMode:'Review completed',terminalInteraction:'Terminal input',imageView:'Viewed image',imageGeneration:'Generated image',sleep:'Waiting',hook:running?'Hook running':'Hook completed',progressNotice:'Progress update'} as Record<string,string>)[item.type]||item.type;
 }
 export function queuesDuringTurn(items:CodexItem[],active:string|null) {
   if(!active)return false;
@@ -26,7 +26,7 @@ export function queuesDuringTurn(items:CodexItem[],active:string|null) {
   return review?.type==='enteredReviewMode'||turn.some(i=>i.type==='contextCompaction'&&i.status==='inProgress');
 }
 export function specificActivity(items:CodexItem[],approvals:number,active:string|null,notice:string) {
-  if(approvals)return '승인 또는 응답 대기 중';
+  if(approvals)return 'Waiting for approval or a response';
   if(notice)return notice;
   const review=items.filter(i=>i.turnId===active&&['enteredReviewMode','exitedReviewMode'].includes(i.type)).at(-1);
   if(review?.type==='enteredReviewMode')return 'Reviewing';

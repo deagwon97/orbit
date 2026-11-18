@@ -25,7 +25,7 @@ function CodeBlock({ text }: { text: string }) {
     const measure = () => setLong(node.scrollHeight > 280);
     const resize = new ResizeObserver(measure); resize.observe(node); measure(); return () => resize.disconnect();
   }, [text]);
-  const toggle = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '접기' : '전체 펼치기'}</button>;
+  const toggle = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse' : 'Expand'}</button>;
   return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>{expanded && toggle}<pre ref={pre}><code>{text}</code></pre>{long && toggle}</div>;
 }
 function Markdown({ text }: { text: string }) {
@@ -52,16 +52,16 @@ function WorkLog({ item }: { item: CodexItem }) {
   const exploring = actions.length > 0 && actions.every((a: any) => ['read', 'search', 'listFiles'].includes(a.type));
   if (item.type === 'reasoning' && !full.trim()) return null;
   const label = progressLabel(item), caption=progressCaption(item);
-  const collapse = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '− 접기' : hidden ? `+ ${hidden}줄 더 보기` : '+ 상세 출력 보기'}</button>;
+  const collapse = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '− Collapse' : hidden ? `+ ${hidden} more ${hidden === 1 ? 'line' : 'lines'}` : '+ Show details'}</button>;
   return <section className={`codexWork ${running ? 'running' : ''} ${failed ? 'failed' : ''}`} data-item={item.id}>
     <div className="codexWorkHeading"><span className="codexDot" /><strong>{label}</strong>{caption && <button className="codexCommand" title={caption} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{caption.split('\n')[0]}{caption.includes('\n') ? ' …' : ''}</button>}{failed && item.exitCode != null && <small>exit {item.exitCode}</small>}{expanded && collapse}</div>
     <div className="codexWorkBody">
-      {exploring && actions.map((a: any, index: number) => <div className="codexAction" key={index}><span>{a.type === 'read' ? '읽기' : a.type === 'search' ? '검색' : '목록'}</span><span>{a.name || [a.query, a.path].filter(Boolean).join(' ') || a.command}</span></div>)}
+      {exploring && actions.map((a: any, index: number) => <div className="codexAction" key={index}><span>{a.type === 'read' ? 'Read' : a.type === 'search' ? 'Search' : 'List files'}</span><span>{a.name || [a.query, a.path].filter(Boolean).join(' ') || a.command}</span></div>)}
       {expanded && caption && <pre>{caption}</pre>}
       {expanded && item.arguments!=null && <pre>{JSON.stringify(item.arguments,null,2)}</pre>}
       {(item.changes || []).map((change: any) => <div key={change.path}><div className="codexFile">{change.path}</div>{expanded && change.diff && <pre>{change.diff}</pre>}</div>)}
       {full && (!exploring || expanded) && <pre className={expanded ? '' : 'codexOutputPreview'}>{expanded ? full : lines.slice(-3).join('\n')}</pre>}
-      {running && !full && !exploring && ['commandExecution','mcpToolCall','dynamicToolCall'].includes(item.type) && <small>출력을 기다리고 있습니다…</small>}
+      {running && !full && !exploring && ['commandExecution','mcpToolCall','dynamicToolCall'].includes(item.type) && <small>Waiting for output…</small>}
       {(expanded || hidden > 0 || exploring || item.changes?.length > 0 || item.arguments!=null) && collapse}
     </div>
   </section>;
@@ -328,7 +328,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       <div className="codexSessionDetails">{sessionDetails}</div>
     </div>
     <div className="codexMessages" ref={scroller} onScroll={() => { const n = scroller.current!; following.current = n.scrollHeight - n.scrollTop - n.clientHeight < 60; setShowLatest(!following.current); }}>
-      {s.nextCursor && <button disabled={historyBusy} className="codexOlder" onClick={() => void older()}>이전 대화 불러오기</button>}
+      {s.nextCursor && <button disabled={historyBusy} className="codexOlder" onClick={() => void older()}>Load earlier messages</button>}
       {!s.order.length && connection === 'ready' && <div className="codexEmpty"><span className="codexEmptyMark">✳</span><h2>어떤 작업을 시작할까요?</h2></div>}
       {s.order.map(id => {
         const item = s.items.get(id)!;
@@ -347,10 +347,10 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
     </div>
     <div className="codexComposerArea">
       {running && <CodexWorking key={s.active!} sessionKey={session.key} turnId={s.active!} startedAt={s.turnStarts.get(s.active!) || null} activity={working} disabled={connection !== 'ready'} interrupt={()=>void request({op:'interrupt'}).catch(e=>setError(String(e)))}/>}
-      {background.length>0&&<button type="button" className="codexBackground" onClick={()=>void runCommand('/ps')}>백그라운드 터미널 {background.length}개 · 보기</button>}
+      {background.length>0&&<button type="button" className="codexBackground" onClick={()=>void runCommand('/ps')}>View {background.length} background {background.length === 1 ? 'terminal' : 'terminals'}</button>}
       {submissions.length>0&&<section className="codexSubmissions" aria-label="전송 중인 입력">{submissions.map(entry=><div className={entry.status} key={entry.id}><header><strong>{entry.status==='sending'?'전송 확인 중':'전송 확인 실패'}</strong>{entry.status==='failed'&&<><button type="button" onClick={()=>void restoreSubmission(entry)}>입력으로 복원</button><button type="button" aria-label="입력 기록 닫기" onClick={()=>changeSubmissions(items=>items.filter(item=>item.id!==entry.id))}>×</button></>}</header><p>{entry.text}{entry.images?.length?` · 이미지 ${entry.images.length}개`:''}</p>{entry.error&&<small>{entry.error}</small>}</div>)}</section>}
       {queueTurn&&<div className="codexInputHint">리뷰·문맥 압축 중인 입력은 다음 턴에 전달합니다.</div>}
-      {showLatest && <button className="codexLatest" onClick={() => { following.current = true; setShowLatest(false); if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }}>↓ 최신 작업으로 이동</button>}
+      {showLatest && <button className="codexLatest" onClick={() => { following.current = true; setShowLatest(false); if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }}>↓ Jump to latest</button>}
       {s.queue.items.length > 0 && <section className="codexQueue" aria-label="대기 메시지"><header><strong>대기 메시지 {s.queue.items.length}개{s.queue.paused ? ' · 일시 중지' : ''}</strong>{s.queue.paused && <button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/resume')}>대기열 다시 시작</button>}</header>{s.queue.error && <p>{s.queue.error}</p>}<ol>{s.queue.items.map(entry => <li key={entry.id}><span title={entry.text}>{entry.images?.length ? `이미지 ${entry.images.length}개 · ` : ''}{entry.text || '이미지 첨부'}</span><button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/remove', entry.id)}>취소</button></li>)}</ol></section>}
       {[...s.approvals.values()].map(r => <Approval key={JSON.stringify(r.id)} request={r} item={s.items.get(r.params.itemId)} reply={request} />)}
       {error && <div className="codexError" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="오류 닫기">×</button></div>}
@@ -378,7 +378,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         <div className="codexComposerActions">
           <button type="button" className="codexIconButton codexSlashButton" title="명령 선택" aria-label="명령 선택" disabled={!s.capabilities.commands} onClick={() => { setDraft('/'); promptRef.current?.focus(); }}><Slash size={19} /></button>
           <span className="codexComposerSpacer" />
-          {running && <button type="button" className="codexIconButton codexStopButton" title="작업 중단" aria-label="작업 중단" disabled={connection !== 'ready'} onClick={() => { void request({ op: 'interrupt' }).catch(e => setError(String(e))); }}><Square size={16} fill="currentColor" /></button>}
+          {running && <button type="button" className="codexIconButton codexStopButton" title="Interrupt" aria-label="Interrupt" disabled={connection !== 'ready'} onClick={() => { void request({ op: 'interrupt' }).catch(e => setError(String(e))); }}><Square size={16} fill="currentColor" /></button>}
           {s.capabilities.queue && running && !commandInput && <button type="button" className="codexQueueButton" title="다음 턴 예약 · Tab" aria-label="다음 턴 예약" disabled={(!draft.trim() && !availableImages.length) || !images.ready || session.status !== 'running' || connection !== 'ready'} onClick={() => void sendText(true)}><ListPlus size={18} /><span className="codexQueueLabelFull">다음 턴</span><span className="codexQueueLabelMobile">예약</span></button>}
           <button className="codexSend" aria-label={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영 ↑' : '전송 ↑'} title={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} disabled={(!commandInput && session.status !== 'running') || (commandInput && commandBusy) || connection !== 'ready' || (!draft.trim() && !availableImages.length) || !images.ready}><ArrowUp size={23} /></button>
         </div>

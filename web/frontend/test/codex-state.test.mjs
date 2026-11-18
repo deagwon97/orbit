@@ -51,7 +51,7 @@ test('working start times restore seconds or milliseconds from history without r
 
 test('working progress includes retries, patches, terminal input, hooks and tool outputs while raw reasoning remains hidden',()=>{
  const s=newChatState();observe(s,{method:'turn/started',params:{turn:{id:'live'}}});
- observe(s,{method:'error',params:{turnId:'live',willRetry:true,error:{message:'Reconnecting 1/3'}}});assert.equal(s.activity,'Reconnecting 1/3');assert.match([...s.items.values()].at(-1).text,/재시도/);
+ observe(s,{method:'error',params:{turnId:'live',willRetry:true,error:{message:'Reconnecting 1/3'}}});assert.equal(s.activity,'Reconnecting 1/3');assert.match([...s.items.values()].at(-1).text,/^Retrying · /);
  observe(s,{method:'item/fileChange/patchUpdated',params:{turnId:'live',itemId:'patch',changes:[{path:'src/a.ts',diff:'+ added'}]}});assert.equal(s.items.get('patch').changes[0].diff,'+ added');
  observe(s,{method:'item/commandExecution/terminalInteraction',params:{turnId:'live',itemId:'cmd',processId:'42',stdin:'next\n'}});assert.match(output([...s.items.values()].at(-1)),/next/);
  observe(s,{method:'hook/started',params:{threadId:'x',turnId:'live',run:{id:'h',eventName:'PreToolUse',entries:[]}}});assert.equal(s.items.get('hook-h').status,'inProgress');

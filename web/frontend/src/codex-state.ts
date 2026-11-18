@@ -64,20 +64,20 @@ export function observe(state: ChatState, message: any) {
     const id=`terminal-${p.itemId}-${state.revision}`;
     putItem(state,{id,type:'terminalInteraction',turnId:p.turnId,status:'completed',processId:p.processId,stdin:p.stdin});
   } else if (['warning','guardianWarning','auth/recovery','thread/authRecovery','turn/authRecovery','deprecationNotice','turn/strictReviewRequired','autoApprovalReview/strictReviewRequired','modelProvider/authRecoveryStarted','modelProvider/authRecoveryCompleted','configWarning'].includes(method)) {
-    const text=p.message||p.summary||(method.includes('strictReviewRequired')?'리뷰 검사 중입니다.':'');
+    const text=p.message||p.summary||(method.includes('strictReviewRequired')?'Review in progress.':'');
     if(text){state.activity=method==='modelProvider/authRecoveryCompleted'?'':text;putItem(state,{id:`notice-${state.revision}`,type:'progressNotice',text,turnId:p.turnId||state.active,status:'completed'});}
   } else if (method === 'hook/started' || method === 'hook/completed') {
     const run=p.run||{};putItem(state,{id:`hook-${run.id}`,type:'hook',turnId:p.turnId||state.active,status:method==='hook/started'?'inProgress':'completed',text:[run.statusMessage,...(run.entries||[]).map((entry:any)=>entry.text)].filter(Boolean).join('\n'),eventName:run.eventName});
   } else if (method === 'thread/status/changed') {
     if(p.status?.type==='active'){
       const flags=p.status.activeFlags||[];
-      state.activity=flags.includes('waitingOnApproval')?'승인 대기 중':flags.includes('waitingOnUserInput')?'사용자 입력 대기 중':'';
+      state.activity=flags.includes('waitingOnApproval')?'Waiting for approval':flags.includes('waitingOnUserInput')?'Waiting for user input':'';
     }else if(p.status?.type==='idle')state.activity='';
   } else if (method === 'serverRequest/resolved') {
     state.approvals.delete(JSON.stringify(p.requestId)); state.approvalsRevision = ++state.revision;
   } else if (method === 'error' && p.willRetry) {
-    const text=p.error?.message||'연결을 복구하고 다시 시도하고 있습니다.';state.activity=text;
-    putItem(state,{id:`retry-${state.revision}`,type:'progressNotice',text:`재시도 중 · ${text}`,turnId:p.turnId||state.active,status:'completed'});
+    const text=p.error?.message||'Restoring the connection and retrying.';state.activity=text;
+    putItem(state,{id:`retry-${state.revision}`,type:'progressNotice',text:`Retrying · ${text}`,turnId:p.turnId||state.active,status:'completed'});
   } else if (method === 'error' && !p.willRetry) {
     putItem(state, { id: `server-error-${state.revision}`, type: 'system', text: p.error?.message || 'Codex error' });
   }
@@ -117,7 +117,7 @@ const format=(value:any)=>value==null?'':typeof value==='string'?value:JSON.stri
 function contentText(content:any) {
   if(typeof content==='string')return content;
   if(!Array.isArray(content))return '';
-  return content.map(c=>['text','inputText'].includes(c.type)?c.text:c.type==='resource'?c.resource?.text||c.resource?.uri:['image','inputImage'].includes(c.type)?'[이미지 결과]':'').filter(Boolean).join('\n');
+  return content.map(c=>['text','inputText'].includes(c.type)?c.text:c.type==='resource'?c.resource?.text||c.resource?.uri:['image','inputImage'].includes(c.type)?'[Image result]':'').filter(Boolean).join('\n');
 }
 export function output(item:CodexItem):string {
   // Raw reasoning content is deliberately excluded; only supplied summaries render.
