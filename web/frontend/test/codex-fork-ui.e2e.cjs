@@ -7,8 +7,7 @@ const { chromium } = require('/app/node_modules/playwright');
   const config = JSON.parse(fs.readFileSync(0, 'utf8'));
   const browser = await chromium.launch({ executablePath: chromium.executablePath(), headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const name = `Fork QA ${Date.now()}`;
-  const branchName = name + ' · 포크';
+  let name, branchName;
   const headers = { Authorization: 'Bearer ' + config.token, 'x-orbitd-url': config.orbitdUrl };
   const sessions = () => page.evaluate(async headers => {
     const response = await fetch('/api/v1/sessions', { headers });
@@ -29,9 +28,14 @@ const { chromium } = require('/app/node_modules/playwright');
     await page.getByTitle('New session', { exact: true }).click();
     const form = page.getByRole('dialog', { name: 'New session' });
     await form.getByRole('radio', { name: 'Web · Chat', exact: true }).check();
-    await form.getByLabel('Name', { exact: true }).fill(name);
     await form.getByPlaceholder('cwd', { exact: true }).fill(config.cwd);
-    await form.getByRole('button', { name: 'Run', exact: true }).click();
+    const [created] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/sessions' && response.request().method() === 'POST'),
+      form.getByRole('button', { name: 'Run', exact: true }).click()
+    ]);
+    if (!created.ok()) throw Error('QA session creation failed: ' + created.status());
+    name = (await created.json()).name;
+    branchName = name + ' · 포크';
     await page.getByText('Codex 연결됨', { exact: true }).waitFor();
     const source = (await sessions()).find(session => session.name === name);
     assert(source && Number.isInteger(source.pid) && source.pid > 0);

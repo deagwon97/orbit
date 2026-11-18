@@ -4,7 +4,7 @@ const {chromium} = require('/app/node_modules/playwright');
  const c=JSON.parse(fs.readFileSync(0,'utf8'));
  const browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']});
  const page=await browser.newPage({viewport:{width:1440,height:1000}});
- const name=`Codex Commands UI QA ${Date.now()}`;
+ let name;
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  async function seed(p){await p.goto(c.webUrl);await p.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'commands',label:'Commands QA',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','commands');},c);await p.reload();}
  async function typeCommand(p,text){
@@ -17,7 +17,7 @@ const {chromium} = require('/app/node_modules/playwright');
  }
  try{
   await seed(page);await page.getByTitle('New session',{exact:true}).click();const modal=page.getByRole('dialog');
-  await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();
+  await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);const creation=page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/sessions' && response.request().method() === 'POST');await modal.getByRole('button',{name:'Run',exact:true}).click();const created=await creation;if(!created.ok())throw Error('QA session creation failed: '+created.status());name=(await created.json()).name;
   await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});
   await typeCommand(page,'/sta');await page.getByRole('dialog',{name:'세션 상태'}).waitFor();await page.getByRole('dialog').press('Escape');
   await typeCommand(page,'/model');let dialog=page.getByRole('dialog',{name:'모델 및 추론 강도'});await dialog.waitFor();

@@ -2,8 +2,31 @@
 const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
 (async()=>{
  const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let active=true,wsClient,wsAttempts=0,failConnections=false;
+ await page.addInitScript(() => {
+  Object.defineProperty(window, 'SpeechRecognition', {value:undefined,configurable:true});
+  window.webkitSpeechRecognition = class {
+   start() {
+    window.voiceFixture = this;
+    queueMicrotask(() => this.onstart?.());
+   }
+   stop() {
+    queueMicrotask(() => {
+     this.onresult?.({resultIndex:1,results:[
+      Object.assign([{transcript:'이전 결과'}],{isFinal:true}),
+      Object.assign([{transcript:' 음성으로 추가한 내용 '}],{isFinal:true}),
+      Object.assign([{transcript:' 임시 결과 '}],{isFinal:false}),
+     ]});
+     this.onend?.();
+    });
+   }
+   abort() {
+    window.voiceAborted = true;
+    this.onend?.();
+   }
+  };
+ });
  const startedAt=Math.floor((Date.now()-234000)/1000),settings={model:'gpt-6.1-sol-long-model-name-layout-check',effort:'medium',serviceTier:'priority',approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'},cwd:'/home/bdg/project/a-very-long-project-folder/mobile-layout-and-working-status-validation'};
- const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,resume:true},approvals:[],queue:{items:[],version:0,paused:false}});
+ const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,fileAttachments:true,resume:true},approvals:[],queue:{items:[],version:0,paused:false}});
  const limits={rateLimits:{limitName:'Codex',primary:{usedPercent:20,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+86400}}};
  const commands=[{name:'status',description:'세션 상태',duringTask:true},{name:'model',description:'모델 선택',duringTask:true},{name:'resume',description:'이전 대화',duringTask:true},{name:'help',description:'명령 안내',duringTask:true}];
  const testCwd=c.cwd||'/home/qa/project';
@@ -16,7 +39,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(pathname.endsWith('/sessions')){
    if(method==='POST'){
     const data=route.request().postDataJSON();
-    storedSession={id:'mobile-ui-fixture',name:data.name,mode:data.mode,tool:data.tool,cwd:data.cwd,status:'running',codex_thread_id:'mobile-ui-thread'};
+    storedSession={id:'mobile-ui-fixture',name,mode:data.mode,tool:data.tool,cwd:data.cwd,status:'running',codex_thread_id:'mobile-ui-thread'};
     return route.fulfill({status:201,json:storedSession});
    }
    return route.fulfill({json:storedSession?[storedSession]:[]});
@@ -24,6 +47,11 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(method==='DELETE'&&pathname.endsWith('/sessions/mobile-ui-fixture')){
    storedSession=null;
    return route.fulfill({json:{ok:true}});
+  }
+  if(method==='POST'&&pathname.endsWith('/sessions/mobile-ui-fixture/files')){
+   const name=new URL(route.request().url()).searchParams.get('name');
+   if(route.request().headers()['content-type']!=='application/octet-stream')throw Error('Ordinary file upload was not binary');
+   return route.fulfill({json:{id:name,path:'/tmp/orbit-codex-images-qa/mobile-ui-fixture/'+name}});
   }
   if(pathname.endsWith('/dirs'))return route.fulfill({json:{path:testCwd,cwd:testCwd,home:testCwd,parent:'/home/qa',dirs:[]}});
   return route.abort();
@@ -40,8 +68,46 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  async function command(text){const box=page.getByRole('textbox',{name:'Codex 메시지'});await box.fill(text);await page.getByRole('button',{name:'명령 실행',exact:true}).click();}
  async function assertFit(label){const metrics=await page.evaluate(()=>{const chat=document.querySelector('.codexChat'),composer=document.querySelector('.codexComposer'),messages=document.querySelector('.codexMessages'),dialog=document.querySelector('.codexControls');return {overflow:document.documentElement.scrollWidth>innerWidth+1,chat:chat&&chat.getBoundingClientRect().width,composer:composer&&composer.getBoundingClientRect().bottom,height:visualViewport.height,visible:messages&&messages.clientHeight,dialog:dialog&&{width:dialog.getBoundingClientRect().width,height:dialog.getBoundingClientRect().height,bottom:dialog.getBoundingClientRect().bottom,scroll:dialog.scrollWidth>dialog.clientWidth+1}};});if(metrics.overflow||metrics.composer>metrics.height+2||metrics.dialog?.scroll||metrics.dialog?.bottom>metrics.height+2)throw Error(label+' overflow '+JSON.stringify(metrics));return metrics;}
  try{
-  await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByLabel('Name',{exact:true}).fill(name);await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
+  await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
+  const mic=page.getByRole('button',{name:'음성 입력 시작',exact:true});
+  const voiceDraft=page.getByRole('textbox',{name:'Codex 메시지'});
+  await voiceDraft.fill('작성 중');
+  await mic.click();
+  const stopMic=page.getByRole('button',{name:'음성 입력 중지',exact:true});
+  await stopMic.waitFor();
+  if(!await page.locator('.codexSend').isDisabled())throw Error('Sending is still enabled while recording');
+  await stopMic.click();
+  await mic.waitFor();
+  if(await voiceDraft.inputValue()!=='작성 중 음성으로 추가한 내용'||ops.some(op=>['send','steer','queue'].includes(op.op)))throw Error('Voice result was not added to the unsent draft');
+  await voiceDraft.fill('');
+  await mic.click();
+  await stopMic.waitFor();
+  await page.evaluate(()=>window.voiceFixture.onerror({error:'not-allowed'}));
+  await page.getByRole('alert').getByText(/마이크 접근을 허용하세요/).waitFor();
+  await page.getByRole('button',{name:'오류 닫기',exact:true}).click();
+  await page.getByRole('button',{name:'파일 첨부',exact:true}).click();
+  await page.getByRole('button',{name:'이미지 선택',exact:true}).waitFor();
+  await page.getByRole('button',{name:'파일 선택',exact:true}).waitFor();
+  await page.getByLabel('첨부할 파일 선택',{exact:true}).setInputFiles({name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from('QA notes')});
+  await page.locator('.codexImageDraft.ready').filter({hasText:'notes.txt'}).waitFor();
+  await voiceDraft.evaluate(node=>{
+   const data=new DataTransfer();
+   data.items.add(new File(['QA table'],'table.csv',{type:'text/csv'}));
+   node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));
+  });
+  await page.locator('.codexImageDraft.ready').filter({hasText:'table.csv'}).waitFor();
+  await page.locator('.codexChat').evaluate(node=>{
+   const data=new DataTransfer();
+   data.items.add(new File(['QA report'],'report.pdf',{type:'application/pdf'}));
+   node.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}));
+  });
+  await page.locator('.codexImageDraft.ready').filter({hasText:'report.pdf'}).waitFor();
+  await page.locator('.codexSend').click();
+  await page.locator('.codexImageDrafts').waitFor({state:'hidden'});
+  if(!ops.some(op=>op.op==='steer'&&op.text===''&&JSON.stringify(op.files)===JSON.stringify(['notes.txt','table.csv','report.pdf'])))throw Error('General files were not sent for Codex input');
+
+
   await assertFit('mobile');const time=await page.locator('.codexWorking time').innerText();if(!/3m|4m/.test(time))throw Error('Working timer did not use turn start');await page.waitForFunction(before=>document.querySelector('.codexWorking time').textContent!==before,time);if(await page.getByText('Reasoning summary',{exact:true}).count())throw Error('Empty reasoning shown');
   if(await page.locator('.codexChat > .codexConnection + .codexMessages').count()!==1)throw Error('Mobile chat header still has an extra location row');
   if(await page.getByRole('button',{name:'탐색 메뉴 열기',exact:true}).count())throw Error('Redundant chat navigation menu remains');
@@ -50,8 +116,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.getByRole('button',{name:'세션 목록으로 돌아가기',exact:true}).click();await page.getByTitle('New session',{exact:true}).click();await page.locator('.sessionModal').waitFor();await page.getByTitle('Browse folders',{exact:true}).click();await page.locator('.folderPicker').waitFor();await page.goBack();await page.locator('.folderPicker').waitFor({state:'hidden'});await page.locator('.sessionModal').waitFor();await page.goBack();await page.locator('.sessionModal').waitFor({state:'hidden'});await page.locator('.sessions .row').filter({hasText:name}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await command('/status');dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.waitFor();await dialog.getByRole('meter',{name:'Codex Weekly limit',exact:true}).waitFor();if(await dialog.getByRole('meter',{name:'Codex Weekly limit',exact:true}).getAttribute('aria-valuenow')!=='40')throw Error('Weekly limit remaining incorrect');await assertFit('mobile status');await page.screenshot({path:'/workspace/output/orbit-status-mobile.png'});await page.goBack();await dialog.waitFor({state:'hidden'});await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await page.getByRole('button',{name:'대화 명령 열기',exact:true}).click();dialog=page.getByRole('dialog',{name:'대화 명령'});await dialog.waitFor();await dialog.getByRole('button').filter({hasText:'/model'}).click();await command('/model');await page.getByRole('dialog',{name:'모델 및 추론 강도'}).waitFor();await page.getByRole('button',{name:'명령 창 닫기'}).click();await page.waitForFunction(()=>!history.state?.orbitModal);await page.getByText('Codex 연결됨',{exact:true}).waitFor();
-  for(const width of [320,390,768]){await page.setViewportSize({width,height:844});await assertFit('width '+width);const touch=await page.getByRole('button',{name:'이미지 첨부',exact:true}).boundingBox();if(touch.height<43||touch.width<43)throw Error('Attachment button too small');}
-  await page.setViewportSize({width:390,height:844});if(await page.getByRole('button',{name:'키보드와 단축키'}).count())throw Error('Keyboard button remains');const plus=await page.getByRole('button',{name:'이미지 첨부',exact:true}).boundingBox(),input=await page.getByRole('textbox',{name:'Codex 메시지'}).boundingBox(),send=await page.locator('.codexSend').boundingBox();if(!(plus.x<input.x&&input.x<send.x)||Math.abs(plus.y-send.y)>2)throw Error('Composer is not one row with attachment on the left');await page.getByRole('textbox',{name:'Codex 메시지'}).fill('작업 중 보충 지시');
+  for(const width of [320,390,768]){await page.setViewportSize({width,height:844});await assertFit('width '+width);const touch=await page.getByRole('button',{name:'파일 첨부',exact:true}).boundingBox();if(touch.height<43||touch.width<43)throw Error('Attachment button too small');}
+  await page.setViewportSize({width:390,height:844});if(await page.getByRole('button',{name:'키보드와 단축키'}).count())throw Error('Keyboard button remains');const plus=await page.getByRole('button',{name:'파일 첨부',exact:true}).boundingBox(),input=await page.getByRole('textbox',{name:'Codex 메시지'}).boundingBox(),send=await page.locator('.codexSend').boundingBox();if(!(plus.x<input.x&&input.x<send.x)||Math.abs(plus.y-send.y)>2)throw Error('Composer is not one row with attachment on the left');await page.getByRole('textbox',{name:'Codex 메시지'}).fill('작업 중 보충 지시');
   const box=page.getByRole('textbox',{name:'Codex 메시지'}),inputOps=ops.filter(o=>['send','steer','queue'].includes(o.op)).length;
   await box.press('End');await box.press('Enter');await box.press('Shift+Enter');
   if(await box.inputValue()!=='작업 중 보충 지시\n\n'||ops.filter(o=>['send','steer','queue'].includes(o.op)).length!==inputOps)throw Error('Mobile Enter should insert newlines without submitting');
@@ -66,7 +132,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   });
   await box.press('Enter');
   if(await box.inputValue()!=='작업 중 보충 지시\n\n\n')throw Error('Touch desktop mode submitted instead of inserting a newline');
-  const wide=await box.boundingBox(),bottomPlus=await page.getByRole('button',{name:'이미지 첨부',exact:true}).boundingBox(),bottomSend=await page.locator('.codexSend').boundingBox();
+  const wide=await box.boundingBox(),bottomPlus=await page.getByRole('button',{name:'파일 첨부',exact:true}).boundingBox(),bottomSend=await page.locator('.codexSend').boundingBox();
   if(wide.width<=input.width+50||bottomPlus.y<wide.y+wide.height||Math.abs(bottomPlus.y-bottomSend.y)>2)throw Error('Multiline buttons did not move below full-width input');
   await box.fill('자동 줄바꿈을 확인하는 긴 문장입니다. '.repeat(5));
   if(!await page.locator('.codexComposer.multiline').count())throw Error('Soft wrapping did not expand the composer');
@@ -79,6 +145,11 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(!ops.some(o=>o.op==='steer'&&o.text==='첫 줄\n두 번째 줄\n세 번째 줄'))throw Error('Multiline payload did not preserve newlines');
   if(await page.locator('.codexComposer.multiline').count())throw Error('Composer did not collapse after sending');
   await page.setViewportSize({width:1440,height:1000});
+  if(!await mic.isVisible()||await page.getByRole('button',{name:'명령 선택',exact:true}).count())throw Error('Desktop voice button did not replace the slash shortcut');
+  await mic.click();
+  await stopMic.press('Escape');
+  await mic.waitFor();
+  if(!await page.evaluate(()=>window.voiceAborted))throw Error('Escape did not cancel voice capture');
   const header=page.locator('.codexConnection');
   await header.getByText(name,{exact:true}).waitFor();
   if(!await page.locator('.codexSessionPane').evaluate(panel=>{
@@ -153,7 +224,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await actions.click();
   await sessionActions.getByRole('button',{name:'Delete session',exact:true}).click();
   await card.waitFor({state:'hidden'});
-  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,compactDesktopHeader:true,automaticReconnect:true,reconnectStopsAfterFive:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,mobileLocationRowRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true,listDetachAndDelete:true}));
+  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,compactDesktopHeader:true,automaticReconnect:true,reconnectStopsAfterFive:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,mobileLocationRowRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,voiceInput:true,generalAttachments:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true,listDetachAndDelete:true}));
  }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText({timeout:1000}).catch(()=>'' )).slice(-1200));await page.screenshot({path:'/workspace/output/orbit-mobile-error.png'});throw e;}
  finally{await browser.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

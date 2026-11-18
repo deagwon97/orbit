@@ -2,7 +2,7 @@
 const fs=require('node:fs');const {chromium}=require('/app/node_modules/playwright');
 (async()=>{
  const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']});
- const page=await browser.newPage({viewport:{width:1440,height:1000}}),name=`Codex Images QA ${Date.now()}`,errors=[];let session;
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];let session,name;
  page.on('pageerror',e=>errors.push(e.message));
  const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
  const small=Buffer.from(png,'base64'),large=Buffer.concat([small,Buffer.alloc(12*1024*1024)]);
@@ -10,8 +10,8 @@ const fs=require('node:fs');const {chromium}=require('/app/node_modules/playwrig
  async function paste(p,name){await p.getByRole('textbox',{name:'Codex 메시지'}).evaluate((node,{png,name})=>{const file=new File([Uint8Array.from(atob(png),x=>x.charCodeAt(0))],name,{type:'image/png'}),data=new DataTransfer();data.items.add(file);node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));},{png,name});}
  async function ready(p,count){await p.waitForFunction(count=>document.querySelectorAll('.codexImageDraft.ready').length===count,count);}
  try{
-  await seed(page);await page.getByTitle('New session',{exact:true}).click();let modal=page.getByRole('dialog');await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();
-  await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});await page.getByRole('button',{name:'이미지 첨부',exact:true}).click();await page.getByRole('button',{name:'이미지 선택',exact:true}).waitFor();
+  await seed(page);await page.getByTitle('New session',{exact:true}).click();let modal=page.getByRole('dialog');await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);const creation=page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/sessions' && response.request().method() === 'POST');await modal.getByRole('button',{name:'Run',exact:true}).click();const created=await creation;if(!created.ok())throw Error('QA session creation failed: '+created.status());name=(await created.json()).name;
+  await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});await page.getByRole('button',{name:'파일 첨부',exact:true}).click();await page.getByRole('button',{name:'이미지 선택',exact:true}).waitFor();
   await page.getByLabel('첨부할 이미지 선택',{exact:true}).setInputFiles({name:'selected.png',mimeType:'image/png',buffer:large});await ready(page,1);
   session=await page.evaluate(async({c,name})=>{const r=await fetch('/api/v1/sessions',{headers:{Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl}});return(await r.json()).find(s=>s.name===name);},{c,name});
   const savedPath=await page.locator('.codexImageDraft code').textContent();if(!savedPath.startsWith('/tmp/')||!savedPath.includes('/'+session.id+'/'))throw Error('Upload did not reach session-scoped host /tmp');

@@ -1,4 +1,4 @@
-//! Private, session-scoped image files on the execution host, never arbitrary paths.
+//! Private, session-scoped attachments on the execution host.
 use anyhow::{bail, Context, Result};
 use std::{
     fs::{self, DirBuilder, OpenOptions},
@@ -68,6 +68,27 @@ pub fn mime(id: &str) -> Result<&'static str> {
 }
 pub fn path(session: &str, id: &str) -> Result<PathBuf> {
     mime(id)?;
+    stored_path(session, id)
+}
+
+fn safe_filename_character(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '.' | '-' | '_')
+}
+
+pub fn file_path(session: &str, id: &str) -> Result<PathBuf> {
+    let (uuid, suffix) = id.split_at_checked(36).context("Invalid file ID")?;
+    let name = suffix.strip_prefix('-').context("Invalid file ID")?;
+    if Uuid::parse_str(uuid)?.to_string() != uuid
+        || name.is_empty()
+        || name.len() > 120
+        || !name.chars().all(safe_filename_character)
+    {
+        bail!("Invalid file ID");
+    }
+    stored_path(session, id)
+}
+
+fn stored_path(session: &str, id: &str) -> Result<PathBuf> {
     let dir = directory(session, false)?;
     // Refuse symlinks and files made writable by other users.
     private_existing(&dir)?;
@@ -92,6 +113,33 @@ pub fn save(session: &str, mime: &str, bytes: &[u8]) -> Result<serde_json::Value
         bail!("이미지는 파일당 최대 50 MiB입니다.");
     }
     let ext = extension(mime, bytes)?;
+    let id = format!("{}.{}", Uuid::new_v4(), ext);
+    save_upload(session, id, mime, bytes)
+}
+
+pub fn save_file(session: &str, name: &str, bytes: &[u8]) -> Result<serde_json::Value> {
+    if bytes.len() > MAX_BYTES {
+        bail!("첨부는 파일당 최대 50 MiB입니다.");
+    }
+    let mut filename = String::new();
+    for c in name.chars() {
+        let c = if safe_filename_character(c) { c } else { '_' };
+        if filename.len() + c.len_utf8() > 120 {
+            break;
+        }
+        filename.push(c);
+    }
+    let filename = filename.trim_matches('.');
+    let filename = if filename.is_empty() {
+        "file"
+    } else {
+        filename
+    };
+    let id = format!("{}-{filename}", Uuid::new_v4());
+    save_upload(session, id, "application/octet-stream", bytes)
+}
+
+fn save_upload(session: &str, id: String, mime: &str, bytes: &[u8]) -> Result<serde_json::Value> {
     let _guard = UPLOAD.lock().unwrap();
     let dir = directory(session, true)?;
     let entries: Vec<_> = fs::read_dir(&dir)?.collect::<std::io::Result<_>>()?;
@@ -101,9 +149,8 @@ pub fn save(session: &str, mime: &str, bytes: &[u8]) -> Result<serde_json::Value
         .map(|m| m.len())
         .sum();
     if entries.len() >= 128 || size + bytes.len() as u64 > 512 * 1024 * 1024 {
-        bail!("이 세션의 임시 이미지 한도(512 MiB / 128개)에 도달했습니다.");
+        bail!("이 세션의 임시 첨부 한도(512 MiB / 128개)에 도달했습니다.");
     }
-    let id = format!("{}.{}", Uuid::new_v4(), ext);
     let path = dir.join(&id);
     let mut file = OpenOptions::new()
         .write(true)
@@ -118,7 +165,14 @@ pub fn save(session: &str, mime: &str, bytes: &[u8]) -> Result<serde_json::Value
     Ok(serde_json::json!({"id":id,"path":path,"mime":mime,"size":bytes.len()}))
 }
 pub fn read(session: &str, id: &str) -> Result<Vec<u8>> {
-    let path = path(session, id)?;
+    read_path(path(session, id)?)
+}
+
+pub fn read_file(session: &str, id: &str) -> Result<Vec<u8>> {
+    read_path(file_path(session, id)?)
+}
+
+fn read_path(path: PathBuf) -> Result<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)

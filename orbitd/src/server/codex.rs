@@ -127,7 +127,7 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
     // Dropping a browser connection does not stop the turn or the shared daemon.
 }
 
-fn image_session(
+fn attachment_session(
     state: &AppState,
     id: &str,
     upload: bool,
@@ -153,7 +153,7 @@ pub async fn upload_image(
     headers: axum::http::HeaderMap,
     bytes: axum::body::Bytes,
 ) -> Response {
-    let session = match image_session(&state, &id, true) {
+    let session = match attachment_session(&state, &id, true) {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
@@ -177,7 +177,7 @@ pub async fn read_image(
     State(state): State<AppState>,
     Path((id, image)): Path<(String, String)>,
 ) -> Response {
-    let session = match image_session(&state, &id, false) {
+    let session = match attachment_session(&state, &id, false) {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
@@ -198,6 +198,63 @@ pub async fn read_image(
         _ => (
             StatusCode::NOT_FOUND,
             "임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.",
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct FileUploadQuery {
+    name: String,
+}
+
+pub async fn upload_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<FileUploadQuery>,
+    bytes: axum::body::Bytes,
+) -> Response {
+    let session = match attachment_session(&state, &id, true) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || {
+        crate::images::save_file(&session.id, &query.name, &bytes)
+    })
+    .await
+    {
+        Ok(Ok(value)) => axum::Json(value).into_response(),
+        Ok(Err(error)) => (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error":error.to_string()})),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+pub async fn read_file(
+    State(state): State<AppState>,
+    Path((id, file)): Path<(String, String)>,
+) -> Response {
+    let session = match attachment_session(&state, &id, false) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || crate::images::read_file(&session.id, &file)).await {
+        Ok(Ok(bytes)) => (
+            [
+                ("content-type", "application/octet-stream"),
+                ("content-disposition", "attachment"),
+                ("x-content-type-options", "nosniff"),
+                ("cache-control", "private, no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        _ => (
+            StatusCode::NOT_FOUND,
+            "임시 파일을 찾을 수 없습니다. 다시 첨부하세요.",
         )
             .into_response(),
     }

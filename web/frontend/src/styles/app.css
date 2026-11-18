@@ -666,6 +666,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   gap: 8px;
   padding: 4px 12px 12px;
 }
+.sessionTempRun { margin-inline-end: auto; }
 .folderTop {
   min-height: 48px;
   display: flex;
@@ -1085,6 +1086,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
+  .sessionTempRun { grid-column: 1 / -1; margin: 0; }
   .folderCreate { grid-template-columns: 1fr; }
   .fileWorkspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .fileEditorSurface { grid-column: 1; grid-row: 1; padding: 8px; }

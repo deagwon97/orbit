@@ -17,6 +17,7 @@ const app = Fastify({ logger: {
 await app.register(cors, { origin: true });
 await app.register(websocket);
 app.addContentTypeParser(/^image\/(png|jpeg|webp|gif)$/, { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
 
 function orbitdBase(req: any) {
   const value = req.headers["x-orbitd-url"] || req.query?.orbitd || config.orbitd;
@@ -155,6 +156,29 @@ app.post("/api/v1/sessions/:id/images", { bodyLimit: 50 * 1024 * 1024 }, async (
 app.get("/api/v1/sessions/:id/images/:image", async (req: any, reply) => {
   const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/images/${encodeURIComponent(req.params.image)}`, { headers: authHeader(req) });
   reply.code(res.status).header("content-type", res.headers.get("content-type") || "application/octet-stream").header("x-content-type-options", "nosniff").header("cache-control", "private, no-store");
+  return reply.send(Buffer.from(await res.arrayBuffer()));
+});
+
+app.post<{ Params: { id: string } }>("/api/v1/sessions/:id/files", { bodyLimit: 50 * 1024 * 1024 }, async (req, reply) => {
+  if (!Buffer.isBuffer(req.body)) return reply.code(415).send({ error: "Expected a binary file upload" });
+  const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/files${queryString(req)}`, {
+    method: "POST",
+    headers: { ...authHeader(req), "content-type": "application/octet-stream" },
+    body: req.body as Buffer<ArrayBuffer>
+  });
+  return forwardJSON(reply, res);
+});
+
+app.get<{ Params: { id: string; file: string } }>("/api/v1/sessions/:id/files/:file", async (req, reply) => {
+  const res = await fetch(`${orbitdBase(req)}/api/v1/sessions/${encodeURIComponent(req.params.id)}/files/${encodeURIComponent(req.params.file)}`, {
+    headers: authHeader(req)
+  });
+  if (!res.ok) return forwardJSON(reply, res);
+  reply.code(res.status)
+    .header("content-type", "application/octet-stream")
+    .header("content-disposition", "attachment")
+    .header("x-content-type-options", "nosniff")
+    .header("cache-control", "private, no-store");
   return reply.send(Buffer.from(await res.arrayBuffer()));
 });
 

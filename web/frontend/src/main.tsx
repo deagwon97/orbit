@@ -341,6 +341,13 @@ async function api(path: string, init: RequestInit = {}, connection?: OrbitConne
   return res.json();
 }
 
+async function createDirectory(connection: OrbitConnection, parent: string, name: string) {
+  return api("/api/v1/fs/dirs", {
+    method: "POST",
+    body: JSON.stringify({ parent, name }),
+  }, connection) as Promise<{ path: string }>;
+}
+
 function parseEnv(input: string) {
   const env: Record<string, string> = {
     TERM: "xterm-256color",
@@ -628,10 +635,8 @@ function App() {
   const [tool, setTool] = useState("codex");
   const [sessionMode, setSessionMode] = useState<"cli" | "web">("cli");
   useEffect(() => setSessionMode("cli"), [activeConnectionId]);
-  const [name, setName] = useState("");
   const [cwd, setCwd] = useState("");
   const [env, setEnv] = useState("");
-  const [attachAfterRun, setAttachAfterRun] = useState(true);
   const [busy, setBusy] = useState(false);
   const [messageState, setMessageState] = useState<{ text: string; epoch: number }>({ text: "", epoch: 0 });
   const setMessage = React.useCallback((text: string) => {
@@ -645,6 +650,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [runError, setRunError] = useState("");
   const [connectionOpen, setConnectionOpen] = useState(false);
 
   const authed = connections.length > 0;
@@ -730,30 +736,34 @@ function App() {
     }
   }
 
-  async function runSession() {
-    if (!activeConnection) return;
+  async function runSession(inTempFolder = false) {
+    if (!activeConnection || busy) return;
+    setRunError("");
     setBusy(true);
+    let tempCwd: string | undefined;
     try {
       if (sessionMode === "web" && (tool !== "codex" || !backends.find(backend => backend.id === tool)?.modes?.includes("web"))) throw new Error("This orbitd does not support Codex Web yet");
       const body: Record<string, unknown> = { tool, mode: sessionMode, env: sessionMode === "web" ? {} : parseEnv(env) };
-      if (name.trim()) body.name = name.trim();
-      if (cwd.trim()) body.cwd = cwd.trim();
+      if (inTempFolder) {
+        const { home } = await api("/api/v1/fs/dirs", {}, activeConnection) as DirListing;
+        const suffix = crypto.getRandomValues(new Uint32Array(2)).join("-");
+        const folder = await createDirectory(activeConnection, home, `orbit-tmp-${suffix}`);
+        tempCwd = folder.path;
+      }
+      const workdir = tempCwd ?? cwd.trim();
+      if (workdir) body.cwd = workdir;
       const session = await api("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }, activeConnection) as Session;
       setMessage(`created ${session.id} ${session.name}`);
-      setName("");
       setEnv("");
       setCreateOpen(false);
-      const nextSessions = await load();
-      if (attachAfterRun) {
-        const nextKey = connectionKey(activeConnection.id, session.id);
-        if (nextSessions.some((item) => item.key === nextKey)) {
-          setSelectedKey(nextKey);
-        }
-        setFileEditorOpen(false);
-        setDetailOpen(true);
-      }
+      const nextKey = connectionKey(activeConnection.id, session.id);
+      setSessions(items => [{ ...session, key: nextKey, connection: activeConnection }, ...items.filter(item => item.key !== nextKey)]);
+      setSelectedKey(nextKey);
+      setFileEditorOpen(false);
+      setDetailOpen(true);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
+      if (tempCwd) setCwd(tempCwd);
+      setRunError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -922,7 +932,7 @@ function App() {
             {!sessionsCollapsed && sessionListButton}
           </div>
           <div className="sessionListHeader paneListControls">
-            <button className="primaryButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} />New session</button>
+            <button className="primaryButton" title="New session" disabled={busy} onClick={() => { setRunError(""); setCreateOpen(true); }}><Plus size={16} />New session</button>
           </div>
           <div className="sessions paneList">
             {sessions.map(session => {
@@ -1012,21 +1022,19 @@ function App() {
       connection={activeConnection}
       backends={backends}
       tool={tool}
-      name={name}
       cwd={cwd}
       env={env}
-      attachAfterRun={attachAfterRun}
       busy={busy}
+      error={runError}
       sessionMode={sessionMode}
       onSessionMode={setSessionMode}
       onTool={(value) => { setTool(value); setSessionMode("cli"); }}
-      onName={setName}
       onCwd={setCwd}
       onEnv={setEnv}
-      onAttachAfterRun={setAttachAfterRun}
       onBrowse={openFolderPicker}
       onClose={() => setCreateOpen(false)}
       onRun={() => void runSession()}
+      onRunInTempFolder={() => void runSession(true)}
     />}
     {folderOpen && activeConnection && <FolderPicker
       connection={activeConnection}
@@ -1274,19 +1282,17 @@ function NewSessionModal(props: {
   tool: string;
   sessionMode: "cli" | "web";
   onSessionMode: (value: "cli" | "web") => void;
-  name: string;
   cwd: string;
   env: string;
-  attachAfterRun: boolean;
   busy: boolean;
+  error: string;
   onTool: (value: string) => void;
-  onName: (value: string) => void;
   onCwd: (value: string) => void;
   onEnv: (value: string) => void;
-  onAttachAfterRun: (value: boolean) => void;
   onBrowse: () => void;
   onClose: () => void;
   onRun: () => void;
+  onRunInTempFolder: () => void;
 }) {
   useDialogHistory(props.onClose);
   const supportsWeb = props.backends.some(backend => backend.id === "codex" && backend.modes?.includes("web"));
@@ -1307,21 +1313,17 @@ function NewSessionModal(props: {
         <legend>Open with</legend>
         <div className="sessionModeOptions">
           <label>
-            <input type="radio" name="session-mode" checked={props.sessionMode === "cli"} onChange={() => props.onSessionMode("cli")} />
-            <TerminalIcon size={17} />CLI · Terminal
-          </label>
-          <label>
             <input type="radio" name="session-mode" checked={props.sessionMode === "web"} disabled={!supportsWeb} onChange={() => props.onSessionMode("web")} />
             <MessageSquare size={17} />Web · Chat
+          </label>
+          <label>
+            <input type="radio" name="session-mode" checked={props.sessionMode === "cli"} onChange={() => props.onSessionMode("cli")} />
+            <TerminalIcon size={17} />CLI · Terminal
           </label>
         </div>
         {props.sessionMode === "web" && <small>새 대화 기본 권한: YOLO · 전체 접근 · 승인 안 함</small>}
         {!supportsWeb && <small>Web mode requires an updated orbitd connected to a Codex daemon.</small>}
       </fieldset>}
-      <label className="fieldLabel">
-        <span>Name</span>
-        <input placeholder="optional session name" value={props.name} onChange={(event) => props.onName(event.target.value)} />
-      </label>
       <label className="fieldLabel">
         <span>Working directory</span>
         <div className="cwdField">
@@ -1333,8 +1335,9 @@ function NewSessionModal(props: {
         <span>Environment</span>
         <input placeholder="KEY=VALUE" value={props.env} onChange={(event) => props.onEnv(event.target.value)} />
       </label>}
-      <label className="check"><input type="checkbox" checked={props.attachAfterRun} onChange={(event) => props.onAttachAfterRun(event.target.checked)} />Attach after run</label>
+      {props.error && <div className="folderError" role="alert">{props.error}</div>}
       <div className="modalActions">
+        <button type="button" className="sessionTempRun" disabled={props.busy} onClick={props.onRunInTempFolder} title="Create a folder in the server home directory and run there"><FolderPlus size={16} />Run in temp folder</button>
         <button type="button" onClick={props.onClose}>Cancel</button>
         <button className="primaryButton" disabled={props.busy}><PlugZap size={16} />Run</button>
       </div>
@@ -1724,10 +1727,7 @@ function FolderPicker(props: {
   async function createFolder() {
     if (!props.listing?.path || !newFolder.trim()) return;
     try {
-      const created = await api("/api/v1/fs/dirs", {
-        method: "POST",
-        body: JSON.stringify({ parent: props.listing.path, name: newFolder.trim() })
-      }, props.connection) as { path: string };
+      const created = await createDirectory(props.connection, props.listing.path, newFolder.trim());
       setNewFolder("");
       setError("");
       props.onSelect(created.path);

@@ -27,7 +27,10 @@ pub(super) fn message_text(body: &Value) -> Result<&str> {
     let text = body["text"]
         .as_str()
         .filter(|t| {
-            (!t.trim().is_empty() || body["images"].as_array().is_some_and(|v| !v.is_empty()))
+            (!t.trim().is_empty()
+                || ["images", "files"]
+                    .iter()
+                    .any(|key| body[*key].as_array().is_some_and(|v| !v.is_empty())))
                 && t.len() <= 100_000
         })
         .context("Enter a message of 1–100,000 bytes")?;
@@ -140,7 +143,7 @@ impl CodexSession {
         if live.queue.len() >= 20 {
             bail!("대기 메시지는 최대 20개입니다.");
         }
-        let entry = json!({"id":Uuid::new_v4().to_string(),"text":text,"images":body.get("images").cloned().unwrap_or(json!([]))});
+        let entry = json!({"id":Uuid::new_v4().to_string(),"text":text,"images":body.get("images").cloned().unwrap_or(json!([])),"files":body.get("files").cloned().unwrap_or(json!([]))});
         live.queue.push_back(entry.clone());
         drop(live);
         self.publish_state();
@@ -176,27 +179,48 @@ impl CodexSession {
         }
     }
     pub(super) fn message_input(&self, body: &Value) -> Result<Vec<Value>> {
-        let text = message_text(body)?;
+        let mut text = message_text(body)?.to_owned();
+        let ids = |key| match body.get(key) {
+            Some(value) => value
+                .as_array()
+                .map(Vec::as_slice)
+                .context("Invalid attachments"),
+            None => Ok(&[][..]),
+        };
+        let images = ids("images")?;
+        let files = ids("files")?;
+        if images.len() + files.len() > 8 {
+            bail!("첨부는 한 메시지에 최대 8개입니다.");
+        }
+        let session = self.state.lock().unwrap().upload_session.clone();
+        let mut seen = HashSet::new();
+        if !files.is_empty() {
+            if !text.trim().is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str("Attached files on the execution host:");
+            for id in files {
+                let id = id.as_str().context("Invalid file ID")?;
+                if !seen.insert(id) {
+                    bail!("Duplicate attachment");
+                }
+                let path = crate::images::file_path(&session, id)
+                    .context("임시 파일을 찾을 수 없습니다. 다시 첨부하세요.")?;
+                text.push_str(&format!("\n- `{}`", path.display()));
+            }
+        }
         let mut input = Vec::new();
         if !text.trim().is_empty() {
             input.push(json!({"type":"text","text":text,"text_elements":[]}));
         }
-        if let Some(images) = body.get("images") {
-            let images = images.as_array().context("Invalid attachments")?;
-            if images.len() > 8 {
-                bail!("이미지는 한 메시지에 최대 8개입니다.");
+        for id in images {
+            let id = id.as_str().context("Invalid image ID")?;
+            if !seen.insert(id) {
+                bail!("Duplicate attachment");
             }
-            let session = self.state.lock().unwrap().upload_session.clone();
-            let mut seen = HashSet::new();
-            for id in images {
-                let id = id.as_str().context("Invalid image ID")?;
-                if !seen.insert(id) {
-                    bail!("Duplicate image");
-                }
-                let path = crate::images::path(&session, id)
-                    .context("임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.")?;
-                input.push(json!({"type":"localImage","path":path}));
-            }
+            let path = crate::images::path(&session, id)
+                .context("임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.")?;
+            input.push(json!({"type":"localImage","path":path}));
         }
         Ok(input)
     }
@@ -699,6 +723,48 @@ mod tests {
         std::fs::remove_file(foreign["path"].as_str().unwrap()).unwrap();
         h.close().await;
     }
+    #[tokio::test]
+    async fn uploaded_files_use_host_paths_and_survive_queuing() {
+        let (_f, h) = setup().await;
+        let session = Uuid::new_v4().simple().to_string()[..12].to_string();
+        h.bind_uploads(&session);
+        let file = crate::images::save_file(&session, "검토 결과.pdf", b"%PDF-1.4").unwrap();
+        let id = file["id"].as_str().unwrap();
+        let path = file["path"].as_str().unwrap();
+        assert!(path.ends_with("-검토_결과.pdf"));
+        assert_eq!(crate::images::read_file(&session, id).unwrap(), b"%PDF-1.4");
+        let image =
+            crate::images::save(&session, "image/png", b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let result = h
+            .operation(&json!({"op":"send","text":"","files":[id],"images":[image["id"]]}))
+            .await
+            .unwrap();
+        let content = &result["turn"]["items"][0]["content"];
+        assert_eq!(
+            content[0]["text"],
+            format!("Attached files on the execution host:\n- `{path}`")
+        );
+        assert_eq!(
+            content[1],
+            json!({"type":"localImage","path":image["path"]})
+        );
+        h.operation(&json!({"op":"queue","text":"","files":[id]}))
+            .await
+            .unwrap();
+        assert_eq!(h.snapshot()["queue"]["items"][0]["files"], json!([id]));
+        assert!(h.message_input(&json!({"text":"","files":[path]})).is_err());
+        assert!(h
+            .message_input(&json!({"text":"","files":[id,id]}))
+            .is_err());
+        assert!(h
+            .message_input(&json!({"text":"","files":[id],"images":vec![image["id"].clone();8]}))
+            .is_err());
+        let other = Uuid::new_v4().simple().to_string()[..12].to_string();
+        assert!(crate::images::read_file(&other, id).is_err());
+        std::fs::remove_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+        h.close().await;
+    }
+
     #[tokio::test]
     async fn rejected_review_and_compaction_inputs_and_busy_requests_are_queued_without_loss() {
         let (_f, h) = setup().await;

@@ -6,7 +6,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/app/node_modules
   const browser = await chromium.launch({ executablePath: chromium.executablePath(), headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  const name = `Codex Web QA ${Date.now()}`;
+  let name;
   try {
     await page.goto(config.webUrl);
     await page.evaluate(config => {
@@ -18,9 +18,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/app/node_modules
     const modal = page.getByRole('dialog');
     await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();
     if (await modal.getByLabel('Environment', { exact: true }).count()) throw Error('Web mode exposes unsupported environment overrides');
-    await modal.getByLabel('Name', { exact: true }).fill(name);
     await modal.getByPlaceholder('cwd', { exact: true }).fill(config.cwd);
-    await modal.getByRole('button', { name: 'Run', exact: true }).click();
+    const [created] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/sessions' && response.request().method() === 'POST'),
+      modal.getByRole('button', { name: 'Run', exact: true }).click()
+    ]);
+    if (!created.ok()) throw Error('QA session creation failed: ' + created.status());
+    name = (await created.json()).name;
     await page.getByText('Codex 연결됨', { exact: true }).waitFor({ timeout: 60000 });
     const session = await page.evaluate(async ({ name, config }) => {
       const result = await fetch('/api/v1/sessions', { headers: { Authorization: `Bearer ${config.token}`, 'x-orbitd-url': config.orbitdUrl } });

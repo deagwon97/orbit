@@ -10,16 +10,27 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.getByRole('button',{name:'명령 실행',exact:true}).click();
  }
  async function sessions(){return page.evaluate(async headers=>{const r=await fetch('/api/v1/sessions',{headers});return r.json();},headers);}
- async function create(name){await page.getByTitle('New session',{exact:true}).click();const modal=page.getByRole('dialog');await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});const s=(await sessions()).find(s=>s.name===name);ids.push(s.id);return s;}
+ async function create(){
+  await page.getByTitle('New session',{exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByRole('radio',{name:'Web · Chat',exact:true}).check();
+  await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);
+  const [response]=await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/sessions' && response.request().method() === 'POST'),modal.getByRole('button',{name:'Run',exact:true}).click()]);
+  if(!response.ok())throw Error('QA session creation failed: '+response.status());
+  const session=await response.json();
+  ids.push(session.id);
+  await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});
+  return session;
+ }
  async function closeDialog(){await page.getByRole('button',{name:'명령 창 닫기'}).click();}
  try{
   await page.goto(c.webUrl);await page.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'resume-qa',label:'Resume QA',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','resume-qa');},c);await page.reload();
-  const target=await create(tag+' Target');await page.locator('.codexYolo').waitFor();
+  const target=await create();await page.locator('.codexYolo').waitFor();
   await page.getByRole('textbox',{name:'Codex 메시지'}).fill('다른 도구는 실행하지 말고 ORB_RESUME_OK 한 줄만 답해주세요.');await page.getByRole('button',{name:'전송 ↑',exact:true}).click();await page.locator('.codexMessage.agentMessage').filter({hasText:'ORB_RESUME_OK'}).waitFor({timeout:120000});await page.waitForFunction(()=>!document.querySelector('.codexWorking'),{timeout:120000});
   await command('/rename '+tag+' Saved');await page.getByText('대화 이름을 “'+tag+' Saved”으로 변경했습니다.',{exact:true}).waitFor();await closeDialog();
   await command('/permissions read-only');await page.getByRole('dialog',{name:'작업 권한'}).getByText('readOnly',{exact:true}).waitFor();await closeDialog();
   await page.evaluate(async({headers,id})=>{const r=await fetch('/api/v1/sessions/'+id+'/stop',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:'{}'});if(!r.ok)throw Error('Stop failed');},{headers,id:target.id});
-  const current=await create(tag+' Current'),beforeCount=(await sessions()).length;
+  const current=await create(),beforeCount=(await sessions()).length;
   await command('/status');let dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.getByText('dangerFullAccess',{exact:true}).waitFor();await dialog.getByText('never',{exact:true}).waitFor();await closeDialog();
   await command('/resume');dialog=page.getByRole('dialog',{name:'이전 대화 이어가기'});await dialog.waitFor();await dialog.getByLabel('이전 대화 검색',{exact:true}).fill(tag+' Saved');await dialog.getByRole('button',{name:'검색',exact:true}).click();
   const choice=dialog.locator('.codexResumeList button').filter({hasText:target.codex_thread_id});await choice.waitFor();await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('Resume dialog mobile overflow');await page.screenshot({path:'/workspace/output/codex-resume-mobile.png'});await choice.click();

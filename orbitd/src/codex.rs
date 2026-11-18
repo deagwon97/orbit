@@ -306,7 +306,7 @@ impl CodexSession {
     }
     pub fn snapshot(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true,"liveInput":true,"fork":true}})
+        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"fileAttachments":true,"resume":true,"liveInput":true,"fork":true}})
     }
     pub async fn create(&self, cwd: &Path) -> Result<String> {
         let result = self

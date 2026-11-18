@@ -38,6 +38,33 @@ test('Codex WebSocket proxy routes the selected session and forwards authenticat
   assert.equal(uploaded.status,200);assert.equal((await uploaded.json()).path,'/tmp/example.png');
   const image=await fetch(`http://127.0.0.1:${port}/api/v1/sessions/image-session/images/image.png`,{headers});
   assert.equal(image.headers.get('content-type'),'image/png');assert.equal(image.headers.get('x-content-type-options'),'nosniff');assert.deepEqual(Buffer.from(await image.arrayBuffer()),bytes);
+  const fileBytes = Buffer.from([0, 255, 50, 128]);
+  upstream.on('request', async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (!url.pathname.startsWith('/api/v1/sessions/file-session/files')) return;
+    assert.equal(req.headers.authorization, 'Bearer image-test');
+    if (req.method === 'POST') {
+      assert.equal(req.headers['content-type'], 'application/octet-stream');
+      assert.equal(url.searchParams.get('name'), '검토 결과.pdf');
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      assert.deepEqual(Buffer.concat(chunks), fileBytes);
+      res.end(JSON.stringify({ id: 'file-id', path: '/tmp/report.pdf' }));
+    } else {
+      assert.equal(url.pathname, '/api/v1/sessions/file-session/files/file-id');
+      res.end(fileBytes);
+    }
+  });
+  const fileUrl = `http://127.0.0.1:${port}/api/v1/sessions/file-session/files`;
+  const fileUpload = await fetch(fileUrl + '?name=' + encodeURIComponent('검토 결과.pdf'), {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/octet-stream' }, body: fileBytes
+  });
+  assert.equal(fileUpload.status, 200);
+  assert.equal((await fileUpload.json()).path, '/tmp/report.pdf');
+  const downloadedFile = await fetch(fileUrl + '/file-id', { headers });
+  assert.equal(downloadedFile.headers.get('content-disposition'), 'attachment');
+  assert.equal(downloadedFile.headers.get('content-type'), 'application/octet-stream');
+  assert.deepEqual(Buffer.from(await downloadedFile.arrayBuffer()), fileBytes);
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/sessions/session-123/codex?token=example-token&orbitd=${encodeURIComponent(`http://127.0.0.1:${upstream.address().port}`)}`);
   t.after(() => ws.terminate()); await once(ws, 'open');
   const response = once(ws, 'message'); ws.send(JSON.stringify({ id: 1, op: 'history' }));

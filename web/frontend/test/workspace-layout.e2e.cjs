@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require('/app/node_modules/playwright');
 
-const project = '/home/developer/projects/orbit';
+const home = '/home/developer';
+const project = home + '/projects/orbit';
 const path = project + '/README.md';
 const sessionName = 'Build and test on ARM64';
 
@@ -15,7 +16,8 @@ const sessionName = 'Build and test on ARM64';
       const mobile = width < 821;
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' });
       let saved, shortcut, deletedSession;
-      let canCreateFile = false;
+      let canCreateFile = false, tempPath, tempSession, submittedSession;
+      let tempFoldersCreated = 0, failFirstRun = width === 320;
       const entries = [
         { name: 'README.md', path, kind: 'file' },
         { name: 'example.js', path: project + '/example.js', kind: 'file' }
@@ -30,10 +32,25 @@ const sessionName = 'Build and test on ARM64';
         const { pathname } = new URL(route.request().url());
         const fulfill = json => route.fulfill({ json });
         if (pathname.endsWith('/backends')) return fulfill([{ id: 'codex', name: 'Codex', modes: ['cli', 'web'] }]);
-        if (pathname.endsWith('/sessions')) return fulfill([
-          { id: 'fixture-cli', name: sessionName, tool: 'codex', mode: 'cli', cwd: project, status: 'running', pid: 19234 },
-          { id: 'fixture-web', name: '대화 작업', tool: 'codex', mode: 'web', cwd: project, status: 'stopped' }
-        ]);
+        if (pathname.endsWith('/sessions')) {
+          if (route.request().method() === 'POST') {
+            submittedSession = route.request().postDataJSON();
+            if (failFirstRun) {
+              failFirstRun = false;
+              return route.fulfill({ status: 500, body: 'Start failed' });
+            }
+            tempSession = { ...submittedSession, id: 'temp-session', name: 'codex-temp-session', status: 'running' };
+            return route.fulfill({ status: 201, json: tempSession });
+          }
+          return fulfill([
+            { id: 'fixture-cli', name: sessionName, tool: 'codex', mode: 'cli', cwd: project, status: 'running', pid: 19234 },
+            { id: 'fixture-web', name: '대화 작업', tool: 'codex', mode: 'web', cwd: project, status: 'stopped' },
+            ...(tempSession ? [tempSession] : []),
+          ]);
+        }
+        if (pathname.endsWith('/dirs') && route.request().method() === 'GET') {
+          return fulfill({ path: project, home, cwd: project, parent: home, dirs: [] });
+        }
         if (route.request().method() === 'DELETE' && pathname.endsWith('/sessions/fixture-web')) {
           deletedSession = 'fixture-web';
           return fulfill({ ok: true });
@@ -45,6 +62,12 @@ const sessionName = 'Build and test on ARM64';
         if (pathname.endsWith('/entries')) return fulfill({ path: project, home: project, parent: null, entries, can_create_file: canCreateFile });
         if (route.request().method() === 'POST' && (pathname.endsWith('/dirs') || pathname.endsWith('/files'))) {
           const body = route.request().postDataJSON();
+          if (pathname.endsWith('/dirs') && body.name.startsWith('orbit-tmp-')) {
+            assert.equal(body.parent, home);
+            tempFoldersCreated++;
+            tempPath = home + '/' + body.name;
+            return route.fulfill({ status: 201, json: { path: tempPath } });
+          }
           assert.equal(body.parent, project);
           if (entries.some(entry => entry.name === body.name)) {
             return route.fulfill({ status: 409, json: { error: 'An entry with that name already exists.' } });
@@ -67,6 +90,13 @@ const sessionName = 'Build and test on ARM64';
         ws.onMessage(raw => {
           const frame = JSON.parse(String(raw));
           if (frame.type === 'stdin') shortcut = Buffer.from(frame.data, 'base64').toString();
+        });
+      });
+      await page.routeWebSocket('**/api/v1/sessions/temp-session/codex?*', ws => {
+        ws.send(JSON.stringify({ type: 'ready', state: {} }));
+        ws.onMessage(raw => {
+          const request = JSON.parse(String(raw));
+          if (request.op === 'history') ws.send(JSON.stringify({ type: 'result', id: request.id, result: { thread: { turns: [] }, state: {} } }));
         });
       });
       await page.goto(webUrl);
@@ -119,11 +149,29 @@ const sessionName = 'Build and test on ARM64';
       await page.getByTitle('New session', { exact: true }).click();
       const create = page.getByRole('dialog', { name: 'New session' });
       assert(await create.getByRole('radio', { name: 'CLI · Terminal' }).isChecked());
+      assert.deepEqual(await create.locator('.sessionModeOptions label').allTextContents(), ['Web · Chat', 'CLI · Terminal']);
+      assert.equal(await create.getByLabel('Name', { exact: true }).count(), 0);
+      assert.equal(await create.getByLabel('Attach after run', { exact: true }).count(), 0);
       await create.getByRole('radio', { name: 'Web · Chat' }).check();
       assert.equal(await create.getByLabel('Environment', { exact: true }).count(), 0);
       await create.getByRole('button', { name: 'Cancel' }).click();
       await page.waitForFunction(() => !history.state?.orbitModal);
-
+      await page.getByTitle('New session', { exact: true }).click();
+      await create.getByRole('radio', { name: 'Web · Chat', exact: true }).check();
+      await create.getByPlaceholder('cwd', { exact: true }).fill(project);
+      await create.getByRole('button', { name: 'Run in temp folder', exact: true }).click();
+      if (width === 320) {
+        await create.getByRole('alert').getByText('Start failed', { exact: true }).waitFor();
+        assert.equal(await create.getByPlaceholder('cwd', { exact: true }).inputValue(), tempPath);
+        await create.getByRole('button', { name: 'Run', exact: true }).click();
+      }
+      await create.waitFor({ state: 'hidden' });
+      await page.locator('.codexConnectionTitle').getByText('codex-temp-session', { exact: true }).waitFor();
+      await page.getByText('Codex 연결됨', { exact: true }).waitFor();
+      assert.equal(tempFoldersCreated, 1);
+      assert.match(tempPath, /^\/home\/developer\/orbit-tmp-\d+-\d+$/);
+      assert.deepEqual(submittedSession, { tool: 'codex', mode: 'web', env: {}, cwd: tempPath });
+      if (mobile) await page.getByRole('button', { name: '세션 목록으로 돌아가기', exact: true }).click();
       await row.click();
       const terminal = page.locator('.cliSessionPane');
       const hideSessions = page.getByRole('button', { name: 'Hide session list' });

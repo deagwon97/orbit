@@ -40,6 +40,11 @@ pub fn routes(state: AppState) -> Router {
             post(codex::upload_image).layer(DefaultBodyLimit::max(crate::images::MAX_BYTES)),
         )
         .route("/api/v1/sessions/:id/images/:image", get(codex::read_image))
+        .route(
+            "/api/v1/sessions/:id/files",
+            post(codex::upload_file).layer(DefaultBodyLimit::max(crate::images::MAX_BYTES)),
+        )
+        .route("/api/v1/sessions/:id/files/:file", get(codex::read_file))
         .route("/api/v1/fs/dirs", get(api::list_dirs).post(api::create_dir))
         .route("/api/v1/fs/entries", get(api::list_entries))
         .route(
