@@ -16,7 +16,7 @@ const { chromium } = require('/app/node_modules/playwright');
     return response.json();
   }, headers);
   const row = value => page.locator('.sessionName').getByText(value, { exact: true });
-  const fork = page.getByRole('button', { name: '여기서 포크', exact: true });
+  const fork = page.getByRole('button', { name: 'Fork here', exact: true });
   const textbox = page.getByRole('textbox', { name: 'Codex 메시지' });
 
   try {

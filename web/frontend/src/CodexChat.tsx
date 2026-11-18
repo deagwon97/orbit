@@ -296,7 +296,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
     try {
       const result = await request({ op: 'fork', turnId });
       const open = !hasUnsentInput.current || window.confirm(
-        '포크한 세션을 목록에 추가했습니다. 지금 이동하면 이 세션에서 작성 중인 입력이 사라집니다. 이동할까요?'
+        'The fork is in your session list. Opening it will discard the draft in this session. Open the fork now?'
       );
       onSessionFork(result.session, open);
     } catch (error) {
@@ -338,7 +338,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
           {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} />}
           {canFork && <div className="codexTurnActions">
             <button type="button" disabled={connection !== 'ready' || forkingTurn !== null} onClick={() => void forkTurn(item.turnId)}>
-              <GitFork size={14} />{forkingTurn === item.turnId ? '포크 중…' : '여기서 포크'}
+              <GitFork size={14} />{forkingTurn === item.turnId ? 'Forking…' : 'Fork here'}
             </button>
           </div>}
         </React.Fragment>;
