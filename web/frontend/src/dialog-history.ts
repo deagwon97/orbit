@@ -9,7 +9,8 @@ function push(entry: Entry) {
 }
 function flushDetail() {
   if(manager.detailRequested&&!manager.pending.length&&!history.state?.orbitModal) {
-    manager.detailRequested=false;history.pushState({ ...history.state, orbitDetail:true },'',location.href);
+    manager.detailRequested=false;
+    if (!history.state?.orbitDetail) history.pushState({ ...history.state, orbitDetail:true },'',location.href);
   }
 }
 export function pushDetailHistory() {manager.detailRequested=true;flushDetail();}

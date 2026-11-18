@@ -4,7 +4,7 @@ import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHis
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, LogOut, Menu, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -272,7 +272,7 @@ type OpenedFile = { path: string; content: string; savedContent: string };
 type EntryTree = Record<string, FsEntry[]>;
 type TerminalModifier = "shift" | "ctrl" | "cmd" | "alt";
 
-const DEFAULT_MASTER_PANE_WIDTH = 600;
+const DEFAULT_MASTER_PANE_WIDTH = 320;
 const MIN_MASTER_PANE_WIDTH = 280;
 const MAX_MASTER_PANE_WIDTH = 860;
 const MASTER_PANE_WIDTH_KEY = "orbit.masterPaneWidth";
@@ -526,13 +526,18 @@ function SelectionCopyButton({ className, onCopy }: { className: string; onCopy:
   </button>;
 }
 
+function maxMasterPaneWidth() {
+  return window.innerWidth <= 820 ? MAX_MASTER_PANE_WIDTH : Math.min(MAX_MASTER_PANE_WIDTH, window.innerWidth - 430);
+}
+
 function clampMasterPaneWidth(value: number) {
-  return Math.round(Math.max(MIN_MASTER_PANE_WIDTH, Math.min(value, MAX_MASTER_PANE_WIDTH)));
+  return Math.round(Math.max(MIN_MASTER_PANE_WIDTH, Math.min(value, maxMasterPaneWidth())));
 }
 
 function savedMasterPaneWidth() {
-  const value = Number(localStorage.getItem(MASTER_PANE_WIDTH_KEY));
-  return Number.isFinite(value) ? clampMasterPaneWidth(value) : DEFAULT_MASTER_PANE_WIDTH;
+  const saved = localStorage.getItem(MASTER_PANE_WIDTH_KEY);
+  const value = saved ? Number(saved) : DEFAULT_MASTER_PANE_WIDTH;
+  return clampMasterPaneWidth(Number.isFinite(value) ? value : DEFAULT_MASTER_PANE_WIDTH);
 }
 
 function useMobileViewportGuards() {
@@ -626,7 +631,6 @@ function App() {
   const [fileEditorOpen, setFileEditorOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [mobileChromeOpen, setMobileChromeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
 
@@ -639,6 +643,14 @@ function App() {
   const backends = backendCatalog[activeConnection?.id || ""] || defaultBackends;
   const selected = useMemo(() => sessions.find((session) => session.key === selectedKey) ?? null, [sessions, selectedKey]);
   const layoutStyle = { "--master-pane-width": `${masterPaneWidth}px` } as React.CSSProperties;
+
+  function closeDetail() {
+    if (mobileDetailHistoryRef.current && history.state?.orbitDetail && !history.state?.orbitModal) {
+      history.back();
+    } else {
+      setDetailOpen(false);
+    }
+  }
 
   function saveConnectionList(next: OrbitConnection[]) {
     setConnections(next);
@@ -740,8 +752,7 @@ function App() {
       setMessage(`removed ${session.id}`);
       if (selectedKey === session.key) {
         setSelectedKey(null);
-        setDetailOpen(false);
-        setMobileChromeOpen(false);
+        closeDetail();
       }
       await load();
     } catch (err) {
@@ -784,14 +795,10 @@ function App() {
     if (!backends.some((backend) => backend.id === tool)) setTool(backends[0]?.id ?? "codex");
   }, [backends, tool]);
   useEffect(() => {
-    if (detailOpen) setMobileChromeOpen(false);
-  }, [detailOpen, selectedKey, fileEditorOpen]);
-  useEffect(() => {
     detailOpenRef.current = detailOpen;
   }, [detailOpen]);
   useEffect(() => {
-    const isMobile = () => window.matchMedia("(max-width: 820px), (pointer: coarse)").matches;
-    if (detailOpen && isMobile() && !mobileDetailHistoryRef.current) {
+    if (detailOpen && window.matchMedia("(max-width: 820px)").matches && !mobileDetailHistoryRef.current) {
       pushDetailHistory();
       mobileDetailHistoryRef.current = true;
     }
@@ -800,10 +807,9 @@ function App() {
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       if (dialogHandledBack(event)) return;
-      if (!detailOpenRef.current || !window.matchMedia("(max-width: 820px), (pointer: coarse)").matches) return;
+      if (!detailOpenRef.current || !mobileDetailHistoryRef.current || event.state?.orbitDetail) return;
       mobileDetailHistoryRef.current = false;
       setDetailOpen(false);
-      setMobileChromeOpen(false);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -826,33 +832,24 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const mobileChatDetail = detailOpen && selected?.mode === "web" && !fileEditorOpen && !connectionsOpen;
   if (!authed) return <Login onLogin={addConnection} />;
-  return <main className={`app${mobileChatDetail ? " mobileChatDetail" : ""}${detailOpen ? " mobileDetailOpen" : ""}${mobileChromeOpen ? " mobileChromeOpen" : ""}`}>
-    {detailOpen && !mobileChatDetail && <button className="mobileChromeToggle" title="Show navigation" aria-label={mobileChromeOpen ? "탐색 메뉴 닫기" : "탐색 메뉴 열기"} aria-expanded={mobileChromeOpen} onClick={() => setMobileChromeOpen((value) => !value)}>
-      {mobileChromeOpen ? <X size={18} /> : <Menu size={18} />}
-    </button>}
+  return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}`}>
     <section className="toolbar">
       <strong>Orbit</strong>
       <div className="toolbarActions">
         {activeConnection && (
           <button
-            className="activeOrbitd"
-            title={`${activeConnection.label} · ${activeConnection.url}`}
-            onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
+            className={`activeOrbitd${connectionsOpen ? " activeButton" : ""}`}
+            title={`Orbitd · ${activeConnection.label} · ${activeConnection.url}`}
+            aria-label={`Orbitd connections · ${activeConnection.label}`}
+            aria-expanded={connectionsOpen}
+            onClick={() => { setConnectionsOpen(!connectionsOpen); setFileEditorOpen(false); closeDetail(); }}
           >
             <Server size={14} />
             <span className="activeOrbitdLabel">{activeConnection.label}</span>
             <span className="activeOrbitdUrl">{activeConnection.url}</span>
           </button>
         )}
-        <button
-          className={`iconButton ${connectionsOpen ? "activeButton" : ""}`}
-          title="Orbitd"
-          onClick={() => { setConnectionsOpen(true); setFileEditorOpen(false); setDetailOpen(false); }}
-        >
-          <Server size={16} />
-        </button>
         <button className="iconButton" title="Refresh" onClick={() => window.location.reload()}><RefreshCcw size={16} /></button>
       </div>
     </section>
@@ -878,36 +875,33 @@ function App() {
           masterPaneWidth={masterPaneWidth}
           onMasterPaneWidth={setMasterPaneWidth}
           onDetailOpen={() => setDetailOpen(true)}
-          onBack={() => setDetailOpen(false)}
+          onBack={closeDetail}
         /> : <>
         <div className="masterPane">
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
-            <button className="iconButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} /></button>
+          </div>
+          <div className="sessionListHeader">
+            <button className="primaryButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} />New session</button>
           </div>
           <div className="sessions">
-            <div className="row header"><span>Server</span><span>ID</span><span>Name</span><span>Tool</span><span>Status</span><span>PID</span></div>
-            {sessions.map((session) => <button className={selectedKey === session.key ? "row active" : "row"} key={session.key} onClick={() => { setSelectedKey(session.key); setDetailOpen(true); }}>
-              <span title={session.connection.label}>{session.connection.label}</span>
-              <span title={session.id}>{session.id}</span>
-              <span title={session.name}>{session.name}</span>
-              <span>{session.tool}</span>
-              <span className={`pill ${session.status}`}>{session.mode === "web" ? "web · " : ""}{session.status}</span>
-              <span>{session.pid ?? "-"}</span>
-              <span className="sessionCwd" title={session.cwd}>{session.cwd}</span>
+            {sessions.map((session) => <button className={selectedKey === session.key ? "row active" : "row"} aria-current={selectedKey === session.key ? "true" : undefined} key={session.key} onClick={() => { setSelectedKey(session.key); setDetailOpen(true); }}>
+              <span className="sessionName" title={session.name}>{session.name}</span>
+              <span className={`pill ${session.status}`}>{session.status}</span>
+              <span className="sessionMeta"><span className="sessionMode">{session.mode === "web" ? "Web" : "CLI"}</span><span>{session.tool}</span><span className="sessionHost" title={session.connection.label}>{session.connection.label}</span></span>
+              <code className="sessionCwd" title={session.cwd}>{session.cwd}</code>
             </button>)}
           </div>
         </div>
         <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} />
         <div className="workPane">
-          <button className="mobileBackButton" onClick={() => setDetailOpen(false)}><ChevronLeft size={16} />Sessions</button>
           {selected ? <SessionPane
             session={selected}
-            onDetach={() => { setSelectedKey(null); setDetailOpen(false); }}
+            onDetach={() => { setSelectedKey(null); closeDetail(); }}
             onDelete={() => void deleteSession(selected)}
             reload={load}
-            onBack={() => { setMobileChromeOpen(false);setDetailOpen(false); }}
+            onBack={closeDetail}
             onSessionChange={session => setSessions(items => items.map(item => item.key === selected.key ? { ...session, connection: selected.connection, key: selected.key } : item))}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
@@ -972,7 +966,7 @@ function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (
     aria-orientation="vertical"
     aria-label="Resize panes"
     aria-valuemin={MIN_MASTER_PANE_WIDTH}
-    aria-valuemax={MAX_MASTER_PANE_WIDTH}
+    aria-valuemax={maxMasterPaneWidth()}
     aria-valuenow={width}
     tabIndex={0}
     onKeyDown={(event) => {
@@ -990,7 +984,7 @@ function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (
       }
       if (event.key === "End") {
         event.preventDefault();
-        commitWidth(MAX_MASTER_PANE_WIDTH);
+        commitWidth(maxMasterPaneWidth());
       }
     }}
     onPointerDown={(event) => {
@@ -1032,7 +1026,7 @@ function ConnectionsWorkspace(props: {
     <div className="paneTabs">
       <button onClick={props.onSessions}><TerminalIcon size={14} />Sessions</button>
       <button onClick={props.onFiles}><FolderOpen size={14} />Files</button>
-      <button className="iconButton connectionAddButton" title="Add orbitd" onClick={props.onAdd}><Plus size={16} /></button>
+      <button className="primaryButton connectionAddButton" title="Add orbitd" onClick={props.onAdd}><Plus size={16} />Add server</button>
     </div>
     <div className="connectionList">
       <div className="connectionRow connectionHeader">
@@ -1043,13 +1037,13 @@ function ConnectionsWorkspace(props: {
       </div>
       {props.connections.map((connection) => {
         const active = connection.id === props.activeConnectionId;
-        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id} onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
-          <button className="connectionSelectButton">
-            <span title={connection.label}>{connection.label}</span>
+        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id}>
+          <button className="connectionSelectButton" aria-label={connection.label} aria-current={active ? "true" : undefined} onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
+            <span className="connectionName" title={connection.label}><Server size={15} />{connection.label}</span>
+            <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>
+            <span className={`pill ${active ? "running" : ""}`}>{active ? "active" : "saved"}</span>
           </button>
-          <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>
-          <span className={`pill ${active ? "running" : ""}`}>{active ? "active" : "saved"}</span>
-          <button className="iconButton" title="Remove orbitd" onClick={() => props.onRemove(connection.id)}><Trash2 size={16} /></button>
+          <button className="iconButton" title="Remove orbitd" aria-label={`Remove ${connection.label}`} onClick={() => props.onRemove(connection.id)}><Trash2 size={16} /></button>
         </div>;
       })}
     </div>
@@ -1077,10 +1071,11 @@ function NewSessionModal(props: {
   onRun: () => void;
 }) {
   useDialogHistory(props.onClose);
-  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+  const supportsWeb = props.backends.some(backend => backend.id === "codex" && backend.modes?.includes("web"));
+  return <div className="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
     <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); props.onRun(); }}>
       <div className="modalTop">
-        <strong>New session</strong>
+        <strong id="new-session-title">New session</strong>
         <button type="button" title="Close" onClick={props.onClose}><X size={16} /></button>
       </div>
       <div className="modalContext" title={props.connection.url}>{props.connection.label} · {props.connection.url}</div>
@@ -1090,15 +1085,21 @@ function NewSessionModal(props: {
           {props.backends.map((backend) => <option value={backend.id} key={backend.id}>{backend.name || backend.id}</option>)}
         </select>
       </label>
-      {props.tool === "codex" && <label className="fieldLabel">
-        <span>Open with</span>
-        <select value={props.sessionMode} onChange={event => props.onSessionMode(event.target.value as "cli" | "web")}>
-          <option value="cli">CLI · Terminal</option>
-          <option value="web" disabled={!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web")}>Web · Chat</option>
-        </select>
+      {props.tool === "codex" && <fieldset className="sessionModeField">
+        <legend>Open with</legend>
+        <div className="sessionModeOptions">
+          <label>
+            <input type="radio" name="session-mode" checked={props.sessionMode === "cli"} onChange={() => props.onSessionMode("cli")} />
+            <TerminalIcon size={17} />CLI · Terminal
+          </label>
+          <label>
+            <input type="radio" name="session-mode" checked={props.sessionMode === "web"} disabled={!supportsWeb} onChange={() => props.onSessionMode("web")} />
+            <MessageSquare size={17} />Web · Chat
+          </label>
+        </div>
         {props.sessionMode === "web" && <small>새 대화 기본 권한: YOLO · 전체 접근 · 승인 안 함</small>}
-        {!props.backends.find(backend => backend.id === "codex")?.modes?.includes("web") && <small>Web mode requires an updated orbitd connected to a Codex daemon.</small>}
-      </label>}
+        {!supportsWeb && <small>Web mode requires an updated orbitd connected to a Codex daemon.</small>}
+      </fieldset>}
       <label className="fieldLabel">
         <span>Name</span>
         <input placeholder="optional session name" value={props.name} onChange={(event) => props.onName(event.target.value)} />
@@ -1117,7 +1118,7 @@ function NewSessionModal(props: {
       <label className="check"><input type="checkbox" checked={props.attachAfterRun} onChange={(event) => props.onAttachAfterRun(event.target.checked)} />Attach after run</label>
       <div className="modalActions">
         <button type="button" onClick={props.onClose}>Cancel</button>
-        <button disabled={props.busy}><PlugZap size={16} />Run</button>
+        <button className="primaryButton" disabled={props.busy}><PlugZap size={16} />Run</button>
       </div>
     </form>
   </div>;
@@ -1143,6 +1144,7 @@ function FileWorkspace(props: {
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit");
 
   async function loadEntries(path?: string, options: { root?: boolean } = {}) {
@@ -1207,6 +1209,7 @@ function FileWorkspace(props: {
 
   async function openFile(path: string) {
     if (openedFile && editContent !== openedFile.savedContent && !window.confirm("Discard unsaved changes?")) return;
+    setSaveError(null);
     const kind = getFileViewKind(path);
     if (kind === "image") {
       setOpenedFile({ path, content: "", savedContent: "" });
@@ -1231,15 +1234,15 @@ function FileWorkspace(props: {
   async function saveFile() {
     if (!openedFile) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await api("/api/v1/fs/files", {
         method: "PUT",
         body: JSON.stringify({ path: openedFile.path, content: editContent })
       }, connection);
-      setOpenedFile({ ...openedFile, savedContent: editContent });
-      setError("");
+      setOpenedFile(current => current?.path === openedFile.path ? { ...current, savedContent: editContent } : current);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setSaveError({ path: openedFile.path, message: err instanceof Error ? err.message : String(err) });
     } finally {
       setSaving(false);
     }
@@ -1309,22 +1312,22 @@ function FileWorkspace(props: {
     <PaneResizer width={masterPaneWidth} onWidthChange={onMasterPaneWidth} />
     <section className="workPane fileEditorSurface">
       <div className="fileTabs">
-        <button className="mobileBackButton" onClick={onBack}><ChevronLeft size={16} />Explorer</button>
+        <button className="detailBackButton" aria-label="Back to Explorer" onClick={onBack}><ChevronLeft size={20} /></button>
         {openedFile ? <div className={`fileTab${isDirty ? " dirty" : ""}`} title={openedFile.path}>
           {viewKind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
           <span>{fileName}</span>
         </div> : <div className="fileTab muted">Welcome</div>}
-        <div className="fileTabSpacer" />
-        {openedFile && viewKind === "markdown" && <>
-          <button className={viewMode === "edit" ? "activeButton" : ""} onClick={() => setViewMode("edit")}>Edit</button>
-          <button className={viewMode === "view" ? "activeButton" : ""} onClick={() => setViewMode("view")}>Preview</button>
-        </>}
-        {openedFile && viewKind !== "image" && <button disabled={saving || !isDirty} onClick={saveFile}>
+        {openedFile && viewKind !== "image" && <button className="fileSaveButton" disabled={saving || !isDirty} onClick={saveFile}>
           <Save size={14} />{saving ? "Saving..." : isDirty ? "Save" : "Saved"}
         </button>}
+        {openedFile && viewKind === "markdown" && <div className="fileViewActions">
+          <button className={viewMode === "edit" ? "activeButton" : ""} aria-pressed={viewMode === "edit"} onClick={() => setViewMode("edit")}>Edit</button>
+          <button className={viewMode === "view" ? "activeButton" : ""} aria-pressed={viewMode === "view"} onClick={() => setViewMode("view")}>Preview</button>
+        </div>}
       </div>
       {openedFile ? <>
         <div className="fileBreadcrumb" title={openedFile.path}>{openedFile.path}</div>
+        {saveError?.path === openedFile.path && <div className="folderError" role="alert">{saveError.message}</div>}
         {viewKind === "image" ? (
           <div className="fileImageViewer">
             <img src={rawFileUrl(openedFile.path, connection)} alt={fileName} />
@@ -1476,7 +1479,7 @@ function Login({ onLogin }: { onLogin: (input: { label: string; url: string; tok
     <input placeholder="orbitd URL" value={url} onChange={(event) => setUrl(event.target.value)} />
     <input placeholder="Bearer token" value={token} onChange={(event) => setToken(event.target.value)} />
     {error && <div className="loginError">{error}</div>}
-    <button disabled={busy || !url.trim()}>{busy ? "Connecting..." : "Connect"}</button>
+    <button className="primaryButton" disabled={busy || !url.trim()}>{busy ? "Connecting..." : "Connect"}</button>
   </form></main>;
 }
 
@@ -1523,7 +1526,7 @@ function ConnectionModal(props: {
       {error && <div className="folderError">{error}</div>}
       <div className="modalActions">
         <button type="button" onClick={props.onClose}>Cancel</button>
-        <button disabled={busy || !url.trim()}><PlugZap size={16} />{busy ? "Connecting..." : "Connect"}</button>
+        <button className="primaryButton" disabled={busy || !url.trim()}><PlugZap size={16} />{busy ? "Connecting..." : "Connect"}</button>
       </div>
     </form>
   </div>;
@@ -1543,18 +1546,45 @@ function SessionPane(props: {
     setMode("attach");
   }, [props.session.key]);
 
-  return <div className={`terminalBox${props.session.mode === "web" ? " codexSessionPane" : ""}`}>
-    <div className="terminalTop">
-      <div className="sessionTitle"><span>{props.session.name}</span><small title={props.session.connection.url}>{props.session.connection.label} · {props.session.mode === "web" ? "Web" : "CLI"} · {props.session.cwd}</small></div>
-      {props.session.mode === "web" ? <span className="pill running">Codex Web</span> : <>
-      <button className={mode === "attach" ? "activeDark" : ""} onClick={() => setMode("attach")}><TerminalIcon size={14} />Attach</button>
-      <button className={mode === "logs" ? "activeDark" : ""} onClick={() => setMode("logs")}><FileText size={14} />Logs</button>
-      </>}
-      <button onClick={props.onDetach}><LogOut size={14} />Detach</button>
-      <button onClick={props.onDelete}><Trash2 size={14} /></button>
+  const details = <>
+    <dl className="sessionFacts">
+      <div><dt>ID</dt><dd>{props.session.id}</dd></div>
+      {props.session.pid != null && <div><dt>PID</dt><dd>{props.session.pid}</dd></div>}
+    </dl>
+    <div className="sessionDetailActions">
+      <button type="button" onClick={props.onDetach}><LogOut size={15} />Detach</button>
+      <button type="button" className="dangerButton" onClick={props.onDelete}><Trash2 size={15} />Delete session</button>
     </div>
-    {props.session.mode !== "web" && <div className="terminalLocation" aria-label="현재 세션 실행 위치"><span>CLI</span><strong title={props.session.connection.url}>{props.session.connection.label}</strong><code title={props.session.cwd}>{props.session.cwd}</code></div>}
-    {props.session.mode === "web" ? <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} onBack={props.onBack} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
+  </>;
+
+  if (props.session.mode === "web") return <div className="terminalBox codexSessionPane">
+    <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} onBack={props.onBack} sessionDetails={details} />
+  </div>;
+
+  return <div className="terminalBox cliSessionPane">
+    <div className="terminalTop">
+      <button type="button" className="detailBackButton" aria-label="Back to Sessions" onClick={props.onBack}><ChevronLeft size={20} /></button>
+      <div className="sessionTitle">
+        <strong title={props.session.name}>{props.session.name}</strong>
+        <small title={`${props.session.connection.label} · ${props.session.cwd}`}>CLI · {props.session.connection.label} · {props.session.cwd}</small>
+      </div>
+      <button type="button" aria-pressed={mode === "logs"} onClick={() => setMode(mode === "logs" ? "attach" : "logs")}>
+        {mode === "logs" ? <><TerminalIcon size={15} />Terminal</> : <><FileText size={15} />Logs</>}
+      </button>
+      <details className="cliSessionDetails" onKeyDown={event => {
+        if (event.key === "Escape" && event.currentTarget.open) {
+          event.currentTarget.open = false;
+          event.currentTarget.querySelector("summary")?.focus();
+        }
+      }}>
+        <summary aria-label="Session details" title="Session details"><Info size={18} /></summary>
+        <div className="cliSessionDetailsPanel">
+          <p title={props.session.connection.url}>{props.session.connection.label} · <code>{props.session.cwd}</code></p>
+          {details}
+        </div>
+      </details>
+    </div>
+    {mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
   </div>;
 }
 

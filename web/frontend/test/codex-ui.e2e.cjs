@@ -16,7 +16,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/app/node_modules
     await page.reload();
     await page.getByTitle('New session', { exact: true }).click();
     const modal = page.getByRole('dialog');
-    await modal.getByLabel('Open with').selectOption('web');
+    await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();
     if (await modal.getByLabel('Environment', { exact: true }).count()) throw Error('Web mode exposes unsupported environment overrides');
     await modal.getByLabel('Name', { exact: true }).fill(name);
     await modal.getByPlaceholder('cwd', { exact: true }).fill(config.cwd);
@@ -53,7 +53,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/app/node_modules
       localStorage.setItem('orbit.activeConnection', 'legacy');
     }, config);
     await legacy.reload(); await legacy.getByTitle('New session', { exact: true }).click();
-    const legacyOption = legacy.getByRole('option', { name: 'Web · Chat', exact: true });
+    const legacyOption = legacy.getByRole('radio', { name: 'Web · Chat', exact: true });
     if (!(await legacyOption.evaluate(node => node.disabled))) { console.log('Legacy option diagnostic:', await legacyOption.evaluate(node => node.outerHTML)); throw Error('Legacy server incorrectly offers Web mode'); }
     await legacy.close();
     // Exercise approval and question forms without invoking tools or the model.

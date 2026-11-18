@@ -7,10 +7,16 @@ const {chromium} = require('/app/node_modules/playwright');
  const name=`Codex Commands UI QA ${Date.now()}`;
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  async function seed(p){await p.goto(c.webUrl);await p.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'commands',label:'Commands QA',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','commands');},c);await p.reload();}
- async function typeCommand(p,text){await p.getByRole('textbox',{name:'Codex 메시지'}).fill(text);await p.getByRole('textbox',{name:'Codex 메시지'}).press('Enter');}
+ async function typeCommand(p,text){
+  await p.waitForFunction(()=>document.querySelector('.codexToolbar button')?.disabled===false);
+  const box=p.getByRole('textbox',{name:'Codex 메시지'});
+  await box.fill(text);
+  if(p.viewportSize().width<=820)await p.getByRole('button',{name:'명령 실행',exact:true}).click();
+  else await box.press('Enter');
+ }
  try{
   await seed(page);await page.getByTitle('New session',{exact:true}).click();const modal=page.getByRole('dialog');
-  await modal.getByLabel('Open with').selectOption('web');await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();
+  await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();
   await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});
   await page.locator('.codexToolbar').getByRole('button',{name:'/status',exact:true}).waitFor({state:'visible'});
   await page.waitForFunction(()=>document.querySelector('.codexToolbar button')?.disabled===false);
@@ -60,8 +66,9 @@ const {chromium} = require('/app/node_modules/playwright');
   await mock.setViewportSize({width:390,height:844});
   if(await mock.getByRole('button',{name:'키보드와 단축키'}).count())throw Error('Keyboard button remains');
   await mock.getByRole('textbox',{name:'Codex 메시지'}).fill('이 부분도 함께 확인해줘');
+  await mock.locator('.codexLocationToggle').click();
   if(!(await mock.locator('.codexSessionContext').innerText()).includes('/home/bdg/project/agent-analysis'))throw Error('Execution location missing');
-  if(await mock.locator('.codexComposerMeta').innerText()!=='GPT-6.1-Sol · medium · Fast')throw Error('Model status missing');
+  if(await mock.locator('.codexComposerMeta button').innerText()!=='GPT-6.1-Sol · medium · Fast')throw Error('Model status missing');
   if(await mock.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('Mobile chat overflow');
   await mock.locator('.codexMessages').evaluate(n=>n.scrollTop=0);await mock.screenshot({path:'/workspace/output/codex-design-mobile.png'});
   await mock.setViewportSize({width:1440,height:1000});await mock.screenshot({path:'/workspace/output/codex-design-desktop.png'});

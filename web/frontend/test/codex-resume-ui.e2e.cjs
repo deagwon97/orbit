@@ -4,9 +4,13 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:1440,height:1000}});
  const tag=`Resume QA ${Date.now()}`,ids=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
  const headers={Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl};
- async function command(text){const box=page.getByRole('textbox',{name:'Codex 메시지'});await box.fill(text);await box.press('Enter');}
+ async function command(text){
+  const box=page.getByRole('textbox',{name:'Codex 메시지'});
+  await box.fill(text);
+  await page.getByRole('button',{name:'명령 실행',exact:true}).click();
+ }
  async function sessions(){return page.evaluate(async headers=>{const r=await fetch('/api/v1/sessions',{headers});return r.json();},headers);}
- async function create(name){await page.getByTitle('New session',{exact:true}).click();const modal=page.getByRole('dialog');await modal.getByLabel('Open with').selectOption('web');await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});const s=(await sessions()).find(s=>s.name===name);ids.push(s.id);return s;}
+ async function create(name){await page.getByTitle('New session',{exact:true}).click();const modal=page.getByRole('dialog');await modal.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await modal.getByLabel('Name',{exact:true}).fill(name);await modal.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await modal.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});const s=(await sessions()).find(s=>s.name===name);ids.push(s.id);return s;}
  async function closeDialog(){await page.getByRole('button',{name:'명령 창 닫기'}).click();}
  try{
   await page.goto(c.webUrl);await page.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'resume-qa',label:'Resume QA',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','resume-qa');},c);await page.reload();
@@ -23,7 +27,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   let all=await sessions(),switched=all.find(s=>s.id===current.id);if(switched.codex_thread_id!==target.codex_thread_id||all.length!==beforeCount)throw Error('Resume created a new Orb session or changed the wrong thread');
   await command('/status');dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.getByText('readOnly',{exact:true}).waitFor();await dialog.getByText('on-request',{exact:true}).waitFor();await closeDialog();
   await command('/resume 99999999-9999-4999-8999-999999999999');await page.locator('.codexError').waitFor();if((await sessions()).find(s=>s.id===current.id).codex_thread_id!==target.codex_thread_id)throw Error('Failed resume lost the current thread');
-  await page.reload();await page.locator('.sessions .row').filter({hasText:current.id}).click();await page.locator('.codexMessage.agentMessage').filter({hasText:'ORB_RESUME_OK'}).waitFor();
+  await page.reload();await page.locator('.sessions .row').filter({hasText:all.find(s=>s.id===current.id).name}).filter({has:page.getByText('running',{exact:true})}).click();await page.locator('.codexMessage.agentMessage').filter({hasText:'ORB_RESUME_OK'}).waitFor();
   if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({defaultYolo:true,resumeSearch:true,sameOrbId:true,noNewOrbSession:true,historyRestored:true,savedPermissionsPreserved:true,failedSwitchPreservesCurrent:true,reload:true,mobile:true}));
  }catch(e){console.log('Diagnostic:',(await page.locator('.codexChat').innerText().catch(()=>'' )).slice(-1600));console.log('Browser errors:',errors);throw e;}
  finally{await page.evaluate(async({headers,ids})=>{for(const id of ids.reverse())await fetch('/api/v1/sessions/'+id,{method:'DELETE',headers});},{headers,ids}).catch(()=>{});await browser.close();}
