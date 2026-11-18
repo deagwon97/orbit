@@ -92,6 +92,11 @@ const sessionName = 'Build and test on ARM64';
         const divider = page.getByRole('separator', { name: 'Resize panes' });
         const pane = page.locator('#session-list-pane');
         assert.equal(await hideSessions.evaluate(button => button.previousElementSibling.textContent), 'Files');
+        assert(await hideSessions.evaluate(button => {
+          const tabs = button.parentElement;
+          const right = tabs.getBoundingClientRect().right - parseFloat(getComputedStyle(tabs).paddingRight);
+          return Math.abs(right - button.getBoundingClientRect().right) < 1;
+        }));
         await divider.press('ArrowRight');
         const originalPaneWidth = (await pane.boundingBox()).width;
         const rail = await divider.boundingBox();
