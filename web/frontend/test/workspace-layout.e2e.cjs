@@ -68,6 +68,25 @@ const sessionName = 'Build and test on ARM64';
 
       await row.click();
       const terminal = page.locator('.cliSessionPane');
+      const hideSessions = page.getByRole('button', { name: 'Hide session list' });
+      if (mobile) {
+        assert.equal(await hideSessions.count(), 0);
+      } else {
+        const divider = page.getByRole('separator', { name: 'Resize panes' });
+        const pane = page.locator('#session-list-pane');
+        await divider.press('ArrowRight');
+        const initialPaneWidth = (await pane.boundingBox()).width;
+        const initialTerminalWidth = (await terminal.boundingBox()).width;
+        await hideSessions.click();
+        const showSessions = page.getByRole('button', { name: 'Show session list' });
+        assert.equal(await showSessions.getAttribute('aria-expanded'), 'false');
+        assert.equal(await pane.isVisible(), false);
+        assert.equal(await divider.isVisible(), false);
+        assert((await terminal.boundingBox()).width > initialTerminalWidth);
+        await showSessions.click();
+        assert.equal((await pane.boundingBox()).width, initialPaneWidth);
+        assert.equal((await terminal.boundingBox()).width, initialTerminalWidth);
+      }
       await terminal.locator('summary').click();
       await terminal.getByText('19234', { exact: true }).waitFor();
       await terminal.locator('summary').press('Escape');

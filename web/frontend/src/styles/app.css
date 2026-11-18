@@ -138,6 +138,13 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .statusLineClose:hover { background: #d4ede7; }
 
 .layout { flex: 1; display: grid; grid-template-columns: minmax(280px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.sessionListToggle { display: none; }
+@media (min-width: 821px) {
+  .toolbar .sessionListToggle { display: inline-flex; margin-left: 12px; width: 36px; }
+  .layout.sessionsCollapsed { grid-template-columns: minmax(0, 1fr); }
+  .layout.sessionsCollapsed > .masterPane,
+  .layout.sessionsCollapsed > .paneResizer { display: none; }
+}
 .masterPane {
   min-width: 280px;
   min-height: 0;

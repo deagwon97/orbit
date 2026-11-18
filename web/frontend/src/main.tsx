@@ -4,7 +4,7 @@ import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHis
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -607,6 +607,7 @@ function App() {
 
   const [connections, setConnections] = useState<OrbitConnection[]>(() => savedConnections());
   const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
@@ -832,10 +833,23 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  const sessionsOpen = !connectionsOpen && !fileEditorOpen;
+  const sessionListLabel = sessionsCollapsed ? "Show session list" : "Hide session list";
   if (!authed) return <Login onLogin={addConnection} />;
   return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}`}>
     <section className="toolbar">
       <strong>Orbit</strong>
+      {sessionsOpen && <button
+        type="button"
+        className="iconButton sessionListToggle"
+        title={sessionListLabel}
+        aria-label={sessionListLabel}
+        aria-controls="session-list-pane"
+        aria-expanded={!sessionsCollapsed}
+        onClick={() => setSessionsCollapsed(collapsed => !collapsed)}
+      >
+        {sessionsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+      </button>}
       <div className="toolbarActions">
         {activeConnection && (
           <button
@@ -859,7 +873,7 @@ function App() {
         <X size={14} />
       </button>
     </div>}
-    <section className={`layout${detailOpen ? " showDetail" : ""}`} style={layoutStyle}>
+    <section className={`layout${detailOpen ? " showDetail" : ""}${sessionsOpen && sessionsCollapsed ? " sessionsCollapsed" : ""}`} style={layoutStyle}>
       {connectionsOpen ? <ConnectionsWorkspace
           connections={connections}
           activeConnectionId={activeConnection?.id ?? ""}
@@ -877,7 +891,7 @@ function App() {
           onDetailOpen={() => setDetailOpen(true)}
           onBack={closeDetail}
         /> : <>
-        <div className="masterPane">
+        <div className="masterPane" id="session-list-pane">
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
