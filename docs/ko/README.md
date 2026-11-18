@@ -40,21 +40,34 @@ Terminal                    Browser (web UI)
 
 ## 빠른 시작
 
-### 1. 사전 준비
+### 저장소를 내려받아 설치하기
 
-- **Rust toolchain** — `orbitd` 빌드용
-- **Go 1.23+** — `orb` 클라이언트 빌드용
-- **Node.js + npm** — 웹 UI용(선택사항)
-- **백엔드 명령** — `PATH`에 있거나 백엔드 YAML에 절대 경로로 지정된 명령
-
-### 2. 데몬 빌드 및 실행
+systemd를 사용하는 Linux에서 Git, C 컴파일러와 링커, [Rust](https://rustup.rs/), [Go 1.23 이상](https://go.dev/dl/)을 준비한다. `cargo`와 `go`는 평소 사용하는 계정에서 실행할 수 있어야 한다.
 
 ```bash
-cd orbitd
-cargo run -p orbitd
+git clone https://github.com/deagwon97/orbit.git
+cd orbit
+sudo bash script/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+orb ps
 ```
 
-서버는 기본적으로 `127.0.0.1:7777`에서 실행된다. 기본적으로 다음 경로를 사용한다:
+설치 스크립트는 `orbitd`를 `/opt/orbit/orbitd`에, `orb`를 `~/.local/bin/orb`에 설치한다. `orb ps`로 연결을 확인하고, 필요하면 `export` 줄을 셸 설정 파일에 추가한다. `orb run codex`를 쓰려면 `orbitd`가 실행되는 호스트에 Codex CLI가 설치되어 있어야 한다.
+
+[GitHub Releases](https://github.com/deagwon97/orbit/releases)에 Linux 아키텍처에 맞는 바이너리가 있으면 `sudo bash script/install.sh --prebuilt`로 설치할 수 있다. 업데이트할 때도 같은 스크립트를 실행한다. 두 바이너리를 준비한 뒤 교체하며, 기존 systemd 서비스와 `orb` 연결 설정을 보존한다. 서비스가 재시작되므로 CLI 세션에서 진행 중인 작업을 먼저 마친다.
+
+### systemd 없이 실행하기
+
+```bash
+# 저장소 루트에서 실행
+sudo bash script/install.sh --no-systemd
+# 데몬을 실행하는 셸
+export ORBITD_CONFIG="$HOME/.config/orbit/orbitd/config.yaml"
+export ORBITD_TOKEN_PATH="$HOME/.config/orbit/orbitd/token"
+/opt/orbit/orbitd
+```
+
+다른 셸에서 `ORB_TOKEN_PATH="$HOME/.config/orbit/orbitd/token" "$HOME/.local/bin/orb" ps`로 연결을 확인한다. systemd로 설치하면 데몬은 기본적으로 `127.0.0.1:7777`에서 실행되고 다음 경로를 사용한다.
 
 | 경로 | 용도 |
 |------|------|
@@ -71,7 +84,7 @@ cargo run -p orbitd
 
 세션 메타데이터와 로그는 인메모리 SQLite 데이터베이스에 저장된다 — **`orbitd`가 종료되면 모든 데이터가 사라진다**. Raw PTY 출력은 오프라인 확인을 위해 `./tmp/<session-id>.log`에도 기록된다.
 
-### 3. 클라이언트 빌드 및 실행
+### 개발 중 클라이언트 실행
 
 ```bash
 cd orb

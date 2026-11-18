@@ -40,8 +40,8 @@ Only `orbitd` owns the PTY, child processes, and filesystem API. The TUI, CLI, a
 
 ## Quick Start
 
-The install script requires root to write the default binary paths and register
-the systemd service — run it with `sudo`.
+On Linux with systemd, clone the repository and run the installer from its root.
+Install Git, a C compiler/linker, [Rust](https://rustup.rs/), and [Go 1.23+](https://go.dev/dl/) first. Make sure `cargo` and `go` are available to your regular user.
 
 Default binary paths:
 
@@ -50,34 +50,36 @@ Default binary paths:
 | `orbitd` | `/opt/orbit/orbitd`  |
 | `orb`    | `~/.local/bin/orb`   |
 
-### Option A — Pre-built binaries (fastest)
-
-```bash
-git clone https://github.com/deagwon97/orbit.git
-cd orbit
-sudo bash script/install.sh --prebuilt
-```
-
-Downloads the latest release binaries for your architecture, installs them to
-the default binary paths, and registers `orbitd` as a systemd service that starts
-on boot.
-
-### Option B — Build from source
-
-Requires **Rust** ([rustup.rs](https://rustup.rs)) and **Go 1.23+** ([go.dev/dl](https://go.dev/dl/))
-installed for your user account.
+### Install from the checkout
 
 ```bash
 git clone https://github.com/deagwon97/orbit.git
 cd orbit
 sudo bash script/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+orb ps
 ```
 
-Before installation starts, the script stops any running `orb` client processes
-for the invoking user and stops the existing `orbitd` service/process. The build
-runs as the original user (via `SUDO_USER`) so your `cargo` and `go`
-installations are found correctly. Binaries are then installed to the default
-binary paths and the systemd service is registered.
+Add the `export` line to your shell profile if needed. `orb ps` checks that the
+client can reach the daemon. To launch a Codex session, install the Codex CLI
+on the orbitd host and make sure the service user can run it.
+
+### Install a published build
+
+If [GitHub Releases](https://github.com/deagwon97/orbit/releases) has binaries
+for your Linux architecture, you can use `curl` and the installer to download
+them. If there is no matching release, use the checkout commands above.
+
+```bash
+sudo bash script/install.sh --prebuilt
+```
+
+### Upgrade
+
+Run the installer again from the updated checkout. It prepares both binaries
+before replacing either and preserves existing systemd and `orb` connection
+settings. The systemd service restarts after replacement, so finish work in
+attached sessions before upgrading.
 
 ### After install
 
@@ -115,7 +117,7 @@ sudo bash script/install.sh [OPTIONS]
       --orbitd-dir DIR    Override orbitd install directory (default: /opt/orbit)
       --orb-dir DIR       Override orb install directory (default: ~/.local/bin)
       --install-dir DIR   Legacy: install both binaries into DIR
-      --no-systemd        Skip systemd service registration
+      --no-systemd        Install binaries without contacting systemd
   -h, --help              Show all options
 ```
 
@@ -434,11 +436,16 @@ sudo systemctl disable orbitd     # remove from autostart
 journalctl -u orbitd -f           # follow logs
 ```
 
-To skip service registration during install, pass `--no-systemd`:
+To install the binaries and run the daemon as your own user, run these commands from the repository root.
 
 ```bash
 sudo bash script/install.sh --no-systemd
+export ORBITD_CONFIG="$HOME/.config/orbit/orbitd/config.yaml"
+export ORBITD_TOKEN_PATH="$HOME/.config/orbit/orbitd/token"
+/opt/orbit/orbitd
 ```
+
+In another shell, run `ORB_TOKEN_PATH="$HOME/.config/orbit/orbitd/token" "$HOME/.local/bin/orb" ps` to check the connection.
 
 ### Uninstall
 
