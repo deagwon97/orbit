@@ -44,3 +44,15 @@ test('working start times restore seconds or milliseconds from history without r
   assert.equal(state.turnStarts.get('live'),start);
   observe(state,{method:'turn/completed',params:{turn:{id:'live',status:'completed'}}});assert.equal(state.active,null);
 });
+
+test('working progress includes retries, patches, terminal input, hooks and tool outputs while raw reasoning remains hidden',()=>{
+ const s=newChatState();observe(s,{method:'turn/started',params:{turn:{id:'live'}}});
+ observe(s,{method:'error',params:{turnId:'live',willRetry:true,error:{message:'Reconnecting 1/3'}}});assert.equal(s.activity,'Reconnecting 1/3');assert.match([...s.items.values()].at(-1).text,/재시도/);
+ observe(s,{method:'item/fileChange/patchUpdated',params:{turnId:'live',itemId:'patch',changes:[{path:'src/a.ts',diff:'+ added'}]}});assert.equal(s.items.get('patch').changes[0].diff,'+ added');
+ observe(s,{method:'item/commandExecution/terminalInteraction',params:{turnId:'live',itemId:'cmd',processId:'42',stdin:'next\n'}});assert.match(output([...s.items.values()].at(-1)),/next/);
+ observe(s,{method:'hook/started',params:{threadId:'x',turnId:'live',run:{id:'h',eventName:'PreToolUse',entries:[]}}});assert.equal(s.items.get('hook-h').status,'inProgress');
+ assert.match(output({id:'tool',type:'dynamicToolCall',contentItems:[{type:'inputText',text:'dynamic output'}]}),/dynamic output/);
+ assert.match(output({id:'mcp',type:'mcpToolCall',result:{content:[{type:'text',text:'MCP output'},{type:'image',data:'SECRET_IMAGE_BYTES'}]}}),/MCP output/);
+ assert.doesNotMatch(output({id:'mcp',type:'mcpToolCall',result:{content:[{type:'image',data:'SECRET_IMAGE_BYTES'}]}}),/SECRET_IMAGE_BYTES/);
+ assert.equal(output({id:'r',type:'reasoning',summary:[],content:['PRIVATE_RAW_REASONING']}),'');
+});

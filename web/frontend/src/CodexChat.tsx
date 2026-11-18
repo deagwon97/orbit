@@ -4,11 +4,12 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
 import './styles/codex-chat.css';
 import { ImageDrafts, ImagePicker, MessageImages, useImages } from './CodexImages';
+import { progressCaption, progressLabel, queuesDuringTurn, specificActivity } from './codex-progress';
 import { CodexWorking } from './CodexWorking';
 import { CodexControls } from './CodexControls';
 import { suggestions, isCommand, type ConversationCommand } from './codex-command-input';
 
-type Session = { id: string; key: string; name: string; cwd: string; status: string; connection: { label: string; url: string; token: string } };
+type Session = { id: string; key: string; name: string; cwd: string; status: string; codex_thread_id?: string | null; connection: { label: string; url: string; token: string } };
 function Inline({ text }: { text: string }) {
   function render(tokens: any[]): React.ReactNode {
     return tokens.map((t, i) => t.type === 'strong' ? <strong key={i}>{render(t.tokens)}</strong> : t.type === 'em' ? <em key={i}>{render(t.tokens)}</em> : t.type === 'codespan' ? <code key={i}>{t.text}</code> : t.type === 'del' ? <del key={i}>{render(t.tokens)}</del> : t.type === 'br' ? <br key={i} /> : t.type === 'link' && /^(https?:|mailto:|#)/i.test(t.href) ? <a key={i} href={t.href} target="_blank" rel="noreferrer">{render(t.tokens)}</a> : <React.Fragment key={i}>{t.tokens ? render(t.tokens) : t.text || t.raw}</React.Fragment>);
@@ -49,17 +50,18 @@ function WorkLog({ item }: { item: CodexItem }) {
   const actions = item.commandActions || [];
   const exploring = actions.length > 0 && actions.every((a: any) => ['read', 'search', 'listFiles'].includes(a.type));
   if (item.type === 'reasoning' && !full.trim()) return null;
-  const label = item.type === 'commandExecution' ? (exploring ? running ? '탐색 중' : '탐색함' : running ? '실행 중' : failed ? '실패' : '실행함') : ({ reasoning: '추론 요약', plan: '작업 계획', fileChange: '파일 변경', mcpToolCall: '도구 호출', webSearch: '웹 검색' }[item.type] || item.type);
+  const label = progressLabel(item), caption=progressCaption(item);
   const collapse = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '− 접기' : hidden ? `+ ${hidden}줄 더 보기` : '+ 상세 출력 보기'}</button>;
   return <section className={`codexWork ${running ? 'running' : ''} ${failed ? 'failed' : ''}`} data-item={item.id}>
-    <div className="codexWorkHeading"><span className="codexDot" /><strong>{label}</strong>{item.command && <button className="codexCommand" title={item.command} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{item.command.split('\n')[0]}{item.command.includes('\n') ? ' …' : ''}</button>}{failed && item.exitCode != null && <small>exit {item.exitCode}</small>}{expanded && collapse}</div>
+    <div className="codexWorkHeading"><span className="codexDot" /><strong>{label}</strong>{caption && <button className="codexCommand" title={caption} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{caption.split('\n')[0]}{caption.includes('\n') ? ' …' : ''}</button>}{failed && item.exitCode != null && <small>exit {item.exitCode}</small>}{expanded && collapse}</div>
     <div className="codexWorkBody">
       {exploring && actions.map((a: any, index: number) => <div className="codexAction" key={index}><span>{a.type === 'read' ? '읽기' : a.type === 'search' ? '검색' : '목록'}</span><span>{a.name || [a.query, a.path].filter(Boolean).join(' ') || a.command}</span></div>)}
-      {expanded && item.command && <pre>{item.command}</pre>}
+      {expanded && caption && <pre>{caption}</pre>}
+      {expanded && item.arguments!=null && <pre>{JSON.stringify(item.arguments,null,2)}</pre>}
       {(item.changes || []).map((change: any) => <div key={change.path}><div className="codexFile">{change.path}</div>{expanded && change.diff && <pre>{change.diff}</pre>}</div>)}
       {full && (!exploring || expanded) && <pre className={expanded ? '' : 'codexOutputPreview'}>{expanded ? full : lines.slice(-3).join('\n')}</pre>}
-      {running && !full && !exploring && <small>출력을 기다리고 있습니다…</small>}
-      {(expanded || hidden > 0 || exploring || item.changes?.length > 0) && collapse}
+      {running && !full && !exploring && ['commandExecution','mcpToolCall','dynamicToolCall'].includes(item.type) && <small>출력을 기다리고 있습니다…</small>}
+      {(expanded || hidden > 0 || exploring || item.changes?.length > 0 || item.arguments!=null) && collapse}
     </div>
   </section>;
 }
@@ -80,13 +82,26 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
   const state = useRef(newChatState()), socket = useRef<WebSocket | null>(null), counter = useRef(0);
   const pending = useRef(new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void; since: number; op: string; older: boolean; timer: number }>());
   const [version, setVersion] = useState(0), [epoch, setEpoch] = useState(0), [connection, setConnection] = useState('connecting');
-  const [draft, setDraft] = useState(''), [sending, setSending] = useState(false), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
+  const [draft, setDraft] = useState(''), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
   const [commands, setCommands] = useState<ConversationCommand[]>([]), [commandResult, setCommandResult] = useState<any>(null), [commandBusy, setCommandBusy] = useState(false), [selectedCommand, setSelectedCommand] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null), commandView = useRef(0);
   function closeControls() { commandView.current++;setCommandResult(null); }
-  const images = useImages(session, !!state.current.capabilities.images && session.status === 'running' && connection === 'ready' && !sending, setError);
+  const reservedImages=useRef(new Set<string>()),inFlight=useRef(0);
+  const submissionKey=`orbit.submissions.${session.key}:${session.codex_thread_id||''}`;
+  type Submission={id:string;text:string;images:{id:string;path:string;name:string}[];status:'sending'|'failed';error?:string};
+  const [submissions,setSubmissions]=useState<Submission[]>(()=>{try{return JSON.parse(sessionStorage.getItem(submissionKey)||'[]').filter((entry:any)=>typeof entry.text==='string').map((entry:any)=>({...entry,status:'failed',error:'전송 여부를 대화 이력에서 확인한 뒤 복원하세요.'}));}catch{return [];}});
+  const submissionsRef=useRef(submissions);
+  function changeSubmissions(update:(items:Submission[])=>Submission[]){const next=update(submissionsRef.current);submissionsRef.current=next;setSubmissions(next);try{if(next.length)sessionStorage.setItem(submissionKey,JSON.stringify(next));else sessionStorage.removeItem(submissionKey);}catch{}}
+  const images = useImages(session, !!state.current.capabilities.images && session.status === 'running' && connection === 'ready', setError);
+  const availableImages=images.items.filter(item=>!reservedImages.current.has(item.key));
   const [dragging,setDragging] = useState(false); const dragDepth=useRef(0);
-  const [locationOpen,setLocationOpen] = useState(false);
+  const [locationOpen,setLocationOpen] = useState(false), [background,setBackground] = useState<any[]>([]);
+  useEffect(()=>{
+    if(connection!=='ready'||!state.current.capabilities.commands)return;
+    let disposed=false,busy=false;
+    const poll=async()=>{if(busy)return;busy=true;try{const result=await request({op:'command',command:'/ps'});if(!disposed)setBackground(Array.isArray(result.data)?result.data:[]);}catch{}finally{busy=false;}};
+    void poll();const timer=state.current.active||background.length?window.setInterval(()=>void poll(),5000):undefined;return()=>{disposed=true;clearInterval(timer);};
+  },[connection,state.current.active,background.length>0,session.key]);
   useLayoutEffect(() => {
     const node=promptRef.current;if(!node)return;
     let width=node.getBoundingClientRect().width;
@@ -160,7 +175,7 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
   }, [session.key, epoch]);
   useLayoutEffect(() => { if (following.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }, [version, connection]);
   async function runCommand(command: string, extra: any = {}, consumeDraft = false) {
-    if (commandBusy || sending || connection !== 'ready') return;
+    if (commandBusy || connection !== 'ready') return;
     if ((consumeDraft || /^\/resume\s+[0-9a-f-]{36}$/i.test(command.trim())) && images.items.length) { setError('이미지가 첨부되어 있습니다. 슬래시 명령을 실행하려면 첨부를 해제하거나 일반 메시지로 보내세요.'); return; }
     if (!state.current.capabilities.commands) { setError('현재 orbitd는 대화 명령을 지원하지 않습니다. 새 바이너리로 교체하고 다시 연결하세요.'); return; }
     if (/^\/permissions?\s+full-access$/.test(command.trim()) && !extra.confirmFullAccess) command = '/permissions';
@@ -198,22 +213,34 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
     } catch (e) { setError(String(e)); } finally { setCommandBusy(false); }
   }
   async function sendText(queue = false) {
-    if ((!draft.trim() && !images.items.length) || sending || commandBusy || session.status !== 'running' || connection !== 'ready') return;
+    const text=draft,attached=availableImages;
+    if ((!text.trim() && !attached.length) || session.status !== 'running' || connection !== 'ready') return;
     if (!images.ready) { setError('이미지 업로드가 끝나야 보낼 수 있습니다. 실패한 첨부는 재시도하거나 해제하세요.'); return; }
-    if (isCommand(draft)) { await runCommand(draft.trim(), {}, true); return; }
-    if (running && !queue && !state.current.capabilities.steer) { setError('실행 중 입력은 orbitd 업데이트 후 사용할 수 있습니다.'); return; }
-    setSending(true); setError(''); const text = draft, attached = images.items;
+    if (isCommand(text)) { await runCommand(text.trim(), {}, true); return; }
+    if(submissionsRef.current.length>=20){setError('확인 중인 입력이 많습니다. 전송 결과를 확인하거나 실패한 입력을 정리하세요.');return;}
+    const op=queue||queueTurn||inFlight.current>0||commandBusy||(!running&&state.current.queue.items.length)?'queue':running?'steer':'send';
+    if(op==='steer'&&!state.current.capabilities.steer){setError('실행 중 입력은 orbitd 업데이트 후 사용할 수 있습니다.');return;}
+    const id=`submission-${Date.now()}-${++counter.current}`;
+    attached.forEach(item=>reservedImages.current.add(item.key));inFlight.current++;setError('');setDraft('');
+    changeSubmissions(items=>[...items,{id,text,images:attached.map(item=>({id:item.id!,path:item.path!,name:item.name})),status:'sending'}]);
     try {
-      const op = queue || (!running && state.current.queue.items.length) ? 'queue' : running ? 'steer' : 'send';
-      const result = await request({ op, text, images: attached.map(item => item.id) });
-      if (result.state) applyLiveState(state.current, result.state, -1);
-      if (result.turn) {
-        rememberTurnStart(state.current,result.turn,true);
-        for (const item of result.turn.items || []) if (!state.current.items.has(item.id)) putItem(state.current, { ...item, turnId: result.turn.id });
-        if (result.turn.status === 'inProgress' && !state.current.completed.has(result.turn.id)) state.current.active = result.turn.id;
+      let result;
+      try {result=await request({op,text,images:attached.map(item=>item.id)});}
+      catch(error){
+        const message=String(error);
+        if(op==='steer'&&/cannot steer a (review|compact) turn|no active turn to steer|expected active turn id|active turn uses a different output schema/.test(message))result=await request({op:'queue',text,images:attached.map(item=>item.id)});
+        else throw error;
       }
-      setDraft(value => value === text ? '' : value); images.remove(attached.map(item => item.key)); following.current = true; setShowLatest(false); refresh();
-    } catch (e) { setError(String(e)); } finally { setSending(false); }
+      if(result.state)applyLiveState(state.current,result.state,-1);
+      if(result.turn){rememberTurnStart(state.current,result.turn,true);for(const item of result.turn.items||[])if(!state.current.items.has(item.id))putItem(state.current,{...item,turnId:result.turn.id});if(result.turn.status==='inProgress'&&!state.current.completed.has(result.turn.id))state.current.active=result.turn.id;}
+      changeSubmissions(items=>items.filter(item=>item.id!==id));images.remove(attached.map(item=>item.key));following.current=true;setShowLatest(false);refresh();
+    } catch(error){
+      changeSubmissions(items=>items.map(item=>item.id===id?{...item,status:'failed',error:String(error)}:item));
+    } finally {attached.forEach(item=>reservedImages.current.delete(item.key));inFlight.current--;refresh();}
+  }
+  async function restoreSubmission(entry:Submission){
+    if(draft.trim()){setError('입력 중인 메시지를 먼저 보내거나 비운 뒤 복원하세요.');return;}
+    try{await images.restoreUploaded(entry.images||[]);setDraft(entry.text);changeSubmissions(items=>items.filter(item=>item.id!==entry.id));promptRef.current?.focus();}catch(error){setError(String(error));}
   }
   async function queueAction(op: string, entryId?: string) {
     setCommandBusy(true); setError('');
@@ -230,8 +257,8 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
   const s = state.current, running = !!s.active;
   const matches = suggestions(draft, commands);
   const commandInput = isCommand(draft);
-  const current = [...s.items.values()].reverse().find(item => item.status === 'inProgress' && !['userMessage', 'plan'].includes(item.type));
-  const working = s.approvals.size ? '승인 또는 응답 대기 중' : current?.type === 'commandExecution' ? '명령 실행 중' : current?.type === 'fileChange' ? '파일 수정 중' : 'Codex가 작업하고 있습니다';
+  const queueTurn=queuesDuringTurn([...s.items.values()],s.active);
+  const working=specificActivity([...s.items.values()],s.approvals.size,s.active,s.activity);
   const host = (() => { try { return new URL(session.connection.url).host; } catch { return session.connection.url; } })();
   const cwd = s.settings.cwd || session.cwd;
   return <div className={`codexChat${dragging ? ' dragging' : ''}`} onDragEnter={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++;setDragging(true); } }} onDragOver={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault();event.dataTransfer.dropEffect='copy'; } }} onDragLeave={event => { event.preventDefault();if(--dragDepth.current<=0){dragDepth.current=0;setDragging(false);} }} onDrop={event => { if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);images.add(Array.from(event.dataTransfer.files)); }}>
@@ -242,25 +269,28 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
     <div className="codexMessages" ref={scroller} onScroll={() => { const n = scroller.current!; following.current = n.scrollHeight - n.scrollTop - n.clientHeight < 60; setShowLatest(!following.current); }}>
       {s.nextCursor && <button disabled={historyBusy} className="codexOlder" onClick={() => void older()}>이전 대화 불러오기</button>}
       {!s.order.length && connection === 'ready' && <div className="codexEmpty"><span className="codexEmptyMark">✳</span><h2>어떤 작업을 시작할까요?</h2><p>이 세션에서 Codex와 대화를 시작하세요.</p><small>{session.name}</small></div>}
-      {s.order.map(id => { const item = s.items.get(id)!; return item.type === 'userMessage' || item.type === 'agentMessage' || item.type === 'system' ? <article className={`codexMessage ${item.type}`} key={id}>{item.type === 'agentMessage' && <small>Codex</small>}<MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} /></article> : <WorkLog key={id} item={item} />; })}
+      {s.order.map(id => { const item = s.items.get(id)!; return item.type === 'userMessage' || item.type === 'agentMessage' || item.type === 'system' ? <article className={`codexMessage ${item.type}`} key={id}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog key={id} item={item} />; })}
 
     </div>
     <div className="codexComposerArea">
       {running && <CodexWorking key={s.active!} sessionKey={session.key} turnId={s.active!} startedAt={s.turnStarts.get(s.active!) || null} activity={working} disabled={connection !== 'ready'} interrupt={()=>void request({op:'interrupt'}).catch(e=>setError(String(e)))}/>}
+      {background.length>0&&<button type="button" className="codexBackground" onClick={()=>void runCommand('/ps')}>백그라운드 터미널 {background.length}개 · 보기</button>}
+      {submissions.length>0&&<section className="codexSubmissions" aria-label="전송 중인 입력">{submissions.map(entry=><div className={entry.status} key={entry.id}><header><strong>{entry.status==='sending'?'전송 확인 중':'전송 확인 실패'}</strong>{entry.status==='failed'&&<><button type="button" onClick={()=>void restoreSubmission(entry)}>입력으로 복원</button><button type="button" aria-label="입력 기록 닫기" onClick={()=>changeSubmissions(items=>items.filter(item=>item.id!==entry.id))}>×</button></>}</header><p>{entry.text}{entry.images?.length?` · 이미지 ${entry.images.length}개`:''}</p>{entry.error&&<small>{entry.error}</small>}</div>)}</section>}
+      {queueTurn&&<div className="codexInputHint">리뷰·문맥 압축 중인 입력은 다음 턴에 전달합니다.</div>}
       {showLatest && <button className="codexLatest" onClick={() => { following.current = true; setShowLatest(false); if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }}>↓ 최신 작업으로 이동</button>}
       {s.queue.items.length > 0 && <section className="codexQueue" aria-label="대기 메시지"><header><strong>대기 메시지 {s.queue.items.length}개{s.queue.paused ? ' · 일시 중지' : ''}</strong>{s.queue.paused && <button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/resume')}>대기열 다시 시작</button>}</header>{s.queue.error && <p>{s.queue.error}</p>}<ol>{s.queue.items.map(entry => <li key={entry.id}><span title={entry.text}>{entry.images?.length ? `이미지 ${entry.images.length}개 · ` : ''}{entry.text || '이미지 첨부'}</span><button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/remove', entry.id)}>취소</button></li>)}</ol></section>}
       {[...s.approvals.values()].map(r => <Approval key={JSON.stringify(r.id)} request={r} item={s.items.get(r.params.itemId)} reply={request} />)}
       {error && <div className="codexError" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="오류 닫기">×</button></div>}
       {matches.length > 0 && <div id="codex-command-list" className="codexSuggestions" role="listbox" aria-label="대화 명령">{matches.map((command, index) => <button type="button" key={command.name} role="option" aria-selected={index === selectedCommand % matches.length} aria-disabled={running && !command.duringTask} onMouseDown={e => e.preventDefault()} onClick={() => { setDraft(`/${command.name}${command.usage ? ' ' : ''}`); promptRef.current?.focus(); }}><strong>/{command.name}</strong><span>{command.description}</span>{running && !command.duringTask && <small>작업 후</small>}</button>)}</div>}
-      <ImageDrafts items={images.items} remove={images.remove} retry={images.retry} report={setError} />
+      <ImageDrafts items={availableImages} remove={images.remove} retry={images.retry} report={setError} />
       <form className="codexComposer" onSubmit={event => { event.preventDefault(); if (commandInput) void runCommand(draft.trim(), {}, true); else void sendText(); }}>
-        <ImagePicker enabled={!!s.capabilities.images && connection === 'ready' && session.status === 'running' && !sending} add={images.add} />
+        <ImagePicker enabled={!!s.capabilities.images && connection === 'ready' && session.status === 'running'} add={images.add} />
         <textarea rows={1} ref={promptRef} aria-label="Codex 메시지" aria-expanded={matches.length > 0} aria-controls="codex-command-list" placeholder={running ? '추가 지시…' : '메시지 입력…'} value={draft} maxLength={100000} onPaste={event => { const files=Array.from(event.clipboardData.files);if(!files.length)return;event.preventDefault();images.add(files);const text=event.clipboardData.getData('text/plain');if(text){const node=event.currentTarget,start=node.selectionStart,end=node.selectionEnd;setDraft(draft.slice(0,start)+text+draft.slice(end));} }} onChange={e => { setDraft(e.target.value); setSelectedCommand(0); }} onKeyDown={event => {
           if (event.nativeEvent.isComposing) return;
           if (matches.length && ['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); setSelectedCommand(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
           if (event.key === 'Tab' && !event.shiftKey) {
             if (matches.length) { event.preventDefault(); setDraft(`/${matches[selectedCommand % matches.length].name} `); return; }
-            if (running && (draft.trim() || images.items.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
+            if (running && (draft.trim() || availableImages.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
           }
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -273,11 +303,11 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
           <button type="button" className="codexIconButton codexSlashButton" title="명령 선택" aria-label="명령 선택" disabled={!s.capabilities.commands} onClick={() => { setDraft('/'); promptRef.current?.focus(); }}><Slash size={19} /></button>
           <span className="codexComposerSpacer" />
           {running && <button type="button" className="codexIconButton codexStopButton" title="작업 중단" aria-label="작업 중단" disabled={connection !== 'ready'} onClick={() => { void request({ op: 'interrupt' }).catch(e => setError(String(e))); }}><Square size={16} fill="currentColor" /></button>}
-          {s.capabilities.queue && running && !commandInput && <button type="button" className="codexQueueButton" title="다음 턴 예약 · Tab" aria-label="다음 턴 예약" disabled={sending || commandBusy || (!draft.trim() && !images.items.length) || !images.ready || session.status !== 'running' || connection !== 'ready'} onClick={() => void sendText(true)}><ListPlus size={18} /><span className="codexQueueLabelFull">다음 턴</span><span className="codexQueueLabelMobile">예약</span></button>}
-          <button className="codexSend" aria-label={commandInput ? '명령 실행' : running ? '지금 반영 ↑' : '전송 ↑'} title={commandInput ? '명령 실행' : running ? '지금 반영' : '전송'} disabled={(!commandInput && session.status !== 'running') || sending || commandBusy || connection !== 'ready' || (!draft.trim() && !images.items.length) || !images.ready}><ArrowUp size={23} /></button>
+          {s.capabilities.queue && running && !commandInput && <button type="button" className="codexQueueButton" title="다음 턴 예약 · Tab" aria-label="다음 턴 예약" disabled={(!draft.trim() && !availableImages.length) || !images.ready || session.status !== 'running' || connection !== 'ready'} onClick={() => void sendText(true)}><ListPlus size={18} /><span className="codexQueueLabelFull">다음 턴</span><span className="codexQueueLabelMobile">예약</span></button>}
+          <button className="codexSend" aria-label={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영 ↑' : '전송 ↑'} title={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} disabled={(!commandInput && session.status !== 'running') || (commandInput && commandBusy) || connection !== 'ready' || (!draft.trim() && !availableImages.length) || !images.ready}><ArrowUp size={23} /></button>
         </div>
       </form>
-      <div className="codexComposerMeta"><button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</button>{s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}<small>Enter {commandInput ? '명령 실행' : running ? '지금 반영' : '전송'} · Shift+Enter 줄바꿈{s.capabilities.queue && running ? ' · Tab 예약' : ''}</small></div>
+      <div className="codexComposerMeta"><button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</button>{s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}<small>Enter {commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} · Shift+Enter 줄바꿈{s.capabilities.queue && running ? ' · Tab 예약' : ''}</small></div>
       {commandResult && <CodexControls result={commandResult} busy={commandBusy} running={running} readOnly={session.status !== 'running'} run={runCommand} close={closeControls} insert={text => { setDraft(text); closeControls(); promptRef.current?.focus(); }} />}
 
     </div>

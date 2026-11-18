@@ -43,8 +43,13 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
             json!({"type":"ready","state":connection.snapshot()}).to_string(),
         ))
         .await;
+    let mut operations = tokio::task::JoinSet::<Value>::new();
     loop {
         let outgoing = tokio::select! {
+            completed=operations.join_next(), if !operations.is_empty() => match completed {
+                Some(Ok(value))=>value,
+                _=>json!({"type":"resync"}),
+            },
             event = events.recv() => match event {
                 Ok(event) => { if event["type"] == "drain" { continue; } event },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => json!({"type":"resync"}),
@@ -68,12 +73,31 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                         continue;
                     }
                 }
-                let result=if let Some(thread_id)=resume_id {
-                    state.registry.resume_web_thread(&id,thread_id).await.map(|session|json!({"type":"resumeOpened","session":session}))
-                } else {connection.operation(&body).await};
-                match result {
-                    Ok(result) => json!({"type":"result","id":body["id"],"op":body["op"],"result":result}),
-                    Err(error) => json!({"type":"error","id":body["id"],"error":format!("{error:#}")}),
+                if let Some(thread_id)=resume_id {
+                    // Switching is idle-only and must deliver its result before the old
+                    // connection's disconnected event, so keep this operation ordered.
+                    match state.registry.resume_web_thread(&id,thread_id).await {
+                        Ok(session)=>json!({"type":"result","id":body["id"],"op":body["op"],"result":{"type":"resumeOpened","session":session}}),
+                        Err(error)=>json!({"type":"error","id":body["id"],"error":format!("{error:#}")}),
+                    }
+                } else {
+                    if operations.len()>=32 {
+                        json!({"type":"error","id":body["id"],"error":"요청이 너무 많습니다. 잠시 후 다시 시도하세요."})
+                    } else {
+                        let connection=connection.clone();
+                        let mut operation=Box::pin(async move {
+                            match connection.operation(&body).await {
+                                Ok(result)=>json!({"type":"result","id":body["id"],"op":body["op"],"result":result}),
+                                Err(error)=>json!({"type":"error","id":body["id"],"error":format!("{error:#}")}),
+                            }
+                        });
+                        // Poll admission in receive order before detaching the RPC wait.
+                        // This preserves FIFO input ordering while still streaming events.
+                        match futures_util::poll!(operation.as_mut()) {
+                            std::task::Poll::Ready(value)=>value,
+                            std::task::Poll::Pending=>{operations.spawn(operation);continue;}
+                        }
+                    }
                 }
             }
         };
@@ -88,6 +112,9 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
             break;
         }
     }
+    // Complete already accepted requests even if the browser closes; never cancel an
+    // in-flight turn/start and accidentally drain queued inputs before it resolves.
+    operations.detach_all();
     // Dropping a browser connection does not stop the turn or the shared daemon.
 }
 
@@ -164,5 +191,105 @@ pub async fn read_image(
             "임시 이미지를 찾을 수 없습니다. 다시 첨부하세요.",
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    #[tokio::test]
+    async fn pending_rpc_does_not_block_progress_or_acceptance_of_later_inputs() {
+        let fixture = crate::codex::tests::fixture().await;
+        let mut config = crate::config::Config::default();
+        config.codex_socket = fixture.socket.clone();
+        config.data_dir = fixture.directory.join("data");
+        config.audit_path = fixture.directory.join("audit");
+        let db = Arc::new(crate::db::Db::open().unwrap());
+        db.migrate().unwrap();
+        let registry = Arc::new(crate::session::registry::SessionRegistry::new(db, config));
+        let session = registry
+            .create_session(
+                serde_json::from_value(
+                    json!({"tool":"codex","mode":"web","cwd":fixture.directory}),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let token_path = fixture.directory.join("token");
+        let token = Arc::new(crate::auth::token::TokenConfig::load_or_create(&token_path).unwrap());
+        let app = super::super::routes(AppState {
+            registry: registry.clone(),
+            token,
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut request = format!("ws://127.0.0.1:{port}/api/v1/sessions/{}/codex", session.id)
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "Authorization",
+            format!(
+                "Bearer {}",
+                std::fs::read_to_string(token_path).unwrap().trim()
+            )
+            .parse()
+            .unwrap(),
+        );
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let ready = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&ready).unwrap()["type"],
+            "ready"
+        );
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({"id":1,"op":"command","command":"/ps"}).to_string(),
+            ))
+            .await
+            .unwrap();
+        let progress = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&progress).unwrap()["type"],
+            "notification"
+        );
+        for (id, text) in [(2, "fast second"), (3, "fast third")] {
+            socket
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    json!({"id":id,"op":"queue","text":text}).to_string(),
+                ))
+                .await
+                .unwrap();
+        }
+        let mut replies = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while replies.len() < 3 {
+                let raw = socket.next().await.unwrap().unwrap().into_text().unwrap();
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                if value["type"] == "result" {
+                    replies.push(value["id"].as_i64().unwrap());
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            replies.iter().position(|id| *id == 3).unwrap()
+                < replies.iter().position(|id| *id == 1).unwrap()
+        );
+        socket.close(None).await.unwrap();
+        registry.delete_session(&session.id).await.unwrap();
+        server.abort();
     }
 }

@@ -138,7 +138,8 @@ impl CodexSession {
                         let p = &message["params"];
                         let belongs = {
                             let live = state.lock().unwrap();
-                            !live.thread_id.is_empty() && p["threadId"].as_str().or_else(|| p["thread"]["id"].as_str()) == Some(live.thread_id.as_str())
+                            let target=p["threadId"].as_str().or_else(||p["thread"]["id"].as_str());
+                            !live.thread_id.is_empty() && (target==Some(live.thread_id.as_str()) || (target.is_none() && ["warning","deprecationNotice","configWarning"].contains(&method)))
                         };
                         if !belongs { continue; }
                         let request = message.get("id").is_some();
@@ -238,7 +239,7 @@ impl CodexSession {
     }
     pub fn snapshot(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true}})
+        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true,"liveInput":true}})
     }
     pub async fn create(&self, cwd: &Path) -> Result<String> {
         let result = self
@@ -399,7 +400,15 @@ impl CodexSession {
                 Ok(self.snapshot())
             }
             "send" | "steer" => {
-                let _guard = self.gate()?;
+                let _guard = match self.gate() {
+                    Ok(guard) => guard,
+                    Err(_) if body["op"] == "steer" || body["op"] == "send" => {
+                        let mut queued = self.enqueue(body)?;
+                        queued["reason"] = json!("inputPending");
+                        return Ok(queued);
+                    }
+                    Err(error) => return Err(error),
+                };
                 if !self.connected() {
                     bail!("Codex connection is closed");
                 }
@@ -409,11 +418,17 @@ impl CodexSession {
                     if body["op"] != "steer" {
                         bail!("작업 중에는 즉시 반영 또는 대기열 추가를 선택하세요.");
                     }
-                    self.rpc(
+                    if let Err(error)=self.rpc(
                         "turn/steer",
                         json!({"threadId":self.thread_id(),"expectedTurnId":active,"input":input}),
-                    )
-                    .await?;
+                    ).await {
+                        // These are definitive, unsubmitted rejections from Codex, as in CLI.
+                        let message=error.to_string();
+                        if ["cannot steer a review turn","cannot steer a compact turn","no active turn to steer","active turn uses a different output schema"].contains(&message.as_str()) || message.starts_with("expected active turn id `") {
+                            let mut queued=self.enqueue(body)?;queued["reason"]=json!("turnNotSteerable");return Ok(queued);
+                        }
+                        return Err(error);
+                    }
                     return Ok(json!({"steered":true}));
                 }
                 if !self.state.lock().unwrap().queue.is_empty() {
@@ -567,6 +582,28 @@ pub(crate) mod tests {
                             ws.send(Message::Text(json!({"id":m["id"],"error":{"code":-32602,"message":"thread is not materialized yet; unavailable before first user message"}}).to_string())).await.unwrap();
                             continue;
                         }
+                        if method == "turn/steer"
+                            && p["input"][0]["text"].as_str().is_some_and(|text| {
+                                text.contains("reject-review") || text.contains("reject-compact")
+                            })
+                        {
+                            let message = if p["input"][0]["text"]
+                                .as_str()
+                                .unwrap()
+                                .contains("reject-review")
+                            {
+                                "cannot steer a review turn"
+                            } else {
+                                "cannot steer a compact turn"
+                            };
+                            ws.send(Message::Text(
+                                json!({"id":m["id"],"error":{"code":-32600,"message":message}})
+                                    .to_string(),
+                            ))
+                            .await
+                            .unwrap();
+                            continue;
+                        }
                         let result = match method {
                             "initialize" => json!({"userAgent":"fake-codex"}),
                             "initialized" => continue,
@@ -631,6 +668,8 @@ pub(crate) mod tests {
                                 json!({})
                             }
                             "thread/backgroundTerminals/list" => {
+                                ws.send(Message::Text(json!({"method":"item/mcpToolCall/progress","params":{"threadId":thread_id,"turnId":"turn-1","itemId":"slow-progress","message":"progress while pending"}}).to_string())).await.unwrap();
+                                tokio::time::sleep(Duration::from_millis(300)).await;
                                 json!({"data":[],"nextCursor":null})
                             }
                             "skills/list" => {

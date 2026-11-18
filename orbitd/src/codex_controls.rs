@@ -322,7 +322,11 @@ impl CodexSession {
                 "지원하지 않는 명령입니다: {raw}. 모델에 전송하지 않았습니다. /help를 확인하세요."
             );
         }
-        let _guard = self.gate()?;
+        let _guard = if Self::read_operation(body) {
+            None
+        } else {
+            Some(self.gate()?)
+        };
         let running = self.state.lock().unwrap().active.is_some();
         if running && ["compact", "review", "plan", "export"].contains(&name) {
             bail!("{raw}는 현재 작업이 끝난 뒤 실행할 수 있습니다.");
@@ -693,6 +697,48 @@ mod tests {
         assert_eq!(h.snapshot()["queue"]["paused"], true);
         assert_eq!(h.snapshot()["queue"]["items"].as_array().unwrap().len(), 1);
         std::fs::remove_file(foreign["path"].as_str().unwrap()).unwrap();
+        h.close().await;
+    }
+    #[tokio::test]
+    async fn rejected_review_and_compaction_inputs_and_busy_requests_are_queued_without_loss() {
+        let (_f, h) = setup().await;
+        h.operation(&json!({"op":"send","text":"working"}))
+            .await
+            .unwrap();
+        for text in ["fast reject-review", "fast reject-compact"] {
+            let result = h
+                .operation(&json!({"op":"steer","text":text}))
+                .await
+                .unwrap();
+            assert_eq!(result["queued"], true);
+            assert_eq!(result["reason"], "turnNotSteerable");
+        }
+        let gate = h.gate().unwrap();
+        let queued = h
+            .operation(&json!({"op":"send","text":"fast after pending request"}))
+            .await
+            .unwrap();
+        assert_eq!(queued["queued"], true);
+        assert_eq!(queued["reason"], "inputPending");
+        drop(gate);
+        assert_eq!(h.snapshot()["queue"]["items"].as_array().unwrap().len(), 3);
+        h.operation(&json!({"op":"reply","requestId":101,"decision":"accept"}))
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if h.state.lock().unwrap().completed.len() == 4 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(h.snapshot()["queue"]["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         h.close().await;
     }
     #[tokio::test]

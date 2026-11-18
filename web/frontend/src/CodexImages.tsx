@@ -36,7 +36,18 @@ export function useImages(session: ImageSession, enabled: boolean, report: (text
     }
   }
   function remove(keys: string[]) { const selected=new Set(keys);current.current.filter(i=>selected.has(i.key)).forEach(i=>{controllers.current.get(i.key)?.abort();URL.revokeObjectURL(i.preview);});update(items=>items.filter(i=>!selected.has(i.key))); }
-  return {items,add,remove,retry:upload,busy:items.some(i=>i.status==='uploading'),ready:items.every(i=>i.status==='ready')};
+  async function restoreUploaded(saved: {id:string;path:string;name:string}[]) {
+    const missing=saved.filter(item=>!current.current.some(i=>i.id===item.id));
+    if(current.current.length+missing.length>8)throw Error('현재 첨부를 정리한 뒤 다시 복원하세요.');
+    for(const item of missing){
+      const response=await fetch(`/api/v1/sessions/${encodeURIComponent(session.id)}/images/${encodeURIComponent(item.id)}`,{headers:imageHeaders(session)});
+      if(!response.ok)throw Error('임시 이미지를 다시 첨부해야 합니다.');
+      const blob=await response.blob();if(!alive.current)return;
+      const restored:ImageDraft={...item,key:'restored-'+item.id,file:new File([blob],item.name,{type:blob.type}),preview:URL.createObjectURL(blob),status:'ready'};
+      update(items=>[...items,restored]);
+    }
+  }
+  return {items,add,remove,restoreUploaded,retry:upload,busy:items.some(i=>i.status==='uploading'),ready:items.every(i=>i.status==='ready')};
 }
 export function ImagePicker({enabled,add}: {enabled:boolean;add:(files:File[])=>void}) {
   const input=useRef<HTMLInputElement>(null),[open,setOpen]=useState(false);
