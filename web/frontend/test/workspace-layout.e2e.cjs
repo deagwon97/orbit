@@ -34,14 +34,18 @@ const sessionName = 'Build and test on ARM64';
           has_more: false, next_after: 1, snapshot_last_id: 1
         });
         if (pathname.endsWith('/entries')) return fulfill({
-          path: project, home: project, parent: null, entries: [{ name: 'README.md', path, kind: 'file' }]
+          path: project, home: project, parent: null, entries: [
+            { name: 'README.md', path, kind: 'file' },
+            { name: 'example.js', path: project + '/example.js', kind: 'file' }
+          ]
         });
         if (pathname.endsWith('/files')) {
           if (route.request().method() === 'PUT') {
             saved = route.request().postDataJSON();
             return fulfill({ ok: true });
           }
-          return fulfill({ path, content: '# Orbit' });
+          const file = new URL(route.request().url()).searchParams.get('path');
+          return fulfill({ path: file, content: file === path ? '# Orbit' : 'const orbit = 1;' });
         }
         return route.abort();
       });
@@ -52,6 +56,15 @@ const sessionName = 'Build and test on ARM64';
         });
       });
       await page.goto(webUrl);
+      const themeToggle = page.getByRole('button', { name: 'Dark mode', exact: true });
+      const scheme = () => page.locator('html').evaluate(el => getComputedStyle(el).colorScheme);
+      assert.equal(await scheme(), 'light');
+      await themeToggle.click();
+      assert.equal(await themeToggle.getAttribute('aria-pressed'), 'true');
+      assert.equal(await scheme(), 'dark');
+      await page.reload();
+      assert.equal(await themeToggle.getAttribute('aria-pressed'), 'true');
+      assert.equal(await scheme(), 'dark');
       const row = page.getByRole('button', { name: new RegExp(sessionName) });
       await row.waitFor();
       assert.match(await row.innerText(), /running\s+CLI/);
@@ -119,10 +132,25 @@ const sessionName = 'Build and test on ARM64';
         await page.goBack();
         await editor.waitFor({ state: 'hidden' });
         await page.getByRole('button', { name: 'README.md', exact: true }).waitFor();
+      } else {
+        await page.getByRole('button', { name: 'example.js', exact: true }).click();
+        const code = editor.locator('.cm-content');
+        await code.fill('const unsaved = 2;');
+        const syntaxColor = () => code.getByText('const', { exact: true }).evaluate(el => getComputedStyle(el).color);
+        assert.equal(await syntaxColor(), 'rgb(154, 191, 255)');
+        await themeToggle.click();
+        assert.equal(await scheme(), 'light');
+        assert.equal(await syntaxColor(), 'rgb(0, 0, 255)');
+        assert.equal(await code.innerText(), 'const unsaved = 2;');
+        await themeToggle.click();
       }
       await page.getByRole('button', { name: /Orbitd connections/ }).click();
       await page.getByRole('button', { name: 'Home workstation', exact: true }).click();
       await page.getByRole('button', { name: 'Orbitd connections · Home workstation' }).waitFor();
+      await themeToggle.click();
+      await page.reload();
+      assert.equal(await themeToggle.getAttribute('aria-pressed'), 'false');
+      assert.equal(await scheme(), 'light');
       await page.close();
     }
     console.log('Workspace layout passed at 320, 390 and 1440 pixels');

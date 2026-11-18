@@ -4,7 +4,7 @@ import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHis
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -137,34 +137,34 @@ function getCmLanguage(path: string) {
 }
 
 const cmTheme = EditorView.theme({
-  "&": { height: "100%", backgroundColor: "#fff", fontSize: "13px" },
+  "&": { height: "100%", backgroundColor: "var(--orbit-surface)", color: "var(--orbit-ink)", fontSize: "13px" },
   ".cm-scroller": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
     lineHeight: "1.5",
     overflow: "auto",
   },
-  ".cm-content": { caretColor: "#172026", padding: "0" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#172026" },
+  ".cm-content": { caretColor: "var(--orbit-ink)", padding: "0" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--orbit-ink)" },
   "&.cm-focused": { outline: "none" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--orbit-accent-highlight)" },
   ".cm-gutters": {
-    backgroundColor: "#f8fafb",
-    color: "#858585",
+    backgroundColor: "var(--orbit-subtle)",
+    color: "var(--orbit-secondary)",
     border: "none",
-    borderRight: "1px solid #e7ecef",
+    borderRight: "1px solid var(--orbit-border-subtle)",
     userSelect: "none",
   },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 10px 0 6px", minWidth: "36px", textAlign: "right" },
   ".cm-activeLine": { backgroundColor: "var(--orbit-accent-soft)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--orbit-accent-soft)", color: "var(--orbit-accent)" },
-  ".cm-foldPlaceholder": { backgroundColor: "#e7ecef", border: "1px solid #c9d2d8", color: "#41515a", borderRadius: "3px", padding: "0 4px", margin: "0 2px" },
-  ".cm-panels": { backgroundColor: "#f8fafb", zIndex: "10" },
-  ".cm-panels.cm-panels-top": { borderBottom: "1px solid #d8e0e5" },
-  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid #d8e0e5" },
+  ".cm-foldPlaceholder": { backgroundColor: "var(--orbit-border-subtle)", border: "1px solid var(--orbit-control-border)", color: "var(--orbit-secondary)", borderRadius: "3px", padding: "0 4px", margin: "0 2px" },
+  ".cm-panels": { backgroundColor: "var(--orbit-subtle)", zIndex: "10" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--orbit-border)" },
+  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--orbit-border)" },
   ".cm-search": { display: "flex", gap: "6px", alignItems: "center", padding: "5px 10px", flexWrap: "wrap" },
   ".cm-search input[type=text]": {
     height: "24px", padding: "0 6px",
-    border: "1px solid #c9d2d8", borderRadius: "3px",
+    border: "1px solid var(--orbit-control-border)", borderRadius: "3px",
     outline: "none",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
     fontSize: "12px", minWidth: "150px",
@@ -173,60 +173,60 @@ const cmTheme = EditorView.theme({
   ".cm-search input[type=checkbox]": { margin: "0", width: "14px", height: "14px", cursor: "pointer" },
   ".cm-search button": {
     height: "24px", padding: "0 8px",
-    border: "1px solid #c9d2d8", borderRadius: "3px",
-    cursor: "pointer", backgroundColor: "white",
+    border: "1px solid var(--orbit-control-border)", borderRadius: "3px",
+    cursor: "pointer", backgroundColor: "var(--orbit-surface)",
     fontSize: "12px", fontFamily: "system-ui, sans-serif", whiteSpace: "nowrap",
   },
   ".cm-search button:hover": { backgroundColor: "var(--orbit-accent-soft)", borderColor: "var(--orbit-selection-border)" },
-  ".cm-search button[name=close]": { border: "none", background: "none", padding: "0 4px", fontSize: "16px", color: "#66737b" },
-  ".cm-search label": { display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "12px", color: "#41515a", cursor: "pointer", userSelect: "none" },
-  ".cm-searchMatch": { backgroundColor: "#fff3a3", outline: "1px solid #f9c200", borderRadius: "2px" },
-  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "#ff9632", outline: "1px solid #f36d10" },
-  ".cm-tooltip": { border: "1px solid #c9d2d8", borderRadius: "4px", backgroundColor: "#fff", boxShadow: "0 4px 12px rgba(15,22,27,.12)" },
+  ".cm-search button[name=close]": { border: "none", background: "none", padding: "0 4px", fontSize: "16px", color: "var(--orbit-secondary)" },
+  ".cm-search label": { display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "12px", color: "var(--orbit-secondary)", cursor: "pointer", userSelect: "none" },
+  ".cm-searchMatch": { backgroundColor: "var(--code-match)", outline: "1px solid var(--orbit-warning-mark)", borderRadius: "2px" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--code-match-selected)", outline: "1px solid var(--orbit-warning-mark)" },
+  ".cm-tooltip": { border: "1px solid var(--orbit-control-border)", borderRadius: "4px", backgroundColor: "var(--orbit-surface)", boxShadow: "0 4px 12px var(--orbit-shadow)" },
   ".cm-tooltip-autocomplete ul li[aria-selected]": { backgroundColor: "var(--orbit-accent-soft)", color: "inherit" },
 }, { dark: false });
 
 const cmHighlight = HighlightStyle.define([
-  { tag: tags.keyword,                   color: "#0000ff" },
-  { tag: tags.controlKeyword,            color: "#af00db" },
-  { tag: tags.operatorKeyword,           color: "#0000ff" },
-  { tag: tags.definitionKeyword,         color: "#0000ff" },
-  { tag: tags.moduleKeyword,             color: "#0000ff" },
-  { tag: tags.comment,                   color: "#008000" },
-  { tag: tags.lineComment,               color: "#008000" },
-  { tag: tags.blockComment,              color: "#008000" },
-  { tag: tags.docComment,                color: "#008000" },
-  { tag: tags.string,                    color: "#a31515" },
-  { tag: tags.special(tags.string),      color: "#e07400" },
-  { tag: tags.regexp,                    color: "#811f3f" },
-  { tag: tags.number,                    color: "#098658" },
-  { tag: tags.bool,                      color: "#0000ff" },
-  { tag: tags.null,                      color: "#0000ff" },
-  { tag: tags.typeName,                  color: "#267f99" },
-  { tag: tags.className,                 color: "#267f99" },
-  { tag: tags.typeOperator,              color: "#0000ff" },
-  { tag: tags.function(tags.variableName), color: "#795e26" },
-  { tag: tags.function(tags.propertyName), color: "#795e26" },
-  { tag: tags.definition(tags.variableName), color: "#001080" },
-  { tag: tags.definition(tags.propertyName), color: "#001080" },
-  { tag: tags.propertyName,              color: "#001080" },
-  { tag: tags.variableName,              color: "#001080" },
-  { tag: tags.namespace,                 color: "#267f99" },
-  { tag: tags.operator,                  color: "#000000" },
-  { tag: tags.punctuation,               color: "#000000" },
-  { tag: tags.bracket,                   color: "#000000" },
-  { tag: tags.tagName,                   color: "#800000" },
-  { tag: tags.attributeName,             color: "#e50000" },
-  { tag: tags.attributeValue,            color: "#0000ff" },
-  { tag: tags.meta,                      color: "#808080" },
-  { tag: tags.heading,                   color: "#800000", fontWeight: "bold" },
+  { tag: tags.keyword,                   color: "var(--code-keyword)" },
+  { tag: tags.controlKeyword,            color: "var(--code-control)" },
+  { tag: tags.operatorKeyword,           color: "var(--code-keyword)" },
+  { tag: tags.definitionKeyword,         color: "var(--code-keyword)" },
+  { tag: tags.moduleKeyword,             color: "var(--code-keyword)" },
+  { tag: tags.comment,                   color: "var(--code-comment)" },
+  { tag: tags.lineComment,               color: "var(--code-comment)" },
+  { tag: tags.blockComment,              color: "var(--code-comment)" },
+  { tag: tags.docComment,                color: "var(--code-comment)" },
+  { tag: tags.string,                    color: "var(--code-string)" },
+  { tag: tags.special(tags.string),      color: "var(--code-special)" },
+  { tag: tags.regexp,                    color: "var(--code-regexp)" },
+  { tag: tags.number,                    color: "var(--code-number)" },
+  { tag: tags.bool,                      color: "var(--code-keyword)" },
+  { tag: tags.null,                      color: "var(--code-keyword)" },
+  { tag: tags.typeName,                  color: "var(--code-type)" },
+  { tag: tags.className,                 color: "var(--code-type)" },
+  { tag: tags.typeOperator,              color: "var(--code-keyword)" },
+  { tag: tags.function(tags.variableName), color: "var(--code-function)" },
+  { tag: tags.function(tags.propertyName), color: "var(--code-function)" },
+  { tag: tags.definition(tags.variableName), color: "var(--code-name)" },
+  { tag: tags.definition(tags.propertyName), color: "var(--code-name)" },
+  { tag: tags.propertyName,              color: "var(--code-name)" },
+  { tag: tags.variableName,              color: "var(--code-name)" },
+  { tag: tags.namespace,                 color: "var(--code-type)" },
+  { tag: tags.operator,                  color: "var(--orbit-ink)" },
+  { tag: tags.punctuation,               color: "var(--orbit-ink)" },
+  { tag: tags.bracket,                   color: "var(--orbit-ink)" },
+  { tag: tags.tagName,                   color: "var(--code-markup)" },
+  { tag: tags.attributeName,             color: "var(--code-attribute)" },
+  { tag: tags.attributeValue,            color: "var(--code-keyword)" },
+  { tag: tags.meta,                      color: "var(--orbit-secondary)" },
+  { tag: tags.heading,                   color: "var(--code-markup)", fontWeight: "bold" },
   { tag: tags.strong,                    fontWeight: "bold" },
   { tag: tags.emphasis,                  fontStyle: "italic" },
   { tag: tags.link,                      color: "var(--orbit-accent)", textDecoration: "underline" },
   { tag: tags.strikethrough,             textDecoration: "line-through" },
-  { tag: tags.inserted,                  color: "#22863a" },
-  { tag: tags.deleted,                   color: "#b31d28" },
-  { tag: tags.invalid,                   textDecoration: "underline wavy red" },
+  { tag: tags.inserted,                  color: "var(--code-inserted)" },
+  { tag: tags.deleted,                   color: "var(--orbit-danger)" },
+  { tag: tags.invalid,                   textDecoration: "underline wavy var(--orbit-danger)" },
 ]);
 
 type Session = {
@@ -605,6 +605,7 @@ function useMobileViewportGuards() {
 function App() {
   useMobileViewportGuards();
 
+  const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === "dark");
   const [connections, setConnections] = useState<OrbitConnection[]>(() => savedConnections());
   const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
@@ -835,7 +836,22 @@ function App() {
 
   const sessionsOpen = !connectionsOpen && !fileEditorOpen;
   const sessionListLabel = sessionsCollapsed ? "Show session list" : "Hide session list";
-  if (!authed) return <Login onLogin={addConnection} />;
+  const themeButton = <button
+    type="button"
+    className="iconButton themeToggle"
+    title={darkTheme ? "Switch to light mode" : "Switch to dark mode"}
+    aria-label="Dark mode"
+    aria-pressed={darkTheme}
+    onClick={() => {
+      const theme = darkTheme ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      setDarkTheme(theme === "dark");
+      try { localStorage.setItem("orbit.theme", theme); } catch {}
+    }}
+  >
+    {darkTheme ? <Sun size={17} /> : <Moon size={17} />}
+  </button>;
+  if (!authed) return <Login onLogin={addConnection} themeButton={themeButton} />;
   return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}`}>
     <section className="toolbar">
       <strong>Orbit</strong>
@@ -864,6 +880,7 @@ function App() {
             <span className="activeOrbitdUrl">{activeConnection.url}</span>
           </button>
         )}
+        {themeButton}
         <button className="iconButton" title="Refresh" onClick={() => window.location.reload()}><RefreshCcw size={16} /></button>
       </div>
     </section>
@@ -1471,7 +1488,7 @@ function FolderPicker(props: {
   </div>;
 }
 
-function Login({ onLogin }: { onLogin: (input: { label: string; url: string; token: string }) => Promise<void> }) {
+function Login({ onLogin, themeButton }: { onLogin: (input: { label: string; url: string; token: string }) => Promise<void>; themeButton: React.ReactNode }) {
   const [label, setLabel] = useState("Local orbitd");
   const [url, setUrl] = useState("http://127.0.0.1:7777");
   const [token, setToken] = useState("");
@@ -1488,7 +1505,7 @@ function Login({ onLogin }: { onLogin: (input: { label: string; url: string; tok
     }
   }
   return <main className="login"><form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-    <h1>Orbit</h1>
+    <header><h1>Orbit</h1>{themeButton}</header>
     <input autoFocus placeholder="Name" value={label} onChange={(event) => setLabel(event.target.value)} />
     <input placeholder="orbitd URL" value={url} onChange={(event) => setUrl(event.target.value)} />
     <input placeholder="Bearer token" value={token} onChange={(event) => setToken(event.target.value)} />
