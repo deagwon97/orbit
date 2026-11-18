@@ -146,3 +146,8 @@
 @media(max-width:820px) { .codexSubmissions { max-height:130px; }.codexSubmissions button,.codexAsyncQuestions button { min-height:40px; } }
 
 .codexChat .codexRefresh { display:inline-flex; flex:none; width:44px; min-height:44px; padding:0; border:0; border-radius:50%; background:transparent; color:#dce3ef; }
+
+.codexComposer.multiline { padding-top:8px; }
+.codexComposer.multiline > textarea { grid-column:1 / -1; grid-row:1; padding-inline:8px; }
+.codexComposer.multiline > .codexImagePicker,
+.codexComposer.multiline > .codexComposerActions { grid-row:2; }

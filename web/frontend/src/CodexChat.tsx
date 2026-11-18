@@ -103,19 +103,44 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
     void poll();const timer=state.current.active||background.length?window.setInterval(()=>void poll(),5000):undefined;return()=>{disposed=true;clearInterval(timer);};
   },[connection,state.current.active,background.length>0,session.key]);
   useLayoutEffect(() => {
-    const node=promptRef.current;if(!node)return;
-    let width=node.getBoundingClientRect().width;
-    const fit=()=>{
-      node.style.overflowY='hidden';
-      node.style.height=window.matchMedia('(max-width:820px)').matches?'0px':'auto';
-      // scrollHeight rounds fractional line heights; leave room for that last pixel.
-      node.style.height=`${Math.min(Math.ceil(node.scrollHeight)+2,160)}px`;
-      node.style.overflowY=node.scrollHeight>node.clientHeight?'auto':'hidden';
+    const input = promptRef.current;
+    const composer = input?.form;
+    if (!input || !composer) return;
+    const actions = composer.querySelector('.codexComposerActions');
+    const fit = () => {
+      const scrollTop = input.scrollTop;
+      // Measure in the compact layout so a wrapped draft stays expanded even
+      // when the full-width text area fits it on fewer lines.
+      composer.classList.remove('multiline');
+      input.style.overflowY = 'hidden';
+      input.style.height = '0px';
+      const style = getComputedStyle(input);
+      const singleLineHeight = parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      if (input.value && (input.value.includes('\n') || input.scrollHeight > singleLineHeight + 1)) {
+        composer.classList.add('multiline');
+      }
+      input.style.height = `${input.scrollHeight + 2}px`;
+      if (input.scrollHeight > input.clientHeight) {
+        input.style.overflowY = 'auto';
+        input.scrollTop = scrollTop;
+      }
     };
     fit();
-    const observer=new ResizeObserver(()=>{const next=node.getBoundingClientRect().width;if(next!==width){width=next;fit();}});observer.observe(node);
-    window.addEventListener('resize',fit);window.visualViewport?.addEventListener('resize',fit);
-    return()=>{observer.disconnect();window.removeEventListener('resize',fit);window.visualViewport?.removeEventListener('resize',fit);};
+    const widths = new Map<Element, number>();
+    const observer = new ResizeObserver(entries => {
+      const changed = entries.some(({target, contentRect}) => widths.get(target) !== contentRect.width);
+      for (const {target, contentRect} of entries) widths.set(target, contentRect.width);
+      if (changed) fit();
+    });
+    observer.observe(composer);
+    if (actions) observer.observe(actions);
+    window.addEventListener('resize', fit);
+    window.visualViewport?.addEventListener('resize', fit);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', fit);
+      window.visualViewport?.removeEventListener('resize', fit);
+    };
   }, [draft]);
   const scroller = useRef<HTMLDivElement>(null), following = useRef(true), [showLatest, setShowLatest] = useState(false);
   const refresh = () => setVersion(v => v + 1);
@@ -285,14 +310,15 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
       <ImageDrafts items={availableImages} remove={images.remove} retry={images.retry} report={setError} />
       <form className="codexComposer" onSubmit={event => { event.preventDefault(); if (commandInput) void runCommand(draft.trim(), {}, true); else void sendText(); }}>
         <ImagePicker enabled={!!s.capabilities.images && connection === 'ready' && session.status === 'running'} add={images.add} />
-        <textarea rows={1} ref={promptRef} aria-label="Codex 메시지" aria-expanded={matches.length > 0} aria-controls="codex-command-list" placeholder={running ? '추가 지시…' : '메시지 입력…'} value={draft} maxLength={100000} onPaste={event => { const files=Array.from(event.clipboardData.files);if(!files.length)return;event.preventDefault();images.add(files);const text=event.clipboardData.getData('text/plain');if(text){const node=event.currentTarget,start=node.selectionStart,end=node.selectionEnd;setDraft(draft.slice(0,start)+text+draft.slice(end));} }} onChange={e => { setDraft(e.target.value); setSelectedCommand(0); }} onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return;
+        <textarea rows={1} enterKeyHint="enter" ref={promptRef} aria-label="Codex 메시지" aria-expanded={matches.length > 0} aria-controls="codex-command-list" placeholder={running ? '추가 지시…' : '메시지 입력…'} value={draft} maxLength={100000} onPaste={event => { const files=Array.from(event.clipboardData.files);if(!files.length)return;event.preventDefault();images.add(files);const text=event.clipboardData.getData('text/plain');if(text){const node=event.currentTarget,start=node.selectionStart,end=node.selectionEnd;setDraft(draft.slice(0,start)+text+draft.slice(end));} }} onChange={e => { setDraft(e.target.value); setSelectedCommand(0); }} onKeyDown={event => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (matches.length && ['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); setSelectedCommand(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
           if (event.key === 'Tab' && !event.shiftKey) {
             if (matches.length) { event.preventDefault(); setDraft(`/${matches[selectedCommand % matches.length].name} `); return; }
             if (running && (draft.trim() || availableImages.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
           }
-          if (event.key === 'Enter' && !event.shiftKey) {
+          if (event.key === 'Enter') {
+            if (event.shiftKey || window.matchMedia('(pointer: coarse)').matches) return;
             event.preventDefault();
             if (matches.length && !matches.some(command => `/${command.name}` === draft)) { void runCommand(`/${matches[selectedCommand % matches.length].name}`, {}, true); return; }
             event.currentTarget.form?.requestSubmit();
