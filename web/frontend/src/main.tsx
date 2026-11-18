@@ -275,6 +275,7 @@ type TerminalModifier = "shift" | "ctrl" | "cmd" | "alt";
 const DEFAULT_MASTER_PANE_WIDTH = 320;
 const MIN_MASTER_PANE_WIDTH = 280;
 const MAX_MASTER_PANE_WIDTH = 860;
+const SESSION_COLLAPSE_EDGE = 24;
 const MASTER_PANE_WIDTH_KEY = "orbit.masterPaneWidth";
 const CONNECTION_FAILED_MESSAGE_SUFFIX = " orbitd connection failed";
 
@@ -609,6 +610,7 @@ function App() {
   const [connections, setConnections] = useState<OrbitConnection[]>(() => savedConnections());
   const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const sessionListToggleRef = useRef<HTMLButtonElement>(null);
   const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
@@ -858,6 +860,7 @@ function App() {
       {sessionsOpen && <button
         type="button"
         className="iconButton sessionListToggle"
+        ref={sessionListToggleRef}
         title={sessionListLabel}
         aria-label={sessionListLabel}
         aria-controls="session-list-pane"
@@ -925,7 +928,10 @@ function App() {
             </button>)}
           </div>
         </div>
-        <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} />
+        <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} controls="session-list-pane" onCollapse={() => {
+          setSessionsCollapsed(true);
+          sessionListToggleRef.current?.focus({ preventScroll: true });
+        }} />
         <div className="workPane">
           {selected ? <SessionPane
             session={selected}
@@ -984,14 +990,22 @@ function App() {
   </main>;
 }
 
-function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (width: number) => void }) {
-  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+function PaneResizer({ width, onWidthChange, onCollapse, controls }: {
+  width: number;
+  onWidthChange: (width: number) => void;
+  onCollapse?: () => void;
+  controls?: string;
+}) {
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; layout: HTMLElement; left: number } | null>(null);
 
-  useEffect(() => {
-    return () => {
-      document.body.classList.remove("paneResizing");
-    };
-  }, []);
+  function clearDrag() {
+    if (!dragRef.current) return;
+    dragRef.current.layout.style.removeProperty("--master-pane-preview");
+    dragRef.current = null;
+    document.body.classList.remove("paneResizing");
+  }
+
+  useEffect(() => clearDrag, []);
 
   function commitWidth(value: number) {
     onWidthChange(clampMasterPaneWidth(value));
@@ -1002,7 +1016,8 @@ function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (
     role="separator"
     aria-orientation="vertical"
     aria-label="Resize panes"
-    aria-valuemin={MIN_MASTER_PANE_WIDTH}
+    aria-controls={controls}
+    aria-valuemin={onCollapse ? 0 : MIN_MASTER_PANE_WIDTH}
     aria-valuemax={maxMasterPaneWidth()}
     aria-valuenow={width}
     tabIndex={0}
@@ -1017,7 +1032,8 @@ function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (
       }
       if (event.key === "Home") {
         event.preventDefault();
-        commitWidth(MIN_MASTER_PANE_WIDTH);
+        if (onCollapse) onCollapse();
+        else commitWidth(MIN_MASTER_PANE_WIDTH);
       }
       if (event.key === "End") {
         event.preventDefault();
@@ -1025,28 +1041,29 @@ function PaneResizer({ width, onWidthChange }: { width: number; onWidthChange: (
       }
     }}
     onPointerDown={(event) => {
-      if (event.button !== 0) return;
+      const layout = event.currentTarget.parentElement;
+      if (event.button !== 0 || dragRef.current || !layout) return;
       event.preventDefault();
-      dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width };
+      dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width, layout, left: layout.getBoundingClientRect().left };
       event.currentTarget.setPointerCapture(event.pointerId);
       document.body.classList.add("paneResizing");
     }}
     onPointerMove={(event) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
-      commitWidth(drag.startWidth + event.clientX - drag.startX);
+      const value = drag.startWidth + event.clientX - drag.startX;
+      const preview = onCollapse ? Math.max(0, Math.min(value, maxMasterPaneWidth())) : clampMasterPaneWidth(value);
+      drag.layout.style.setProperty("--master-pane-preview", `${preview}px`);
     }}
     onPointerUp={(event) => {
       const drag = dragRef.current;
-      if (drag?.pointerId === event.pointerId) {
-        dragRef.current = null;
-        document.body.classList.remove("paneResizing");
-      }
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      clearDrag();
+      if (onCollapse && event.clientX - drag.left <= SESSION_COLLAPSE_EDGE) onCollapse();
+      else commitWidth(drag.startWidth + event.clientX - drag.startX);
     }}
-    onPointerCancel={() => {
-      dragRef.current = null;
-      document.body.classList.remove("paneResizing");
-    }}
+    onPointerCancel={event => { if (dragRef.current?.pointerId === event.pointerId) clearDrag(); }}
+    onLostPointerCapture={event => { if (dragRef.current?.pointerId === event.pointerId) clearDrag(); }}
   />;
 }
 

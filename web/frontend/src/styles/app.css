@@ -183,7 +183,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 }
 .statusLineClose:hover { background: var(--orbit-accent-highlight); }
 
-.layout { flex: 1; display: grid; grid-template-columns: minmax(280px, var(--master-pane-width)) 8px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.layout { flex: 1; display: grid; grid-template-columns: minmax(0, var(--master-pane-preview, var(--master-pane-width))) 1px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .sessionListToggle { display: none; }
 @media (min-width: 821px) {
   .toolbar .sessionListToggle { display: inline-flex; margin-left: 12px; width: 36px; }
@@ -196,36 +196,31 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--orbit-border);
   background: var(--orbit-surface);
 }
+.layout > .masterPane { min-width: 0; overflow: hidden; }
 .paneResizer {
-  min-width: 8px;
   min-height: 0;
   align-self: stretch;
   position: relative;
   z-index: 3;
   cursor: col-resize;
-  background: var(--orbit-subtle);
-  border-right: 1px solid var(--orbit-border);
+  background: var(--orbit-control-border);
   touch-action: none;
 }
 .paneResizer::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 2px;
-  background: var(--orbit-control-border);
+  inset: 0 -5px;
 }
-.paneResizer:hover::before,
-.paneResizer:focus-visible::before {
+.paneResizer:hover,
+.paneResizer:focus-visible,
+.paneResizing .paneResizer {
   background: var(--orbit-accent);
 }
 .paneResizer:focus-visible {
-  outline: 2px solid var(--orbit-accent);
-  outline-offset: -2px;
+  outline: 1px solid var(--orbit-accent);
+  outline-offset: 0;
 }
 .paneResizing {
   cursor: col-resize;
@@ -757,7 +752,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(600px, var(--master-pane-width)) 8px minmax(0, 1fr);
+  grid-template-columns: minmax(600px, var(--master-pane-preview, var(--master-pane-width))) 1px minmax(0, 1fr);
   grid-column: 1 / -1;
   overflow: hidden;
   background: var(--orbit-surface);
@@ -1084,7 +1079,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
     white-space: normal;
   }
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
-  .masterPane { border-right: 0; }
   .paneResizer { display: none; }
   .layout.showDetail .masterPane { display: none; }
   .layout:not(.showDetail) .workPane { display: none; }
@@ -1134,7 +1128,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   }
   .folderCreate { grid-template-columns: 1fr; }
   .fileWorkspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
-  .fileExplorer { border-right: 0; }
   .fileEditorSurface { grid-column: 1; grid-row: 1; padding: 8px; }
   .fileWorkspace.showDetail .fileExplorer { display: none; }
   .fileWorkspace:not(.showDetail) .fileEditorSurface { display: none; }
