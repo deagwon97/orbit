@@ -789,6 +789,7 @@ pub(crate) mod tests {
                                 json!({"data":[{"item":{"id":"agent-1","type":"agentMessage","text":"saved answer"}}],"nextCursor":null})
                             }
                             "model/list" => json!({"data":[
+                                {"id":"gpt-6.2-sol","model":"gpt-6.2-sol","displayName":"GPT-6.2-Sol","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"medium"}],"serviceTiers":[{"id":"priority"}]},
                                 {"id":"test-model","model":"test-model","displayName":"Test","defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"high"},{"reasoningEffort":"low"}],"serviceTiers":[{"id":"priority"}]},
                                 {"id":"small","model":"small","defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low"}],"serviceTiers":[]}
                             ],"nextCursor":null}),
