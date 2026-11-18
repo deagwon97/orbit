@@ -139,3 +139,6 @@
 @media(max-width:820px) { .codexComposer { padding:7px 10px 5px; border-radius:22px; }.codexComposer textarea { min-height:26px; line-height:1.45; padding:1px 6px 3px; }.codexComposer .codexComposerActions { margin-top:0; } }
 
 .codexComposer textarea { overflow-x:hidden; overflow-y:hidden; }
+
+.codexComposer { display:grid; grid-template-columns:44px minmax(0,1fr) auto; align-items:center; gap:4px; padding:6px 10px; }.codexComposer > textarea { grid-column:2; grid-row:1; min-width:0; }.codexComposer > .codexImagePicker { grid-column:1; grid-row:1; justify-content:flex-start; }.codexComposer > .codexComposerActions { grid-column:3; grid-row:1; min-width:0; margin-top:0; }
+@media(max-width:820px) { .codexComposer { grid-template-columns:44px minmax(0,1fr) auto; padding:4px 5px; border-radius:28px; gap:3px; }.codexComposer > .codexImagePicker { grid-column:1; grid-row:1; }.codexComposer > textarea { grid-column:2; grid-row:1; min-width:0; padding:2px 1px; }.codexComposer > .codexComposerActions { grid-column:3; grid-row:1; gap:2px; }.codexComposerSpacer,.codexComposer .codexStopButton { display:none; }.codexComposer .codexQueueButton { width:40px; padding:0; }.codexComposer .codexQueueButton .codexQueueLabelMobile,.codexComposer .codexQueueButton .codexQueueLabelFull { display:none; } }
