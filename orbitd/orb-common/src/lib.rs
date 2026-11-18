@@ -141,6 +141,8 @@ pub struct ListEntriesResponse {
     pub parent: Option<PathBuf>,
     pub home: PathBuf,
     pub entries: Vec<FsEntry>,
+    #[serde(default)]
+    pub can_create_file: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,15 +173,18 @@ pub struct ListDirsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateDirRequest {
+pub struct CreateEntryRequest {
     pub parent: Option<PathBuf>,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateDirResponse {
+pub struct CreateEntryResponse {
     pub path: PathBuf,
 }
+
+pub type CreateDirRequest = CreateEntryRequest;
+pub type CreateDirResponse = CreateEntryResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]

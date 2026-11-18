@@ -7,9 +7,9 @@ use axum::{
     Json,
 };
 use orb_common::{
-    CreateDirRequest, CreateDirResponse, CreateSessionRequest, FsDirEntry, FsEntry, FsEntryKind,
-    ListDirsResponse, ListEntriesResponse, ListSessionsQuery, LogsQuery, ReadFileResponse,
-    StopRequest, WriteFileRequest,
+    CreateEntryRequest, CreateEntryResponse, CreateSessionRequest, FsDirEntry, FsEntry,
+    FsEntryKind, ListDirsResponse, ListEntriesResponse, ListSessionsQuery, LogsQuery,
+    ReadFileResponse, StopRequest, WriteFileRequest,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -150,40 +150,57 @@ pub async fn list_dirs(
     .into_response()
 }
 
-pub async fn create_dir(
-    State(_state): State<AppState>,
-    Json(req): Json<CreateDirRequest>,
-) -> Response {
+pub async fn create_dir(Json(req): Json<CreateEntryRequest>) -> Response {
+    create_entry(req, FsEntryKind::Dir).await
+}
+
+pub async fn create_file(Json(req): Json<CreateEntryRequest>) -> Response {
+    create_entry(req, FsEntryKind::File).await
+}
+
+async fn create_entry(req: CreateEntryRequest, kind: FsEntryKind) -> Response {
     let parent_input = req
         .parent
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-    let name = req.name.trim().to_owned();
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return (StatusCode::BAD_REQUEST, "invalid folder name").into_response();
+    let name = req.name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        let message = match kind {
+            FsEntryKind::Dir => "invalid folder name",
+            FsEntryKind::File => "invalid file name",
+        };
+        return (StatusCode::BAD_REQUEST, message).into_response();
     }
 
     let parent = match fs::canonicalize(&parent_input).await {
-        Ok(p) => p,
+        Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
-
-    let meta = match fs::metadata(&parent).await {
-        Ok(m) => m,
+    match fs::metadata(&parent).await {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return (StatusCode::BAD_REQUEST, "parent is not a directory").into_response(),
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
+
+    let path = parent.join(name);
+    let result = match kind {
+        FsEntryKind::Dir => fs::create_dir(&path).await,
+        FsEntryKind::File => fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+            .map(drop),
     };
-
-    if !meta.is_dir() {
-        return (StatusCode::BAD_REQUEST, "parent is not a directory").into_response();
-    }
-
-    let created = parent.join(&name);
-    if let Err(err) = fs::create_dir(&created).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
-    }
-
-    match fs::canonicalize(&created).await {
-        Ok(p) => (StatusCode::CREATED, Json(CreateDirResponse { path: p })).into_response(),
+    match result {
+        Ok(()) => (StatusCode::CREATED, Json(CreateEntryResponse { path })).into_response(),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (
+            StatusCode::CONFLICT,
+            "An entry with that name already exists.",
+        )
+            .into_response(),
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            (StatusCode::FORBIDDEN, err.to_string()).into_response()
+        }
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }
@@ -257,6 +274,7 @@ pub async fn list_entries(
         home,
         path: current,
         entries,
+        can_create_file: true,
     })
     .into_response()
 }

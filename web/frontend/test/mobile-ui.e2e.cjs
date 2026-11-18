@@ -1,11 +1,33 @@
-// Browser layout, Back navigation and interrupt checks; no model calls.
+// Browser layout, Back navigation and interrupt checks with fixture HTTP and WebSocket responses.
 const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
 (async()=>{
- const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let session,active=true,wsClient,wsAttempts=0,failConnections=false;
+ const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let active=true,wsClient,wsAttempts=0,failConnections=false;
  const startedAt=Math.floor((Date.now()-234000)/1000),settings={model:'gpt-6.1-sol-long-model-name-layout-check',effort:'medium',serviceTier:'priority',approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'},cwd:'/home/bdg/project/a-very-long-project-folder/mobile-layout-and-working-status-validation'};
  const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,resume:true},approvals:[],queue:{items:[],version:0,paused:false}});
  const limits={rateLimits:{limitName:'Codex',primary:{usedPercent:20,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+86400}}};
  const commands=[{name:'status',description:'세션 상태',duringTask:true},{name:'model',description:'모델 선택',duringTask:true},{name:'resume',description:'이전 대화',duringTask:true},{name:'help',description:'명령 안내',duringTask:true}];
+ const testCwd=c.cwd||'/home/qa/project';
+ const connection={id:'mobile-ui',label:'Home workstation with a long host name',url:'http://qa.invalid:7777',token:'fixture'};
+ let storedSession;
+ await page.route('**/api/v1/**',async route=>{
+  const {pathname}=new URL(route.request().url());
+  const method=route.request().method();
+  if(pathname.endsWith('/backends'))return route.fulfill({json:[{id:'codex',name:'Codex',modes:['cli','web']}]});
+  if(pathname.endsWith('/sessions')){
+   if(method==='POST'){
+    const data=route.request().postDataJSON();
+    storedSession={id:'mobile-ui-fixture',name:data.name,mode:data.mode,tool:data.tool,cwd:data.cwd,status:'running',codex_thread_id:'mobile-ui-thread'};
+    return route.fulfill({status:201,json:storedSession});
+   }
+   return route.fulfill({json:storedSession?[storedSession]:[]});
+  }
+  if(method==='DELETE'&&pathname.endsWith('/sessions/mobile-ui-fixture')){
+   storedSession=null;
+   return route.fulfill({json:{ok:true}});
+  }
+  if(pathname.endsWith('/dirs'))return route.fulfill({json:{path:testCwd,cwd:testCwd,home:testCwd,parent:'/home/qa',dirs:[]}});
+  return route.abort();
+ });
  await page.routeWebSocket('**/api/v1/sessions/*/codex?*',ws=>{wsClient=ws;wsAttempts++;
   if(failConnections){void ws.close({code:1011,reason:'QA unavailable'});return;}
   ws.send(JSON.stringify({type:'ready',state:snapshot()}));ws.onMessage(raw=>{
@@ -18,8 +40,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  async function command(text){const box=page.getByRole('textbox',{name:'Codex 메시지'});await box.fill(text);await page.getByRole('button',{name:'명령 실행',exact:true}).click();}
  async function assertFit(label){const metrics=await page.evaluate(()=>{const chat=document.querySelector('.codexChat'),composer=document.querySelector('.codexComposer'),messages=document.querySelector('.codexMessages'),dialog=document.querySelector('.codexControls');return {overflow:document.documentElement.scrollWidth>innerWidth+1,chat:chat&&chat.getBoundingClientRect().width,composer:composer&&composer.getBoundingClientRect().bottom,height:visualViewport.height,visible:messages&&messages.clientHeight,dialog:dialog&&{width:dialog.getBoundingClientRect().width,height:dialog.getBoundingClientRect().height,bottom:dialog.getBoundingClientRect().bottom,scroll:dialog.scrollWidth>dialog.clientWidth+1}};});if(metrics.overflow||metrics.composer>metrics.height+2||metrics.dialog?.scroll||metrics.dialog?.bottom>metrics.height+2)throw Error(label+' overflow '+JSON.stringify(metrics));return metrics;}
  try{
-  await page.goto(c.webUrl);await page.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'mobile-ui',label:'Home workstation with a long host name',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','mobile-ui');},c);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByLabel('Name',{exact:true}).fill(name);await dialog.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});
-  session=await page.evaluate(async({c,name})=>{const r=await fetch('/api/v1/sessions',{headers:{Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl}});return(await r.json()).find(s=>s.name===name);},{c,name});await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
+  await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByLabel('Name',{exact:true}).fill(name);await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
+  await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
   await assertFit('mobile');const time=await page.locator('.codexWorking time').innerText();if(!/3m|4m/.test(time))throw Error('Working timer did not use turn start');await page.waitForFunction(before=>document.querySelector('.codexWorking time').textContent!==before,time);if(await page.getByText('Reasoning summary',{exact:true}).count())throw Error('Empty reasoning shown');
   if(await page.locator('.codexChat > .codexConnection + .codexMessages').count()!==1)throw Error('Mobile chat header still has an extra location row');
   if(await page.getByRole('button',{name:'탐색 메뉴 열기',exact:true}).count())throw Error('Redundant chat navigation menu remains');
@@ -112,17 +134,26 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   const row=card.locator('.row'),actions=card.getByLabel(`Actions for ${name}`,{exact:true});
   await row.waitFor();await assertFit('session cards');
   await page.screenshot({path:'/workspace/output/orbit-sessions-mobile.png'});
+  const sessionActions=page.getByRole('dialog',{name:'Session actions',exact:true});
   await actions.click();
-  await card.getByRole('button',{name:'Detach',exact:true}).click();
+  await sessionActions.waitFor();
+  if(!await sessionActions.evaluate(el=>el.matches(':modal')))throw Error('Mobile session actions are not modal');
+  await sessionActions.getByText(name,{exact:true}).waitFor();
+  await page.waitForFunction(()=>!!history.state?.orbitModal);
+  await page.goBack();
+  await sessionActions.waitFor({state:'hidden'});
+  if(await actions.getAttribute('aria-expanded')!=='false')throw Error('Back did not close session actions');
+  await actions.click();
+  await sessionActions.getByRole('button',{name:'Detach',exact:true}).click();
   await row.waitFor();
-  if(await row.getAttribute('aria-current')||await card.locator('details').getAttribute('open')!==null)throw Error('List detach did not clear the selected session');
+  if(await row.getAttribute('aria-current')||await actions.getAttribute('aria-expanded')!=='false')throw Error('List detach did not clear the selected session');
   await row.click();
   await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await back.click();
   await actions.click();
-  await card.getByRole('button',{name:'Delete session',exact:true}).click();
+  await sessionActions.getByRole('button',{name:'Delete session',exact:true}).click();
   await card.waitFor({state:'hidden'});
   if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,compactDesktopHeader:true,automaticReconnect:true,reconnectStopsAfterFive:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,mobileLocationRowRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true,listDetachAndDelete:true}));
- }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText().catch(()=>'' )).slice(-1200));await page.screenshot({path:'/workspace/output/orbit-mobile-error.png'});throw e;}
- finally{await page.evaluate(async({c,id,name})=>{const headers={Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl};if(!id){const r=await fetch('/api/v1/sessions',{headers});if(r.ok)id=(await r.json()).find(s=>s.name===name)?.id;}if(id)await fetch('/api/v1/sessions/'+id,{method:'DELETE',headers});},{c,id:session?.id,name}).catch(()=>{});await browser.close();}
+ }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText({timeout:1000}).catch(()=>'' )).slice(-1200));await page.screenshot({path:'/workspace/output/orbit-mobile-error.png'});throw e;}
+ finally{await browser.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

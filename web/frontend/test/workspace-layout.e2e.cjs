@@ -15,6 +15,11 @@ const sessionName = 'Build and test on ARM64';
       const mobile = width < 821;
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' });
       let saved, shortcut, deletedSession;
+      let canCreateFile = false;
+      const entries = [
+        { name: 'README.md', path, kind: 'file' },
+        { name: 'example.js', path: project + '/example.js', kind: 'file' }
+      ];
       await page.addInitScript(() => {
         localStorage.setItem('orbit.connections', JSON.stringify([
           { id: 'build', label: 'Build workstation', url: 'http://build.internal:7777', token: 'fixture' },
@@ -37,12 +42,17 @@ const sessionName = 'Build and test on ARM64';
           lines: [{ id: 1, timestamp: '2026-01-01T00:00:00Z', content: 'b3JiaXQgbG9n' }],
           has_more: false, next_after: 1, snapshot_last_id: 1
         });
-        if (pathname.endsWith('/entries')) return fulfill({
-          path: project, home: project, parent: null, entries: [
-            { name: 'README.md', path, kind: 'file' },
-            { name: 'example.js', path: project + '/example.js', kind: 'file' }
-          ]
-        });
+        if (pathname.endsWith('/entries')) return fulfill({ path: project, home: project, parent: null, entries, can_create_file: canCreateFile });
+        if (route.request().method() === 'POST' && (pathname.endsWith('/dirs') || pathname.endsWith('/files'))) {
+          const body = route.request().postDataJSON();
+          assert.equal(body.parent, project);
+          if (entries.some(entry => entry.name === body.name)) {
+            return route.fulfill({ status: 409, json: { error: 'An entry with that name already exists.' } });
+          }
+          const created = { name: body.name, path: project + '/' + body.name, kind: pathname.endsWith('/dirs') ? 'dir' : 'file' };
+          entries.push(created);
+          return route.fulfill({ status: 201, json: { path: created.path } });
+        }
         if (pathname.endsWith('/files')) {
           if (route.request().method() === 'PUT') {
             saved = route.request().postDataJSON();
@@ -180,16 +190,31 @@ const sessionName = 'Build and test on ARM64';
         assert.equal(await page.evaluate(() => !!history.state?.orbitDetail), false);
       } else {
         const otherCard = page.locator('.sessionCard').filter({ hasText: '대화 작업' });
-        await otherCard.getByLabel('Actions for 대화 작업').click();
-        assert.equal(await otherCard.getByRole('button', { name: 'Detach', exact: true }).count(), 0);
-        await otherCard.getByRole('button', { name: 'Delete session', exact: true }).click();
+        const otherActions = otherCard.getByRole('button', { name: 'Actions for 대화 작업', exact: true });
+        const sessionMenu = page.getByRole('dialog', { name: 'Session actions', exact: true });
+        const before = await otherCard.boundingBox();
+        await otherActions.click();
+        await sessionMenu.waitFor();
+        assert.deepEqual(await otherCard.boundingBox(), before);
+        const menuBounds = await sessionMenu.boundingBox(), triggerBounds = await otherActions.boundingBox();
+        assert(Math.abs(menuBounds.x + menuBounds.width - (triggerBounds.x + triggerBounds.width)) < 1);
+        assert(menuBounds.y >= triggerBounds.y + triggerBounds.height);
+        assert.equal(await sessionMenu.getByRole('button', { name: 'Detach', exact: true }).count(), 0);
+        await page.keyboard.press('Escape');
+        await sessionMenu.waitFor({ state: 'hidden' });
+        assert(await otherActions.evaluate(el => document.activeElement === el));
+        await otherActions.click();
+        await page.locator('.sessionTitle strong').click();
+        await sessionMenu.waitFor({ state: 'hidden' });
+        await otherActions.click();
+        await sessionMenu.getByRole('button', { name: 'Delete session', exact: true }).click();
         await otherCard.waitFor({ state: 'hidden' });
         assert.equal(deletedSession, 'fixture-web');
         assert.equal(await row.getAttribute('aria-current'), 'true');
         await terminal.waitFor();
         const card = page.locator('.sessionCard').filter({ hasText: sessionName });
         await card.getByLabel(`Actions for ${sessionName}`).click();
-        await card.getByRole('button', { name: 'Detach', exact: true }).click();
+        await sessionMenu.getByRole('button', { name: 'Detach', exact: true }).click();
         await terminal.waitFor({ state: 'hidden' });
         await row.waitFor();
       }
@@ -206,6 +231,38 @@ const sessionName = 'Build and test on ARM64';
       await fileRow.waitFor();
       assert.deepEqual(await sidebarAppearance(page.locator('.fileExplorer')), sessionsAppearance);
       assert.equal(await overflow('.fileExplorerList'), false, `file list overflows at ${width}px`);
+
+      const newFolderButton = page.getByRole('button', { name: 'New folder', exact: true });
+      const newFileButton = page.getByRole('button', { name: 'New file', exact: true });
+      for (const button of [newFolderButton, newFileButton]) {
+        assert.equal(await button.innerText(), '');
+        assert.equal(await button.locator('svg').count(), 1);
+      }
+      assert.equal((await newFolderButton.boundingBox()).y, (await newFileButton.boundingBox()).y);
+      assert(await newFileButton.isDisabled());
+      await newFolderButton.click();
+      const newFolder = page.getByRole('dialog', { name: 'New folder', exact: true });
+      await newFolder.getByText(project, { exact: true }).waitFor();
+      await newFolder.getByLabel('Name', { exact: true }).fill('notes');
+      canCreateFile = true;
+      await newFolder.getByRole('button', { name: 'Create', exact: true }).click();
+      await newFolder.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !history.state?.orbitModal);
+      await page.getByRole('button', { name: 'notes', exact: true }).waitFor();
+
+      assert(await newFileButton.isEnabled());
+      await newFileButton.click();
+      const newFile = page.getByRole('dialog', { name: 'New file', exact: true });
+      const fileName = newFile.getByLabel('Name', { exact: true });
+      await fileName.fill('README.md');
+      const createFile = newFile.getByRole('button', { name: 'Create', exact: true });
+      await createFile.click();
+      await newFile.getByRole('alert').getByText('An entry with that name already exists.', { exact: true }).waitFor();
+      await fileName.fill('notes.txt');
+      await createFile.click();
+      await newFile.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !history.state?.orbitModal);
+      await page.getByRole('button', { name: 'notes.txt', exact: true }).waitFor();
       await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
       await editor.getByRole('textbox').fill('# Updated on ' + width);

@@ -4,7 +4,7 @@ import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHis
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -267,6 +267,7 @@ type ListEntriesResponse = {
   parent: string | null;
   home: string;
   entries: FsEntry[];
+  can_create_file?: boolean;
 };
 type OpenedFile = { path: string; content: string; savedContent: string };
 type EntryTree = Record<string, FsEntry[]>;
@@ -621,6 +622,8 @@ function App() {
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [deletingSessionKey, setDeletingSessionKey] = useState<string | null>(null);
+  const [sessionActions, setSessionActions] = useState<{ key: string; trigger: HTMLButtonElement; mobile: boolean } | null>(null);
+  const closeSessionActions = React.useCallback(() => setSessionActions(null), []);
   const showAll = true;
   const [tool, setTool] = useState("codex");
   const [sessionMode, setSessionMode] = useState<"cli" | "web">("cli");
@@ -846,10 +849,12 @@ function App() {
   }, []);
 
   const sessionsOpen = !fileEditorOpen;
+  const actionSession = sessionActions && sessions.find(session => session.key === sessionActions.key);
   const sessionListLabel = sessionsCollapsed ? "Show session list" : "Hide session list";
   function changeSessionList(collapsed: boolean) {
     if (collapsed === sessionsCollapsed) return;
     focusSessionListToggle.current = true;
+    closeSessionActions();
     setSessionsCollapsed(collapsed);
   }
   const sessionListButton = <button
@@ -886,7 +891,7 @@ function App() {
 
   const listHeader = <div className="workspaceListHeader">
     <strong>Orbit</strong>
-    <button type="button" className="iconButton" title="Orbit menu" aria-label="Orbit menu" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>
+    <button type="button" className="iconButton" title="Orbit menu" aria-label="Orbit menu" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => { closeSessionActions(); setSettingsOpen(true); }}>
       <Menu size={19} />
     </button>
   </div>;
@@ -913,7 +918,7 @@ function App() {
           {listHeader}
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
-            <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
+            <button onClick={() => { closeSessionActions(); setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
             {!sessionsCollapsed && sessionListButton}
           </div>
           <div className="sessionListHeader paneListControls">
@@ -923,8 +928,8 @@ function App() {
             {sessions.map(session => {
               const isSelected = session.key === selectedKey;
               return <div className="sessionCard" key={session.key}>
-                <button type="button" className={isSelected ? "row paneListItem active" : "row paneListItem"} aria-current={isSelected ? "true" : undefined} onClick={event => {
-                  event.currentTarget.parentElement?.querySelector("details")?.removeAttribute("open");
+                <button type="button" className={isSelected ? "row paneListItem active" : "row paneListItem"} aria-current={isSelected ? "true" : undefined} onClick={() => {
+                  closeSessionActions();
                   setSelectedKey(session.key);
                   setDetailOpen(true);
                 }}>
@@ -933,21 +938,21 @@ function App() {
                   <span className="sessionMeta"><span className="sessionMode">{session.mode === "web" ? "Web" : "CLI"}</span><span>{session.tool}</span><span className="sessionHost" title={session.connection.label}>{session.connection.label}</span></span>
                   <code className="sessionCwd" title={session.cwd}>{session.cwd}</code>
                 </button>
-                <details className="sessionCardActions sessionDetailsDisclosure" name="session-card-actions" onKeyDown={closeDisclosureOnEscape}>
-                  <summary aria-label={`Actions for ${session.name}`} title="Session actions"><MoreHorizontal size={18} /></summary>
-                  <div className="sessionCardActionButtons">
-                    {isSelected && <button type="button" onClick={event => {
-                      const disclosure = event.currentTarget.closest("details");
-                      if (disclosure) {
-                        disclosure.open = false;
-                        disclosure.querySelector("summary")?.focus();
-                      }
-                      setSelectedKey(null);
-                      closeDetail();
-                    }}><LogOut size={15} />Detach</button>}
-                    <button type="button" className="dangerButton" disabled={deletingSessionKey !== null} onClick={() => void deleteSession(session)}><Trash2 size={15} />Delete session</button>
-                  </div>
-                </details>
+                <button
+                  type="button"
+                  className="sessionCardActions iconButton"
+                  aria-label={`Actions for ${session.name}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={sessionActions?.key === session.key}
+                  title="Session actions"
+                  onClick={event => {
+                    const trigger = event.currentTarget;
+                    const mobile = window.matchMedia("(max-width: 820px)").matches;
+                    setSessionActions(current => current?.key === session.key ? null : { key: session.key, trigger, mobile });
+                  }}
+                >
+                  <MoreHorizontal size={18} />
+                </button>
               </div>;
             })}
           </div>
@@ -970,6 +975,23 @@ function App() {
         </div>
       </>}
     </section>
+    {sessionsOpen && sessionActions && actionSession && <SessionActions
+      key={actionSession.key}
+      sessionName={actionSession.name}
+      trigger={sessionActions.trigger}
+      mobile={sessionActions.mobile}
+      deleting={deletingSessionKey !== null}
+      onClose={closeSessionActions}
+      onDetach={selectedKey === actionSession.key ? () => {
+        closeSessionActions();
+        setSelectedKey(null);
+        closeDetail();
+      } : undefined}
+      onDelete={() => {
+        closeSessionActions();
+        void deleteSession(actionSession);
+      }}
+    />}
     {settingsOpen && <OrbitMenu
       connections={connections}
       activeConnectionId={activeConnection?.id ?? ""}
@@ -1103,6 +1125,94 @@ function PaneResizer({ width, onWidthChange, onCollapse, controls }: {
   />;
 }
 
+function SessionActions({ sessionName, trigger, mobile, deleting, onClose, onDetach, onDelete }: {
+  sessionName: string;
+  trigger: HTMLButtonElement;
+  mobile: boolean;
+  deleting: boolean;
+  onClose: () => void;
+  onDetach?: () => void;
+  onDelete: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useDialogHistory(onClose, mobile);
+
+  React.useLayoutEffect(() => {
+    const breakpoint = window.matchMedia("(max-width: 820px)");
+    breakpoint.addEventListener("change", onClose);
+    const dialog = dialogRef.current;
+    const dropdown = dropdownRef.current;
+    if (dialog) dialog.showModal();
+    if (dropdown) {
+      function position() {
+        if (!dropdown) return;
+        const anchor = trigger.getBoundingClientRect();
+        const { offsetWidth, offsetHeight } = dropdown;
+        const left = Math.max(8, Math.min(anchor.right - offsetWidth, window.innerWidth - offsetWidth - 8));
+        const below = anchor.bottom + 4;
+        const top = below + offsetHeight <= window.innerHeight - 8 ? below : Math.max(8, anchor.top - offsetHeight - 4);
+        dropdown.style.left = `${left}px`;
+        dropdown.style.top = `${top}px`;
+      }
+      function onToggle(event: ToggleEvent) {
+        if (event.newState === "closed") onClose();
+      }
+      dropdown.showPopover();
+      position();
+      const firstAction = dropdown.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      firstAction?.focus({ preventScroll: true });
+      dropdown.addEventListener("toggle", onToggle);
+      window.addEventListener("resize", position);
+      window.addEventListener("scroll", position, true);
+      return () => {
+        breakpoint.removeEventListener("change", onClose);
+        dropdown.removeEventListener("toggle", onToggle);
+        window.removeEventListener("resize", position);
+        window.removeEventListener("scroll", position, true);
+        if (dropdown.matches(":popover-open")) dropdown.hidePopover();
+      };
+    }
+    return () => {
+      breakpoint.removeEventListener("change", onClose);
+      dialog?.close();
+    };
+  }, [trigger, onClose]);
+
+  const actions = <div className="sessionCardActionButtons">
+    {onDetach && <button type="button" onClick={onDetach}><LogOut size={15} />Detach</button>}
+    <button type="button" className="dangerButton" disabled={deleting} onClick={onDelete}><Trash2 size={15} />Delete session</button>
+  </div>;
+
+  return mobile ? <dialog
+    className="workspaceDialog sessionActionsDialog"
+    ref={dialogRef}
+    aria-label="Session actions"
+    onCancel={event => { event.preventDefault(); onClose(); }}
+    onClick={event => { if (event.target === event.currentTarget) onClose(); }}
+  >
+    <div className="modalTop">
+      <strong>{sessionName}</strong>
+      <button type="button" className="iconButton" aria-label="Close session actions" onClick={onClose}><X size={16} /></button>
+    </div>
+    {actions}
+  </dialog> : <div
+    className="sessionActionsDropdown"
+    role="dialog"
+    aria-label="Session actions"
+    ref={dropdownRef}
+    popover="auto"
+    onKeyDown={event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+      trigger.focus({ preventScroll: true });
+    }}
+  >
+    {actions}
+  </div>;
+}
+
 function OrbitMenu({ connections, activeConnectionId, darkTheme, onToggleTheme, onClose, onSelect, onRemove, onAdd }: {
   connections: OrbitConnection[];
   activeConnectionId: string;
@@ -1122,7 +1232,7 @@ function OrbitMenu({ connections, activeConnectionId, darkTheme, onToggleTheme, 
   }, []);
 
   return <dialog
-    className="orbitMenu"
+    className="workspaceDialog"
     ref={dialogRef}
     aria-labelledby="orbit-menu-title"
     onCancel={event => { event.preventDefault(); onClose(); }}
@@ -1255,6 +1365,7 @@ function FileWorkspace(props: {
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit");
+  const [creation, setCreation] = useState<{ kind: "folder" | "file"; parent: string } | null>(null);
 
   async function loadEntries(path?: string, options: { root?: boolean } = {}) {
     const key = path ?? "__root__";
@@ -1412,7 +1523,9 @@ function FileWorkspace(props: {
         <div className="fileExplorerActions">
           <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
           <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
-          <button className="iconButton fileRefreshButton" title="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={14} /></button>
+          <button type="button" className="iconButton fileCreateFolderButton" title="New folder" aria-label="New folder" disabled={!listing || listBusy} onClick={() => listing && setCreation({ kind: "folder", parent: listing.path })}><FolderPlus size={17} /></button>
+          <button type="button" className="iconButton" title={listing && !listing.can_create_file ? "New file requires an updated orbitd" : "New file"} aria-label="New file" disabled={!listing?.can_create_file || listBusy} onClick={() => listing && setCreation({ kind: "file", parent: listing.path })}><FilePlus size={17} /></button>
+          <button className="iconButton" title="Refresh" aria-label="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={16} /></button>
         </div>
       </div>
       <div className="fileExplorerList paneList">
@@ -1463,7 +1576,90 @@ function FileWorkspace(props: {
         </div>
       </> : <div className="fileEditorEmpty"><FileText size={32} /><span>Select a file from Explorer</span></div>}
     </section>
+    {creation && <CreateFileEntryDialog
+      kind={creation.kind}
+      parent={creation.parent}
+      connection={connection}
+      onClose={() => setCreation(null)}
+      onCreated={() => {
+        setCreation(current => current === creation ? null : current);
+        void loadEntries(creation.parent);
+      }}
+    />}
   </div>;
+}
+
+function CreateFileEntryDialog({ kind, parent, connection, onClose, onCreated }: {
+  kind: "folder" | "file";
+  parent: string;
+  connection: OrbitConnection;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submitting = useRef(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useDialogHistory(onClose);
+  React.useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    inputRef.current?.focus();
+    return () => dialog?.close();
+  }, []);
+
+  async function create() {
+    const trimmed = name.trim();
+    if (!trimmed || submitting.current) return;
+    if (trimmed === "." || trimmed === ".." || /[/\\]/.test(trimmed)) {
+      setError("Enter a single name without a path.");
+      return;
+    }
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await api(kind === "folder" ? "/api/v1/fs/dirs" : "/api/v1/fs/files", {
+        method: "POST",
+        body: JSON.stringify({ parent, name: trimmed }),
+      }, connection);
+      onCreated();
+    } catch (err) {
+      let message = err instanceof Error ? err.message : String(err);
+      try {
+        const response: unknown = JSON.parse(message);
+        if (response && typeof response === "object" && "error" in response && typeof response.error === "string") {
+          message = response.error;
+        }
+      } catch {}
+      setError(message);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  return <dialog className="workspaceDialog" ref={dialogRef} aria-labelledby="file-create-title"
+    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+    <form className="fileCreateForm" onSubmit={event => { event.preventDefault(); void create(); }}>
+      <div className="modalTop">
+        <strong id="file-create-title">{kind === "folder" ? "New folder" : "New file"}</strong>
+        <button type="button" className="iconButton" aria-label="Close" disabled={busy} onClick={onClose}><X size={16} /></button>
+      </div>
+      <div className="modalContext">{parent}</div>
+      <label className="fieldLabel">
+        <span>Name</span>
+        <input ref={inputRef} value={name} readOnly={busy} onChange={event => { setName(event.target.value); setError(""); }} />
+      </label>
+      {error && <div className="folderError" role="alert">{error}</div>}
+      <div className="modalActions">
+        <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="submit" className="primaryButton" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create"}</button>
+      </div>
+    </form>
+  </dialog>;
 }
 
 function CodeEditor({ value, path, onChange }: {

@@ -248,7 +248,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .pill.stopped { background: var(--orbit-muted); color: var(--orbit-secondary); }
 .pill.crashed { background: var(--orbit-danger-soft); color: var(--orbit-danger); }
 
-.orbitMenu {
+.workspaceDialog {
   width: min(480px, calc(100% - 24px));
   max-height: min(620px, calc(var(--visual-viewport-height) - 24px));
   overflow: auto;
@@ -260,7 +260,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   background: var(--orbit-surface);
   box-shadow: 0 18px 48px var(--orbit-shadow);
 }
-.orbitMenu::backdrop { background: var(--orbit-scrim); }
+.workspaceDialog::backdrop { background: var(--orbit-scrim); }
 .orbitMenuActions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; }
 .orbitMenuActions button[aria-pressed="true"] { color: var(--orbit-accent); background: var(--orbit-accent-soft); }
 .orbitMenuServers { display: grid; gap: 8px; padding: 0 12px 12px; }
@@ -328,10 +328,38 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .sessionFacts > div { display: flex; align-items: baseline; gap: 8px; }
 .sessionFacts dt { min-width: 24px; color: var(--orbit-secondary); }
 .sessionFacts dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
-.sessionCard .sessionCardActions { position: static; }
-.sessionCardActions summary { position: absolute; top: 4px; right: 5px; color: var(--orbit-secondary); }
-.sessionCardActionButtons { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 0; }
+.sessionCardActions {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 36px;
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--orbit-secondary);
+}
+.sessionCardActions:hover, .sessionCardActions[aria-expanded="true"] { background: var(--orbit-accent-soft); }
+.sessionActionsDropdown {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-width: 170px;
+  max-width: calc(100vw - 16px);
+  padding: 5px;
+  border: 1px solid var(--orbit-control-border);
+  border-radius: 10px;
+  color: var(--orbit-ink);
+  background: var(--orbit-surface);
+  box-shadow: 0 8px 24px var(--orbit-shadow);
+}
+.sessionActionsDialog { max-width: 360px; }
+.sessionActionsDialog .modalTop strong { min-width: 0; overflow-wrap: anywhere; }
+.sessionActionsDialog .modalTop button { flex: none; }
+.sessionCardActionButtons { display: grid; gap: 4px; }
+.sessionCardActionButtons button { justify-content: flex-start; border: 0; background: transparent; }
+.sessionCardActionButtons button:hover:not(:disabled) { background: var(--orbit-hover); }
 .sessionCardActionButtons .dangerButton { color: var(--orbit-danger); }
+.sessionActionsDialog .sessionCardActionButtons { padding: 8px; }
 .xtermShell {
   position: relative;
   flex: 1;
@@ -725,7 +753,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 }
 .fileExplorerActions { display: flex; gap: 6px; align-items: center; }
 .fileExplorerActions button { min-height: 34px; font-size: 12px; }
-.fileRefreshButton { margin-left: auto; }
+.fileExplorerActions .iconButton { flex-shrink: 0; }
+.fileCreateFolderButton { margin-inline-start: auto; }
+.fileCreateForm { display: grid; gap: 12px; }
+.fileCreateForm .modalContext { overflow-wrap: anywhere; white-space: normal; }
 .fileEntryRow {
   min-height: 38px;
   grid-template-columns: 14px 18px minmax(0, 1fr);
@@ -1024,7 +1055,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   .sessionListHeader button, .fileExplorerActions button, .fileEntryRow { min-height: 44px; }
   .sessions .row { padding: 13px; }
   .sessions .pill { margin-right: 37px; }
-  .sessionCardActions summary { top: 2px; }
+  .sessions .sessionCardActions { top: 2px; width: 44px; min-height: 44px; }
+  .sessionActionsDialog .sessionCardActionButtons button { min-height: 44px; }
   .sessionName { font-size: 15px; }
   .xtermShell {
     gap: 0;
@@ -1082,11 +1114,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   .paneTabs button { padding: 0 9px; }
   .pill { padding: 0 6px; }
   .sessionModeOptions label { font-size: 12px; }
-  .fileExplorerActions {
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .fileExplorerActions::-webkit-scrollbar { display: none; }
+  .fileExplorerActions { flex-wrap: wrap; }
+  .fileExplorerActions .iconButton { width: 44px; }
   .fileMarkdownPreview { padding: 14px; }
   .fileStatusBar {
     gap: 8px;

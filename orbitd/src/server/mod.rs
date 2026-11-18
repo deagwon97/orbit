@@ -42,7 +42,12 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/sessions/:id/images/:image", get(codex::read_image))
         .route("/api/v1/fs/dirs", get(api::list_dirs).post(api::create_dir))
         .route("/api/v1/fs/entries", get(api::list_entries))
-        .route("/api/v1/fs/files", get(api::read_file).put(api::write_file))
+        .route(
+            "/api/v1/fs/files",
+            get(api::read_file)
+                .post(api::create_file)
+                .put(api::write_file),
+        )
         .route("/api/v1/fs/raw", get(api::read_raw_file))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, auth))
