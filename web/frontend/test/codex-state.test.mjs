@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { queuesDuringTurn, specificActivity } from '../src/codex-progress.ts';
 import assert from 'node:assert/strict';
 import { newChatState, observe, mergeHistory, output, putItem } from '../src/codex-state.ts';
 
@@ -55,4 +56,13 @@ test('working progress includes retries, patches, terminal input, hooks and tool
  assert.match(output({id:'mcp',type:'mcpToolCall',result:{content:[{type:'text',text:'MCP output'},{type:'image',data:'SECRET_IMAGE_BYTES'}]}}),/MCP output/);
  assert.doesNotMatch(output({id:'mcp',type:'mcpToolCall',result:{content:[{type:'image',data:'SECRET_IMAGE_BYTES'}]}}),/SECRET_IMAGE_BYTES/);
  assert.equal(output({id:'r',type:'reasoning',summary:[],content:['PRIVATE_RAW_REASONING']}),'');
+});
+
+test('completed review markers do not leave a stale Working activity', () => {
+  const items=[{id:'review',turnId:'t',type:'enteredReviewMode',status:'inProgress'}];
+  assert.equal(queuesDuringTurn(items,'t'),true);
+  assert.equal(specificActivity(items,0,'t',''),'Reviewing');
+  items.push({id:'end',turnId:'t',type:'exitedReviewMode',status:'completed'});
+  assert.equal(queuesDuringTurn(items,'t'),false);
+  assert.equal(specificActivity(items,0,'t',''),'');
 });

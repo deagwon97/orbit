@@ -28,6 +28,8 @@ export function queuesDuringTurn(items:CodexItem[],active:string|null) {
 export function specificActivity(items:CodexItem[],approvals:number,active:string|null,notice:string) {
   if(approvals)return '승인 또는 응답 대기 중';
   if(notice)return notice;
-  const current=items.filter(i=>i.turnId===active&&i.status==='inProgress'&&!['userMessage','agentMessage','reasoning'].includes(i.type)).at(-1);
+  const review=items.filter(i=>i.turnId===active&&['enteredReviewMode','exitedReviewMode'].includes(i.type)).at(-1);
+  if(review?.type==='enteredReviewMode')return 'Reviewing';
+  const current=items.filter(i=>i.turnId===active&&i.status==='inProgress'&&!['userMessage','agentMessage','reasoning','enteredReviewMode','exitedReviewMode'].includes(i.type)).at(-1);
   return current?[progressLabel(current),progressCaption(current)].filter(Boolean).join(' · '):'';
 }
