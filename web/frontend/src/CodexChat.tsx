@@ -87,7 +87,21 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
   const images = useImages(session, !!state.current.capabilities.images && session.status === 'running' && connection === 'ready' && !sending, setError);
   const [dragging,setDragging] = useState(false); const dragDepth=useRef(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false), [locationOpen,setLocationOpen] = useState(false);
-  useLayoutEffect(() => { const node = promptRef.current; if (node) { node.style.height = window.matchMedia('(max-width:820px)').matches ? '0px' : 'auto'; node.style.height = `${Math.min(node.scrollHeight, 160)}px`; } }, [draft]);
+  useLayoutEffect(() => {
+    const node=promptRef.current;if(!node)return;
+    let width=node.getBoundingClientRect().width;
+    const fit=()=>{
+      node.style.overflowY='hidden';
+      node.style.height=window.matchMedia('(max-width:820px)').matches?'0px':'auto';
+      // scrollHeight rounds fractional line heights; leave room for that last pixel.
+      node.style.height=`${Math.min(Math.ceil(node.scrollHeight)+2,160)}px`;
+      node.style.overflowY=node.scrollHeight>node.clientHeight?'auto':'hidden';
+    };
+    fit();
+    const observer=new ResizeObserver(()=>{const next=node.getBoundingClientRect().width;if(next!==width){width=next;fit();}});observer.observe(node);
+    window.addEventListener('resize',fit);window.visualViewport?.addEventListener('resize',fit);
+    return()=>{observer.disconnect();window.removeEventListener('resize',fit);window.visualViewport?.removeEventListener('resize',fit);};
+  }, [draft]);
   const scroller = useRef<HTMLDivElement>(null), following = useRef(true), [showLatest, setShowLatest] = useState(false);
   const refresh = () => setVersion(v => v + 1);
   function request(body: any): Promise<any> {

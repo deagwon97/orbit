@@ -137,3 +137,5 @@
 @media(max-width:360px) { .codexComposer .codexQueueButton .codexQueueLabelMobile { display:none; } }
 
 @media(max-width:820px) { .codexComposer { padding:7px 10px 5px; border-radius:22px; }.codexComposer textarea { min-height:26px; line-height:1.45; padding:1px 6px 3px; }.codexComposer .codexComposerActions { margin-top:0; } }
+
+.codexComposer textarea { overflow-x:hidden; overflow-y:hidden; }
