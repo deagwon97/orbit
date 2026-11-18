@@ -1,7 +1,7 @@
 export type CodexItem = { id: string; type: string; [key: string]: any };
 export function newChatState() {
   return { items: new Map<string, CodexItem>(), order: [] as string[], versions: new Map<string, number>(), revision: 0,
-    lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null, settings: {} as any, tokenUsage: null as any, capabilities: {} as any, queue: { items: [] as any[], paused: false, error: null as string | null, version: 0 } };
+    turnStarts: new Map<string, number>(), lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null, settings: {} as any, tokenUsage: null as any, capabilities: {} as any, queue: { items: [] as any[], paused: false, error: null as string | null, version: 0 } };
 }
 export type ChatState = ReturnType<typeof newChatState>;
 export function putItem(state: ChatState, item: CodexItem) {
@@ -10,11 +10,20 @@ export function putItem(state: ChatState, item: CodexItem) {
   state.items.set(item.id, { ...state.items.get(item.id), ...item });
   state.versions.set(item.id, ++state.revision);
 }
+export function rememberTurnStart(state: ChatState, turn: any, observed = false) {
+  if (!turn?.id) return;
+  const raw=turn.startedAtMs ?? turn.startedAt;
+  let start=typeof raw==='number'?raw:typeof raw==='string'?Date.parse(raw):NaN;
+  if (turn.startedAtMs == null && typeof raw==='number' && raw>0 && raw<1e12) start=raw*1000;
+  if (Number.isFinite(start) && start>0) state.turnStarts.set(turn.id,start);
+  else if(observed&&!state.turnStarts.has(turn.id))state.turnStarts.set(turn.id,Date.now());
+}
 export function observe(state: ChatState, message: any) {
   const p = message.params || {}, method = message.method;
   if (method === 'thread/settings/updated') state.settings = p.threadSettings;
   if (method === 'thread/tokenUsage/updated') state.tokenUsage = p.tokenUsage;
   if (method === 'turn/started') {
+    rememberTurnStart(state,p.turn,true);
     state.active = p.turn.id; state.lifecycle = ++state.revision;
     for (const item of p.turn.items || []) putItem(state, { ...item, turnId: p.turn.id });
   } else if (method === 'turn/completed') {
@@ -58,6 +67,7 @@ export function applyLiveState(state: ChatState, live: any, since: number) {
   if (state.approvalsRevision <= since) state.approvals = new Map((live.approvals || []).map((r: any) => [JSON.stringify(r.id), r]));
 }
 export function mergeHistory(state: ChatState, result: any, since: number, older: boolean) {
+  for(const turn of result.thread.turns || []) rememberTurnStart(state,turn);
   const history: CodexItem[] = (result.thread.turns || []).flatMap((turn: any) => (turn.items || []).map((item: CodexItem) => ({ ...item, turnId: turn.id, status: item.status || (turn.status === 'inProgress' ? 'inProgress' : turn.status) })));
   const ids: string[] = [];
   for (const item of history) {

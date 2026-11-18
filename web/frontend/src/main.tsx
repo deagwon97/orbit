@@ -1,5 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 
+import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHistory } from './dialog-history';
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -546,6 +547,7 @@ function useMobileViewportGuards() {
       document.documentElement.style.setProperty("--visual-viewport-height", `${height}px`);
       document.documentElement.style.setProperty("--visual-viewport-top", `${viewport?.offsetTop ?? 0}px`);
       document.documentElement.style.setProperty("--keyboard-inset", `${keyboardInset}px`);
+      document.documentElement.dataset.keyboardOpen = String(keyboardInset > 120);
     };
 
     const onTouchStart = (event: TouchEvent) => {
@@ -590,6 +592,7 @@ function useMobileViewportGuards() {
       document.documentElement.style.removeProperty("--visual-viewport-height");
       document.documentElement.style.removeProperty("--visual-viewport-top");
       document.documentElement.style.removeProperty("--keyboard-inset");
+      delete document.documentElement.dataset.keyboardOpen;
     };
   }, []);
 }
@@ -789,13 +792,14 @@ function App() {
   useEffect(() => {
     const isMobile = () => window.matchMedia("(max-width: 820px), (pointer: coarse)").matches;
     if (detailOpen && isMobile() && !mobileDetailHistoryRef.current) {
-      history.pushState({ orbitDetail: true }, "", location.href);
+      pushDetailHistory();
       mobileDetailHistoryRef.current = true;
     }
-    if (!detailOpen) mobileDetailHistoryRef.current = false;
+    if (!detailOpen) { mobileDetailHistoryRef.current = false; cancelDetailHistory(); }
   }, [detailOpen]);
   useEffect(() => {
-    const onPopState = () => {
+    const onPopState = (event: PopStateEvent) => {
+      if (dialogHandledBack(event)) return;
       if (!detailOpenRef.current || !window.matchMedia("(max-width: 820px), (pointer: coarse)").matches) return;
       mobileDetailHistoryRef.current = false;
       setDetailOpen(false);
@@ -822,12 +826,23 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  const mobileChatDetail = detailOpen && selected?.mode === "web" && !fileEditorOpen && !connectionsOpen;
+  useDialogHistory(() => setMobileChromeOpen(false), !!mobileChatDetail && mobileChromeOpen);
   if (!authed) return <Login onLogin={addConnection} />;
-
-  return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}${mobileChromeOpen ? " mobileChromeOpen" : ""}`}>
-    {detailOpen && <button className="mobileChromeToggle" title="Show navigation" onClick={() => setMobileChromeOpen((value) => !value)}>
+  return <main className={`app${mobileChatDetail ? " mobileChatDetail" : ""}${detailOpen ? " mobileDetailOpen" : ""}${mobileChromeOpen ? " mobileChromeOpen" : ""}`}>
+    {detailOpen && <button className="mobileChromeToggle" title="Show navigation" aria-label={mobileChromeOpen ? "탐색 메뉴 닫기" : "탐색 메뉴 열기"} aria-expanded={mobileChromeOpen} onClick={() => setMobileChromeOpen((value) => !value)}>
       {mobileChromeOpen ? <X size={18} /> : <Menu size={18} />}
     </button>}
+    {mobileChatDetail && mobileChromeOpen && <div className="mobileChatNavBackdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setMobileChromeOpen(false);}}>
+      <nav className="mobileChatNav" role="dialog" aria-modal="true" aria-label="모바일 탐색" onKeyDown={event=>{if(event.key==="Escape")setMobileChromeOpen(false);if(event.key==="Tab"){const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));const first=buttons[0],last=buttons.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}}}>
+        <header><strong>Orbit</strong><button aria-label="모바일 탐색 닫기" onClick={()=>setMobileChromeOpen(false)}><X size={18}/></button></header>
+        <small>{selected.connection.label}</small>
+        <button autoFocus onClick={()=>{setMobileChromeOpen(false);setDetailOpen(false);}}><TerminalIcon size={18}/>세션 목록</button>
+        <button onClick={()=>{setMobileChromeOpen(false);setFileEditorOpen(true);setDetailOpen(false);}}><FolderOpen size={18}/>파일 탐색</button>
+        <button onClick={()=>{setMobileChromeOpen(false);setCreateOpen(true);}}><Plus size={18}/>새 세션</button>
+        <button onClick={()=>{setMobileChromeOpen(false);setConnectionsOpen(true);setDetailOpen(false);}}><Server size={18}/>서버 관리</button>
+      </nav>
+    </div>}
     <section className="toolbar">
       <strong>Orbit</strong>
       <div className="toolbarActions">
@@ -891,6 +906,7 @@ function App() {
               <span>{session.tool}</span>
               <span className={`pill ${session.status}`}>{session.mode === "web" ? "web · " : ""}{session.status}</span>
               <span>{session.pid ?? "-"}</span>
+              <span className="sessionCwd" title={session.cwd}>{session.cwd}</span>
             </button>)}
           </div>
         </div>
@@ -902,6 +918,7 @@ function App() {
             onDetach={() => { setSelectedKey(null); setDetailOpen(false); }}
             onDelete={() => void deleteSession(selected)}
             reload={load}
+            onBack={() => { setMobileChromeOpen(false);setDetailOpen(false); }}
             onSessionChange={session => setSessions(items => items.map(item => item.key === selected.key ? { ...session, connection: selected.connection, key: selected.key } : item))}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
@@ -1070,6 +1087,7 @@ function NewSessionModal(props: {
   onClose: () => void;
   onRun: () => void;
 }) {
+  useDialogHistory(props.onClose);
   return <div className="modalBackdrop" role="dialog" aria-modal="true">
     <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); props.onRun(); }}>
       <div className="modalTop">
@@ -1399,6 +1417,7 @@ function FolderPicker(props: {
   onLoad: (path?: string) => void;
   onSelect: (path: string) => void;
 }) {
+  useDialogHistory(props.onClose);
   const [newFolder, setNewFolder] = useState("");
   const [error, setError] = useState("");
   const current = props.listing?.path ?? props.selected;
@@ -1476,6 +1495,7 @@ function ConnectionModal(props: {
   onClose: () => void;
   onConnect: (input: { label: string; url: string; token: string }) => Promise<void>;
 }) {
+  useDialogHistory(props.onClose);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("http://127.0.0.1:7777");
   const [token, setToken] = useState("");
@@ -1521,6 +1541,7 @@ function ConnectionModal(props: {
 }
 
 function SessionPane(props: {
+  onBack: () => void;
   onSessionChange: (session: Session) => void;
   session: ConnectedSession;
   onDetach: () => void;
@@ -1544,7 +1565,7 @@ function SessionPane(props: {
       <button onClick={props.onDelete}><Trash2 size={14} /></button>
     </div>
     {props.session.mode !== "web" && <div className="terminalLocation" aria-label="현재 세션 실행 위치"><span>CLI</span><strong title={props.session.connection.url}>{props.session.connection.label}</strong><code title={props.session.cwd}>{props.session.cwd}</code></div>}
-    {props.session.mode === "web" ? <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
+    {props.session.mode === "web" ? <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} onBack={props.onBack} /> : mode === "attach" ? <Terminal session={props.session} reload={props.reload} /> : <SessionLogs session={props.session} />}
   </div>;
 }
 

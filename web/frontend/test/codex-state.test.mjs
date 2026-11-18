@@ -31,3 +31,16 @@ test('fresh approval events survive an older history response and completion cle
   assert.equal(state.approvals.size, 1);
   observe(state, { method: 'turn/completed', params: { turn: { id: 't', status: 'completed' } } }); assert.equal(state.approvals.size, 0);
 });
+
+test('working start times restore seconds or milliseconds from history without restarting on late snapshots', async () => {
+  const { rememberTurnStart } = await import('../src/codex-state.ts');
+  const state=newChatState();
+  rememberTurnStart(state,{id:'seconds',startedAt:1700000000});assert.equal(state.turnStarts.get('seconds'),1700000000000);
+  rememberTurnStart(state,{id:'milliseconds',startedAtMs:1700000000123});assert.equal(state.turnStarts.get('milliseconds'),1700000000123);
+  rememberTurnStart(state,{id:'early-ms',startedAtMs:1000});assert.equal(state.turnStarts.get('early-ms'),1000);
+  rememberTurnStart(state,{id:'unknown'});assert.equal(state.turnStarts.has('unknown'),false);
+  observe(state,{method:'turn/started',params:{turn:{id:'live'}}});const start=state.turnStarts.get('live');
+  mergeHistory(state,{thread:{turns:[{id:'live',status:'inProgress',items:[]}]},state:{activeTurn:'live'}},state.revision,false);
+  assert.equal(state.turnStarts.get('live'),start);
+  observe(state,{method:'turn/completed',params:{turn:{id:'live',status:'completed'}}});assert.equal(state.active,null);
+});
