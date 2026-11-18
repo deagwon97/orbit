@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronLeft, GitFork, Info, ListPlus, Mic, RefreshCcw, SlidersHorizontal, Square } from 'lucide-react';
+import { ArrowUp, Check, ChevronLeft, Copy, GitFork, Info, ListPlus, Mic, Minus, Plus, RefreshCcw, SlidersHorizontal, Square } from 'lucide-react';
 import { Marked, Tokenizer, type Token, type Tokens } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
@@ -11,6 +11,7 @@ import { suggestions, isCommand, type ConversationCommand } from './codex-comman
 import type { Session as OrbitSession } from './main';
 import { useVoiceInput } from './codex-voice-input';
 import { useDialogHistory } from './dialog-history';
+import { copyText } from './clipboard';
 
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -53,14 +54,37 @@ function Inline({ tokens = [] }: { tokens?: Token[] }) {
 }
 function CodeBlock({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false), [long, setLong] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const pre = useRef<HTMLPreElement>(null);
   useLayoutEffect(() => {
-    const node = pre.current; if (!node) return;
-    const measure = () => setLong(node.scrollHeight > 280);
+    const node = pre.current; if (!node || expanded) return;
+    const measure = () => setLong(node.scrollHeight > node.clientHeight);
     const resize = new ResizeObserver(measure); resize.observe(node); measure(); return () => resize.disconnect();
-  }, [text]);
-  const toggle = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse' : 'Expand'}</button>;
-  return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>{expanded && toggle}<pre ref={pre}><code>{text}</code></pre>{long && toggle}</div>;
+  }, [text, expanded]);
+  useEffect(() => {
+    if (copyStatus === 'idle') return;
+    const timer = window.setTimeout(() => setCopyStatus('idle'), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
+
+  const toggleLabel = expanded ? 'Collapse code' : 'Expand code';
+  const ToggleIcon = expanded ? Minus : Plus;
+  const toggle = <button type="button" className="codexCodeToggle" aria-expanded={expanded}
+    aria-label={toggleLabel} title={toggleLabel} onClick={() => setExpanded(!expanded)}>
+    <ToggleIcon size={17} aria-hidden="true" />
+  </button>;
+  return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>
+    <div className="codexCodeToolbar">
+      {(long || expanded) && toggle}
+      <button type="button" className="codexCodeCopy" data-status={copyStatus} disabled={!text}
+        onClick={async () => setCopyStatus(await copyText(text) ? 'copied' : 'failed')}>
+        {copyStatus === 'copied' ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+        <span aria-live="polite">{copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy code'}</span>
+      </button>
+    </div>
+    <pre ref={pre}><code>{text}</code></pre>
+    {expanded && <div className="codexCodeFooter">{toggle}</div>}
+  </div>;
 }
 function Markdown({ text }: { text: string }) {
   function blocks(tokens: Token[] = [], tightList = false): React.ReactNode {

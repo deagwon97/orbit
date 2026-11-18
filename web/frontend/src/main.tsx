@@ -2,6 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHistory } from './dialog-history';
 import { CodexChat } from "./CodexChat";
+import { copyText } from "./clipboard";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
@@ -488,34 +489,6 @@ function createTouchSelectionController(term: XTermTerminal, onSelectionChange: 
       clearTimer();
     }
   };
-}
-
-// navigator.clipboard requires a secure context; orbit is often reached over
-// plain HTTP on a LAN, so fall back to the legacy execCommand copy path.
-async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // fall through to legacy fallback below
-    }
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  let ok = false;
-  try {
-    ok = document.execCommand("copy");
-  } catch {
-    ok = false;
-  }
-  document.body.removeChild(textarea);
-  return ok;
 }
 
 function SelectionCopyButton({ className, onCopy }: { className: string; onCopy: () => string }) {
