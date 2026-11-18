@@ -14,6 +14,27 @@ async function send(text){const input=page.getByRole('textbox',{name:'Codex 메�
 try{
 await page.goto(c.webUrl);await page.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'live-progress',label:'Home',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','live-progress');},c);await page.reload();await page.getByTitle('New session',{exact:true}).click();let d=page.getByRole('dialog');await d.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await d.getByLabel('Name',{exact:true}).fill(name);await d.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await d.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();session=await page.evaluate(async({c,name})=>(await(await fetch('/api/v1/sessions',{headers:{Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl}})).json()).find(s=>s.name===name),{c,name});
 await page.locator('.codexWorkHeading strong').filter({hasText:'Ran'}).waitFor();if(await page.locator('.codexMessage.agentMessage > small').count())throw Error('Repeated Codex label remains');if((await page.locator('.codexChat').innerText()).includes('Codex가 작업하고 있습니다'))throw Error('Generic Working copy remains');if((await page.locator('.codexChat').innerText()).includes('PRIVATE_RAW_REASONING'))throw Error('Raw reasoning exposed');
+const markdownSample=[
+  '입력창에서 **↑**를 누르고 **↓**로 이동합니다. **`여기서 포크`**를 누르세요.',
+  '기호**(완료)**를 확인하고 `**↑**를`와 \\**↓**를 비교합니다.',
+  '- [x] 확인\n- [ ] 대기',
+  '| 선택 | 방향 |\n| :--- | ---: |\n| [공식 문서][guide] | **↑**를 |',
+  '[guide]: https://example.com/guide',
+].join('\n\n');
+emit('item/agentMessage/delta',{itemId:'markdown-check',delta:'입력창에서 **↑'});
+emit('item/agentMessage/delta',{itemId:'markdown-check',delta:markdownSample.slice('입력창에서 **↑'.length)});
+const markdown=page.locator('.codexMessage.agentMessage').filter({hasText:'여기서 포크'});
+await markdown.locator('p strong').getByText('↑',{exact:true}).waitFor();
+await markdown.locator('strong').getByText('↓',{exact:true}).waitFor();
+await markdown.locator('strong > code').getByText('여기서 포크',{exact:true}).waitFor();
+await markdown.locator('strong').getByText('(완료)',{exact:true}).waitFor();
+await markdown.locator('code').getByText('**↑**를',{exact:true}).waitFor();
+if(!(await markdown.innerText()).includes('와 **↓**를 비교'))throw Error('Escaped emphasis was rendered as bold');
+const tasks=markdown.getByRole('checkbox');
+if(await tasks.count()!==2||!await tasks.first().isChecked()||await tasks.last().isChecked()||!await tasks.first().isDisabled())throw Error('Task list rendering failed');
+if(await markdown.getByRole('link',{name:'공식 문서'}).getAttribute('href')!=='https://example.com/guide')throw Error('Reference link rendering failed');
+if((await markdown.getByRole('columnheader',{name:'방향'}).evaluate(el=>getComputedStyle(el).textAlign))!=='right')throw Error('Table alignment was lost');
+if((await markdown.innerText()).includes('[guide]:'))throw Error('Reference definition leaked into the message');
 emit('item/completed',{item:{id:'explore-labels',type:'commandExecution',status:'completed',command:'inspect project',commandActions:[{type:'read',name:'example.ts'},{type:'search',query:'config'},{type:'listFiles',path:'src'}],aggregatedOutput:'first\nsecond\nthird\nfourth'}});
 const explored=page.locator('[data-item="explore-labels"]');
 for(const label of ['Read','Search','List files'])await explored.getByText(label,{exact:true}).waitFor();

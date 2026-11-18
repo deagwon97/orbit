@@ -4,7 +4,7 @@ import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHis
 import { CodexChat } from "./CodexChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -620,6 +620,7 @@ function App() {
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [deletingSessionKey, setDeletingSessionKey] = useState<string | null>(null);
   const showAll = true;
   const [tool, setTool] = useState("codex");
   const [sessionMode, setSessionMode] = useState<"cli" | "web">("cli");
@@ -638,7 +639,7 @@ function App() {
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const [fileEditorOpen, setFileEditorOpen] = useState(false);
-  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
@@ -690,7 +691,7 @@ function App() {
     saveConnectionList(next);
     setSessions((current) => current.filter((session) => session.connection.id !== id));
     if (selected?.connection.id === id) setSelectedKey(null);
-    if (next.length === 0) setConnectionsOpen(false);
+    if (next.length === 0) setSettingsOpen(false);
   }
 
   function selectActiveConnection(id: string) {
@@ -756,16 +757,16 @@ function App() {
   }
 
   async function deleteSession(session: ConnectedSession) {
+    if (deletingSessionKey) return;
+    setDeletingSessionKey(session.key);
     try {
       await api(`/api/v1/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" }, session.connection);
+      setSessions(items => items.filter(item => item.key !== session.key));
       setMessage(`removed ${session.id}`);
-      if (selectedKey === session.key) {
-        setSelectedKey(null);
-        closeDetail();
-      }
-      await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingSessionKey(null);
     }
   }
 
@@ -798,7 +799,10 @@ function App() {
   useEffect(() => { if (authed) void loadBackends(); }, [authed, activeConnection?.id]);
   useEffect(() => { if (authed) void load(); }, [authed, showAll, activeConnection?.id]);
   useEffect(() => {
-    if (selectedKey && !sessions.some((session) => session.key === selectedKey)) setSelectedKey(null);
+    if (selectedKey && !sessions.some((session) => session.key === selectedKey)) {
+      setSelectedKey(null);
+      closeDetail();
+    }
   }, [sessions, selectedKey]);
   useEffect(() => {
     if (!backends.some((backend) => backend.id === tool)) setTool(backends[0]?.id ?? "codex");
@@ -841,7 +845,7 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const sessionsOpen = !connectionsOpen && !fileEditorOpen;
+  const sessionsOpen = !fileEditorOpen;
   const sessionListLabel = sessionsCollapsed ? "Show session list" : "Hide session list";
   function changeSessionList(collapsed: boolean) {
     if (collapsed === sessionsCollapsed) return;
@@ -850,7 +854,7 @@ function App() {
   }
   const sessionListButton = <button
     type="button"
-    className="iconButton sessionListToggle"
+    className={`iconButton sessionListToggle${sessionsCollapsed ? " floatingSessionListToggle" : ""}`}
     ref={sessionListToggleRef}
     title={sessionListLabel}
     aria-label={sessionListLabel}
@@ -860,44 +864,34 @@ function App() {
   >
     {sessionsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
   </button>;
-  const themeButton = <button
-    type="button"
-    className="iconButton themeToggle"
-    title={darkTheme ? "Switch to light mode" : "Switch to dark mode"}
-    aria-label="Dark mode"
-    aria-pressed={darkTheme}
-    onClick={() => {
-      const theme = darkTheme ? "light" : "dark";
-      document.documentElement.dataset.theme = theme;
-      setDarkTheme(theme === "dark");
-      try { localStorage.setItem("orbit.theme", theme); } catch {}
-    }}
-  >
-    {darkTheme ? <Sun size={17} /> : <Moon size={17} />}
-  </button>;
-  if (!authed) return <Login onLogin={addConnection} themeButton={themeButton} />;
+  function toggleTheme() {
+    const theme = darkTheme ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    setDarkTheme(theme === "dark");
+    try { localStorage.setItem("orbit.theme", theme); } catch {}
+  }
+
+  if (!authed) return <Login onLogin={addConnection} themeButton={
+    <button
+      type="button"
+      className="iconButton themeToggle"
+      title={darkTheme ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label="Dark mode"
+      aria-pressed={darkTheme}
+      onClick={toggleTheme}
+    >
+      {darkTheme ? <Sun size={17} /> : <Moon size={17} />}
+    </button>
+  } />;
+
+  const listHeader = <div className="workspaceListHeader">
+    <strong>Orbit</strong>
+    <button type="button" className="iconButton" title="Orbit menu" aria-label="Orbit menu" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>
+      <Menu size={19} />
+    </button>
+  </div>;
+
   return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}`}>
-    <section className="toolbar">
-      <strong>Orbit</strong>
-      {sessionsOpen && sessionsCollapsed && sessionListButton}
-      <div className="toolbarActions">
-        {activeConnection && (
-          <button
-            className={`activeOrbitd${connectionsOpen ? " activeButton" : ""}`}
-            title={`Orbitd · ${activeConnection.label} · ${activeConnection.url}`}
-            aria-label={`Orbitd connections · ${activeConnection.label}`}
-            aria-expanded={connectionsOpen}
-            onClick={() => { setConnectionsOpen(!connectionsOpen); setFileEditorOpen(false); closeDetail(); }}
-          >
-            <Server size={14} />
-            <span className="activeOrbitdLabel">{activeConnection.label}</span>
-            <span className="activeOrbitdUrl">{activeConnection.url}</span>
-          </button>
-        )}
-        {themeButton}
-        <button className="iconButton" title="Refresh" onClick={() => window.location.reload()}><RefreshCcw size={16} /></button>
-      </div>
-    </section>
     {message && <div className="statusLine">
       <span className="statusLineText">{message}</span>
       <button className="statusLineClose" title="Dismiss" onClick={() => setMessageState((prev) => ({ text: "", epoch: prev.epoch }))}>
@@ -905,15 +899,8 @@ function App() {
       </button>
     </div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}${sessionsOpen && sessionsCollapsed ? " sessionsCollapsed" : ""}`} style={layoutStyle}>
-      {connectionsOpen ? <ConnectionsWorkspace
-          connections={connections}
-          activeConnectionId={activeConnection?.id ?? ""}
-          onSelect={selectActiveConnection}
-          onRemove={removeConnection}
-          onAdd={() => setConnectionOpen(true)}
-          onSessions={() => { setConnectionsOpen(false); setFileEditorOpen(false); setDetailOpen(false); }}
-          onFiles={() => { setConnectionsOpen(false); setFileEditorOpen(true); setDetailOpen(false); }}
-        /> : fileEditorOpen && activeConnection ? <FileWorkspace
+      {fileEditorOpen && activeConnection ? <FileWorkspace
+          listHeader={listHeader}
           connection={activeConnection}
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
           detailOpen={detailOpen}
@@ -923,6 +910,7 @@ function App() {
           onBack={closeDetail}
         /> : <>
         <div className="masterPane" id="session-list-pane">
+          {listHeader}
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
@@ -932,20 +920,43 @@ function App() {
             <button className="primaryButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} />New session</button>
           </div>
           <div className="sessions">
-            {sessions.map((session) => <button className={selectedKey === session.key ? "row active" : "row"} aria-current={selectedKey === session.key ? "true" : undefined} key={session.key} onClick={() => { setSelectedKey(session.key); setDetailOpen(true); }}>
-              <span className="sessionName" title={session.name}>{session.name}</span>
-              <span className={`pill ${session.status}`}>{session.status}</span>
-              <span className="sessionMeta"><span className="sessionMode">{session.mode === "web" ? "Web" : "CLI"}</span><span>{session.tool}</span><span className="sessionHost" title={session.connection.label}>{session.connection.label}</span></span>
-              <code className="sessionCwd" title={session.cwd}>{session.cwd}</code>
-            </button>)}
+            {sessions.map(session => {
+              const isSelected = session.key === selectedKey;
+              return <div className="sessionCard" key={session.key}>
+                <button type="button" className={isSelected ? "row active" : "row"} aria-current={isSelected ? "true" : undefined} onClick={event => {
+                  event.currentTarget.parentElement?.querySelector("details")?.removeAttribute("open");
+                  setSelectedKey(session.key);
+                  setDetailOpen(true);
+                }}>
+                  <span className="sessionName" title={session.name}>{session.name}</span>
+                  <span className={`pill ${session.status}`}>{session.status}</span>
+                  <span className="sessionMeta"><span className="sessionMode">{session.mode === "web" ? "Web" : "CLI"}</span><span>{session.tool}</span><span className="sessionHost" title={session.connection.label}>{session.connection.label}</span></span>
+                  <code className="sessionCwd" title={session.cwd}>{session.cwd}</code>
+                </button>
+                <details className="sessionCardActions sessionDetailsDisclosure" name="session-card-actions" onKeyDown={closeDisclosureOnEscape}>
+                  <summary aria-label={`Actions for ${session.name}`} title="Session actions"><MoreHorizontal size={18} /></summary>
+                  <div className="sessionCardActionButtons">
+                    {isSelected && <button type="button" onClick={event => {
+                      const disclosure = event.currentTarget.closest("details");
+                      if (disclosure) {
+                        disclosure.open = false;
+                        disclosure.querySelector("summary")?.focus();
+                      }
+                      setSelectedKey(null);
+                      closeDetail();
+                    }}><LogOut size={15} />Detach</button>}
+                    <button type="button" className="dangerButton" disabled={deletingSessionKey !== null} onClick={() => void deleteSession(session)}><Trash2 size={15} />Delete session</button>
+                  </div>
+                </details>
+              </div>;
+            })}
           </div>
         </div>
         <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} controls="session-list-pane" onCollapse={() => changeSessionList(true)} />
-        <div className="workPane">
+        <div className="workPane sessionWorkPane">
+          {sessionsCollapsed && sessionListButton}
           {selected ? <SessionPane
             session={selected}
-            onDetach={() => { setSelectedKey(null); closeDetail(); }}
-            onDelete={() => void deleteSession(selected)}
             reload={load}
             onBack={closeDetail}
             onSessionChange={session => setSessions(items => items.map(item => item.key === selected.key ? { ...session, connection: selected.connection, key: selected.key } : item))}
@@ -959,6 +970,22 @@ function App() {
         </div>
       </>}
     </section>
+    {settingsOpen && <OrbitMenu
+      connections={connections}
+      activeConnectionId={activeConnection?.id ?? ""}
+      darkTheme={darkTheme}
+      onToggleTheme={toggleTheme}
+      onClose={() => setSettingsOpen(false)}
+      onSelect={id => {
+        setSettingsOpen(false);
+        if (id === activeConnection?.id) return;
+        selectActiveConnection(id);
+        setFileEditorOpen(false);
+        closeDetail();
+      }}
+      onRemove={removeConnection}
+      onAdd={() => { setSettingsOpen(false); setConnectionOpen(true); }}
+    />}
     {createOpen && activeConnection && <NewSessionModal
       connection={activeConnection}
       backends={backends}
@@ -1076,41 +1103,59 @@ function PaneResizer({ width, onWidthChange, onCollapse, controls }: {
   />;
 }
 
-function ConnectionsWorkspace(props: {
+function OrbitMenu({ connections, activeConnectionId, darkTheme, onToggleTheme, onClose, onSelect, onRemove, onAdd }: {
   connections: OrbitConnection[];
   activeConnectionId: string;
+  darkTheme: boolean;
+  onToggleTheme: () => void;
+  onClose: () => void;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
   onAdd: () => void;
-  onSessions: () => void;
-  onFiles: () => void;
 }) {
-  return <div className="connectionWorkspace">
-    <div className="paneTabs">
-      <button onClick={props.onSessions}><TerminalIcon size={14} />Sessions</button>
-      <button onClick={props.onFiles}><FolderOpen size={14} />Files</button>
-      <button className="primaryButton connectionAddButton" title="Add orbitd" onClick={props.onAdd}><Plus size={16} />Add server</button>
-    </div>
-    <div className="connectionList">
-      <div className="connectionRow connectionHeader">
-        <span>Name</span>
-        <span>URL</span>
-        <span>Status</span>
-        <span />
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useDialogHistory(onClose);
+  React.useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+
+  return <dialog
+    className="orbitMenu"
+    ref={dialogRef}
+    aria-labelledby="orbit-menu-title"
+    onCancel={event => { event.preventDefault(); onClose(); }}
+    onClick={event => { if (event.target === event.currentTarget) onClose(); }}
+  >
+    <div className="orbitMenuContent">
+      <div className="modalTop">
+        <strong id="orbit-menu-title">Orbit menu</strong>
+        <button type="button" className="iconButton" aria-label="Close Orbit menu" onClick={onClose}><X size={16} /></button>
       </div>
-      {props.connections.map((connection) => {
-        const active = connection.id === props.activeConnectionId;
-        return <div className={`connectionRow${active ? " active" : ""}`} key={connection.id}>
-          <button className="connectionSelectButton" aria-label={connection.label} aria-current={active ? "true" : undefined} onClick={() => { props.onSelect(connection.id); props.onSessions(); }}>
-            <span className="connectionName" title={connection.label}><Server size={15} />{connection.label}</span>
-            <span className="connectionUrlCell" title={connection.url}>{connection.url}</span>
-            <span className={`pill ${active ? "running" : ""}`}>{active ? "active" : "saved"}</span>
-          </button>
-          <button className="iconButton" title="Remove orbitd" aria-label={`Remove ${connection.label}`} onClick={() => props.onRemove(connection.id)}><Trash2 size={16} /></button>
-        </div>;
-      })}
+      <div className="orbitMenuActions">
+        <button type="button" aria-pressed={darkTheme} onClick={onToggleTheme}>{darkTheme ? <Sun size={16} /> : <Moon size={16} />}Dark mode</button>
+        <button type="button" onClick={() => window.location.reload()}><RefreshCcw size={16} />Refresh</button>
+      </div>
+      <div className="orbitMenuServers">
+        <div className="orbitMenuServersHeading">
+          <h2>Orbitd servers</h2>
+          <button type="button" onClick={onAdd}><Plus size={16} />Add server</button>
+        </div>
+        {connections.map(connection => {
+          const active = connection.id === activeConnectionId;
+          return <div className={`orbitServerRow${active ? " active" : ""}`} key={connection.id}>
+            <button type="button" className="orbitServerSelect" aria-label={connection.label} aria-current={active ? "true" : undefined} onClick={() => onSelect(connection.id)}>
+              <Server size={16} />
+              <span className="orbitServerIdentity"><strong>{connection.label}</strong><code>{connection.url}</code></span>
+              <span className={`pill${active ? " running" : ""}`}>{active ? "Active" : "Saved"}</span>
+            </button>
+            <button type="button" className="iconButton" aria-label={`Remove ${connection.label}`} onClick={() => onRemove(connection.id)}><Trash2 size={16} /></button>
+          </div>;
+        })}
+      </div>
     </div>
-  </div>;
+  </dialog>;
 }
 
 function NewSessionModal(props: {
@@ -1188,6 +1233,7 @@ function NewSessionModal(props: {
 }
 
 function FileWorkspace(props: {
+  listHeader: React.ReactNode;
   connection: OrbitConnection;
   initialPath?: string;
   onSessions: () => void;
@@ -1355,6 +1401,7 @@ function FileWorkspace(props: {
 
   return <div className={`fileWorkspace${detailOpen ? " showDetail" : ""}`}>
     <aside className="masterPane fileExplorer">
+      {props.listHeader}
       <div className="paneTabs">
         <button onClick={onSessions}><TerminalIcon size={14} />Sessions</button>
         <button className="activeButton"><FolderOpen size={14} />Files</button>
@@ -1595,13 +1642,18 @@ function ConnectionModal(props: {
   </div>;
 }
 
+function closeDisclosureOnEscape(event: React.KeyboardEvent<HTMLDetailsElement>) {
+  if (event.key === "Escape" && event.currentTarget.open) {
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector("summary")?.focus();
+  }
+}
+
 function SessionPane(props: {
   onBack: () => void;
   onSessionChange: (session: Session) => void;
   onSessionFork: (session: Session, open: boolean) => void;
   session: ConnectedSession;
-  onDetach: () => void;
-  onDelete: () => void;
   reload: () => void;
 }) {
   const [mode, setMode] = useState<"attach" | "logs">("attach");
@@ -1615,10 +1667,6 @@ function SessionPane(props: {
       <div><dt>ID</dt><dd>{props.session.id}</dd></div>
       {props.session.pid != null && <div><dt>PID</dt><dd>{props.session.pid}</dd></div>}
     </dl>
-    <div className="sessionDetailActions">
-      <button type="button" onClick={props.onDetach}><LogOut size={15} />Detach</button>
-      <button type="button" className="dangerButton" onClick={props.onDelete}><Trash2 size={15} />Delete session</button>
-    </div>
   </>;
 
   if (props.session.mode === "web") return <div className="terminalBox codexSessionPane">
@@ -1635,14 +1683,9 @@ function SessionPane(props: {
       <button type="button" aria-pressed={mode === "logs"} onClick={() => setMode(mode === "logs" ? "attach" : "logs")}>
         {mode === "logs" ? <><TerminalIcon size={15} />Terminal</> : <><FileText size={15} />Logs</>}
       </button>
-      <details className="cliSessionDetails" onKeyDown={event => {
-        if (event.key === "Escape" && event.currentTarget.open) {
-          event.currentTarget.open = false;
-          event.currentTarget.querySelector("summary")?.focus();
-        }
-      }}>
+      <details className="sessionDetailsDisclosure" onKeyDown={closeDisclosureOnEscape}>
         <summary aria-label="Session details" title="Session details"><Info size={18} /></summary>
-        <div className="cliSessionDetailsPanel">
+        <div className="sessionDetailsPopup">
           <p title={props.session.connection.url}>{props.session.connection.label} · <code>{props.session.cwd}</code></p>
           {details}
         </div>

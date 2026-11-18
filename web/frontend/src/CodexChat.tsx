@@ -1,5 +1,5 @@
-import { ArrowUp, ChevronDown, ChevronLeft, GitFork, ListPlus, RefreshCcw, Server, Slash, SlidersHorizontal, Square } from 'lucide-react';
-import { marked } from 'marked';
+import { ArrowUp, ChevronDown, ChevronLeft, GitFork, Info, ListPlus, RefreshCcw, Server, Slash, SlidersHorizontal, Square } from 'lucide-react';
+import { Marked, Tokenizer, type Token, type Tokens } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
 import './styles/codex-chat.css';
@@ -11,11 +11,40 @@ import { suggestions, isCommand, type ConversationCommand } from './codex-comman
 import type { Session as OrbitSession } from './main';
 
 type Session = { id: string; key: string; name: string; cwd: string; status: string; codex_thread_id?: string | null; connection: { label: string; url: string; token: string } };
-function Inline({ text }: { text: string }) {
-  function render(tokens: any[]): React.ReactNode {
-    return tokens.map((t, i) => t.type === 'strong' ? <strong key={i}>{render(t.tokens)}</strong> : t.type === 'em' ? <em key={i}>{render(t.tokens)}</em> : t.type === 'codespan' ? <code key={i}>{t.text}</code> : t.type === 'del' ? <del key={i}>{render(t.tokens)}</del> : t.type === 'br' ? <br key={i} /> : t.type === 'link' && /^(https?:|mailto:|#)/i.test(t.href) ? <a key={i} href={t.href} target="_blank" rel="noreferrer">{render(t.tokens)}</a> : <React.Fragment key={i}>{t.tokens ? render(t.tokens) : t.text || t.raw}</React.Fragment>);
-  }
-  return <>{render(marked.Lexer.lexInline(text))}</>;
+const chatMarkdown = new Marked({
+  tokenizer: {
+    emStrong(src, maskedSrc, prevChar) {
+      if (!src.startsWith('**')) return false;
+      // Let bold punctuation close before a Korean particle. The lexer mask
+      // protects escapes, code spans and link destinations from delimiter matching.
+      const mask = maskedSrc.slice(-src.length);
+      const span = /^\*\*[^*\n]+(?<=[\p{P}\p{S}])\*\*(?=\p{Script=Hangul})/u.exec(mask)?.[0];
+      if (!span) return false;
+      const before = prevChar && /\p{Script=Hangul}/u.test(prevChar) ? '' : prevChar;
+      const token = Tokenizer.prototype.emStrong.call(this, src.slice(0, span.length), span, before);
+      return token?.type === 'strong' && token.raw.length === span.length ? token : false;
+    },
+  },
+});
+
+function Inline({ tokens = [] }: { tokens?: Token[] }) {
+  return <>{tokens.map((token, i) => {
+    switch (token.type) {
+      case 'strong': return <strong key={i}><Inline tokens={token.tokens} /></strong>;
+      case 'em': return <em key={i}><Inline tokens={token.tokens} /></em>;
+      case 'del': return <del key={i}><Inline tokens={token.tokens} /></del>;
+      case 'codespan': return <code key={i}>{token.text}</code>;
+      case 'br': return <br key={i} />;
+      case 'checkbox': return <input key={i} className="codexTaskCheckbox" type="checkbox" checked={token.checked} disabled />;
+      case 'link':
+        if (/^(https?:|mailto:|#)/i.test(token.href)) {
+          return <a key={i} href={token.href} title={token.title ?? undefined} target="_blank" rel="noreferrer"><Inline tokens={token.tokens} /></a>;
+        }
+        break;
+    }
+    if ('tokens' in token && token.tokens) return <Inline key={i} tokens={token.tokens} />;
+    return <React.Fragment key={i}>{'text' in token ? token.text : token.raw}</React.Fragment>;
+  })}</>;
 }
 function CodeBlock({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false), [long, setLong] = useState(false);
@@ -29,19 +58,42 @@ function CodeBlock({ text }: { text: string }) {
   return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>{expanded && toggle}<pre ref={pre}><code>{text}</code></pre>{long && toggle}</div>;
 }
 function Markdown({ text }: { text: string }) {
-  function blocks(tokens: any[]): React.ReactNode {
-    return tokens.map((t, i) => {
-      if (t.type === 'space') return null;
-      if (t.type === 'code') return <CodeBlock key={i} text={t.text} />;
-      if (t.type === 'heading') return React.createElement(`h${t.depth}`, { key: i }, <Inline text={t.text} />);
-      if (t.type === 'list') { const Tag = t.ordered ? 'ol' : 'ul'; return <Tag key={i} start={t.ordered ? t.start : undefined}>{t.items.map((item: any, j: number) => <li key={j}>{blocks(item.tokens)}</li>)}</Tag>; }
-      if (t.type === 'blockquote') return <blockquote key={i}>{blocks(t.tokens)}</blockquote>;
-      if (t.type === 'hr') return <hr key={i} />;
-      if (t.type === 'table') return <div className="codexTable" key={i}><table><thead><tr>{t.header.map((cell: any,j: number)=><th key={j}><Inline text={cell.text} /></th>)}</tr></thead><tbody>{t.rows.map((row: any[],j: number)=><tr key={j}>{row.map((cell,k)=><td key={k}><Inline text={cell.text} /></td>)}</tr>)}</tbody></table></div>;
-      return <p key={i}><Inline text={t.text || t.raw} /></p>;
+  function blocks(tokens: Token[] = [], tightList = false): React.ReactNode {
+    return tokens.map((token, i) => {
+      switch (token.type) {
+        case 'space':
+        case 'def': return null;
+        case 'code': return <CodeBlock key={i} text={token.text} />;
+        case 'heading': return React.createElement(`h${token.depth}`, { key: i }, <Inline tokens={token.tokens} />);
+        case 'paragraph': return <p key={i}><Inline tokens={token.tokens} /></p>;
+        case 'text': {
+          const content = <Inline tokens={token.tokens ?? [token]} />;
+          return tightList ? <React.Fragment key={i}>{content}</React.Fragment> : <p key={i}>{content}</p>;
+        }
+        case 'list': {
+          const Tag = token.ordered ? 'ol' : 'ul';
+          return <Tag key={i} start={token.ordered ? Number(token.start) : undefined}>{token.items.map((item: Tokens.ListItem, j: number) =>
+            <li key={j} className={item.task ? 'codexTaskItem' : undefined}>{blocks(item.tokens, !token.loose)}</li>
+          )}</Tag>;
+        }
+        case 'checkbox': return <Inline key={i} tokens={[token]} />;
+        case 'blockquote': return <blockquote key={i}>{blocks(token.tokens)}</blockquote>;
+        case 'hr': return <hr key={i} />;
+        case 'table': {
+          const renderRow = (cells: Tokens.TableCell[], header = false) => {
+            const Cell = header ? 'th' : 'td';
+            return cells.map((cell, j) => <Cell key={j} style={{ textAlign: cell.align ?? undefined }}><Inline tokens={cell.tokens} /></Cell>);
+          };
+          return <div className="codexTable" key={i}><table>
+            <thead><tr>{renderRow(token.header, true)}</tr></thead>
+            <tbody>{token.rows.map((row: Tokens.TableCell[], j: number) => <tr key={j}>{renderRow(row)}</tr>)}</tbody>
+          </table></div>;
+        }
+        default: return <p key={i}>{token.raw}</p>;
+      }
     });
   }
-  return <div className="codexProse">{blocks(marked.lexer(text))}</div>;
+  return <div className="codexProse">{blocks(chatMarkdown.lexer(text))}</div>;
 }
 function WorkLog({ item }: { item: CodexItem }) {
   const [expanded, setExpanded] = useState(false);
@@ -89,7 +141,12 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const state = useRef(newChatState()), socket = useRef<WebSocket | null>(null), counter = useRef(0);
   const pending = useRef(new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void; since: number; op: string; older: boolean; timer: number }>());
   const [version, setVersion] = useState(0), [epoch, setEpoch] = useState(0), [connection, setConnection] = useState('connecting');
-  const [draft, setDraft] = useState(''), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
+  const [draft, setDraftValue] = useState(''), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
+  const inputHistory = useRef<{ entries: string[]; index: number; draft: string } | null>(null);
+  function setDraft(value: React.SetStateAction<string>) {
+    inputHistory.current = null;
+    setDraftValue(value);
+  }
   const [forkingTurn, setForkingTurn] = useState<string | null>(null);
   const [commands, setCommands] = useState<ConversationCommand[]>([]), [commandResult, setCommandResult] = useState<any>(null), [commandBusy, setCommandBusy] = useState(false), [selectedCommand, setSelectedCommand] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null), commandView = useRef(0);
@@ -176,7 +233,21 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       if (message.type === 'ready') {
         if (message.session?.id === session.id) onSessionChange(message.session);
         applyLiveState(s, message.state, s.revision);
-        void request({ op: 'history' }).then(() => { if (!disposed) { setConnection('ready'); if (s.capabilities.commands) void request({ op: 'command', command: '/help' }).then(result => { if (!disposed) setCommands(result.commands); }).catch(e => { if (!disposed) setError(String(e)); }); } }).catch(e => { if (!disposed) setError(String(e)); });
+        void request({ op: 'history' }).then(() => {
+          if (disposed) return;
+          setConnection('ready');
+          if (s.capabilities.commands) {
+            void request({ op: 'command', command: '/help' })
+              .then(result => { if (!disposed) setCommands(result.commands); })
+              .catch(error => { if (!disposed) setError(String(error)); });
+          }
+        }).catch(error => {
+          if (!disposed) {
+            setError(String(error));
+            setConnection('offline');
+            ws.close();
+          }
+        });
       } else if (message.type === 'result' || message.type === 'error') {
         const entry = pending.current.get(message.id);
         if (entry) {
@@ -313,6 +384,42 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       if (turnId && turnId !== s.active && s.forkableTurns.has(turnId)) forkBoundaries.set(turnId, id);
     }
   }
+  function recallInput(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    const backwards = event.key === 'ArrowUp';
+    const input = event.currentTarget;
+    const browsing = inputHistory.current;
+    if (input.selectionStart !== input.selectionEnd) return;
+    if (input.form?.classList.contains('multiline')) {
+      // Keep native vertical cursor movement within a draft or a recalled message.
+      const atRecallPosition = browsing && input.selectionStart === draft.length;
+      if (!atRecallPosition && (!backwards || input.selectionStart !== 0)) return;
+    }
+    if (browsing) {
+      event.preventDefault();
+      const next = Math.min(browsing.entries.length - 1, browsing.index + (backwards ? 1 : -1));
+      if (next < 0) setDraft(browsing.draft);
+      else {
+        browsing.index = next;
+        setDraftValue(browsing.entries[next]);
+      }
+      return;
+    }
+    if (!backwards) return;
+    const entries = [];
+    for (const id of s.order) {
+      const item = s.items.get(id);
+      if (item?.type === 'userMessage') entries.push(itemText(item));
+    }
+    for (const entry of s.queue.items) {
+      if (typeof entry.text === 'string') entries.push(entry.text);
+    }
+    const recent = entries.filter(text => text.trim()).reverse();
+    if (!recent.length) return;
+    event.preventDefault();
+    inputHistory.current = { entries: recent, index: 0, draft };
+    setDraftValue(recent[0]);
+  }
   const matches = suggestions(draft, commands);
   const commandInput = isCommand(draft);
   const queueTurn=queuesDuringTurn([...s.items.values()],s.active);
@@ -321,7 +428,16 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const cwd = s.settings.cwd || session.cwd;
   return <div className={`codexChat${dragging ? ' dragging' : ''}`} onDragEnter={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++;setDragging(true); } }} onDragOver={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault();event.dataTransfer.dropEffect='copy'; } }} onDragLeave={event => { event.preventDefault();if(--dragDepth.current<=0){dragDepth.current=0;setDragging(false);} }} onDrop={event => { if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);images.add(Array.from(event.dataTransfer.files)); }}>
     {dragging&&<div className="codexDropOverlay">여기에 이미지를 놓아 첨부하세요</div>}
-    <div className="codexConnection"><button type="button" className="codexMobileBack" aria-label="세션 목록으로 돌아가기" onClick={onBack}><ChevronLeft size={22}/></button><div className="codexConnectionTitle"><strong title={session.name}>{session.name}</strong><span className="codexConnectionState" data-state={connection}>{connection === 'ready' ? session.status === 'running' ? 'Codex 연결됨' : '종료된 세션 · 이력 조회' : connection === 'connecting' ? '연결 중…' : '연결 끊김'}</span></div><button type="button" className="codexMobileCommands" aria-label="대화 명령 열기" disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/help')}><SlidersHorizontal size={19}/></button><div className="codexToolbar">{s.capabilities.resume && <button disabled={connection !== 'ready' || commandBusy} onClick={() => void runCommand('/resume')}>/resume</button>}<button title={s.capabilities.commands ? undefined : 'orbitd 업데이트 후 사용할 수 있습니다.'} disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/status')}>/status</button><button title={s.capabilities.commands ? undefined : 'orbitd 업데이트 후 사용할 수 있습니다.'} disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/model')}>{s.settings.model || '/model'}</button><button title={s.capabilities.commands ? undefined : 'orbitd 업데이트 후 사용할 수 있습니다.'} disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/help')}>/help</button>{connection !== 'ready' && <button onClick={() => setEpoch(v => v + 1)}>다시 연결</button>}</div><button type="button" className="codexRefresh" aria-label="대화 새로고침" title="대화 새로고침" disabled={connection === 'connecting'} onClick={() => setEpoch(v => v + 1)}><RefreshCcw size={19}/></button></div>
+    <div className="codexConnection">
+      <button type="button" className="codexMobileBack" aria-label="세션 목록으로 돌아가기" onClick={onBack}><ChevronLeft size={22} /></button>
+      <div className="codexConnectionTitle">
+        <strong title={session.name}>{session.name}</strong>
+        <span className="codexConnectionState" data-state={connection}>{connection === 'ready' ? session.status === 'running' ? 'Codex 연결됨' : '종료된 세션 · 이력 조회' : connection === 'connecting' ? '연결 중…' : '연결 끊김'}</span>
+      </div>
+      {connection === 'offline' && <button type="button" className="codexReconnect" onClick={() => setEpoch(v => v + 1)}>다시 연결</button>}
+      <button type="button" className="codexMobileCommands" aria-label="대화 명령 열기" disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/help')}><SlidersHorizontal size={19} /></button>
+      <button type="button" className="codexRefresh" aria-label="대화 새로고침" title="대화 새로고침" disabled={connection === 'connecting'} onClick={() => setEpoch(v => v + 1)}><RefreshCcw size={19} /></button>
+    </div>
     <button type="button" className="codexLocationToggle" aria-expanded={locationOpen} aria-controls="codex-execution-location" onClick={()=>setLocationOpen(!locationOpen)}><Server size={13}/><strong>{session.connection.label || host}</strong><span>{cwd?.split('/').filter(Boolean).at(-1) || '/'}</span><ChevronDown size={14}/></button>
     <div id="codex-execution-location" className={`codexSessionContext${locationOpen ? ' expanded' : ''}`} aria-label="현재 세션 실행 위치">
       <span className="codexMode">Web</span><strong title={session.connection.url}>{session.connection.label || host}</strong><span className="codexHost" title={host}>{host}</span><span className="codexCwd" title={cwd}>{cwd}</span>
@@ -360,7 +476,13 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         <ImagePicker enabled={!!s.capabilities.images && connection === 'ready' && session.status === 'running'} add={images.add} />
         <textarea rows={1} enterKeyHint="enter" ref={promptRef} aria-label="Codex 메시지" aria-expanded={matches.length > 0} aria-controls="codex-command-list" placeholder={running ? '추가 지시…' : '메시지 입력…'} value={draft} maxLength={100000} onPaste={event => { const files=Array.from(event.clipboardData.files);if(!files.length)return;event.preventDefault();images.add(files);const text=event.clipboardData.getData('text/plain');if(text){const node=event.currentTarget,start=node.selectionStart,end=node.selectionEnd;setDraft(draft.slice(0,start)+text+draft.slice(end));} }} onChange={e => { setDraft(e.target.value); setSelectedCommand(0); }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (matches.length && ['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); setSelectedCommand(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (matches.length) {
+              event.preventDefault();
+              setSelectedCommand(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length);
+            } else recallInput(event);
+            return;
+          }
           if (event.key === 'Tab' && !event.shiftKey) {
             if (matches.length) { event.preventDefault(); setDraft(`/${matches[selectedCommand % matches.length].name} `); return; }
             if (running && (draft.trim() || availableImages.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
@@ -383,7 +505,20 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
           <button className="codexSend" aria-label={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영 ↑' : '전송 ↑'} title={commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} disabled={(!commandInput && session.status !== 'running') || (commandInput && commandBusy) || connection !== 'ready' || (!draft.trim() && !availableImages.length) || !images.ready}><ArrowUp size={23} /></button>
         </div>
       </form>
-      <div className="codexComposerMeta"><button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</button>{s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}<small>Enter {commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} · Shift+Enter 줄바꿈{s.capabilities.queue && running ? ' · Tab 예약' : ''}</small></div>
+      <div className="codexComposerMeta"><button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</button>{s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}<small>Enter {commandInput ? '명령 실행' : queueTurn ? '다음 턴 예약' : running ? '지금 반영' : '전송'} · Shift+Enter 줄바꿈{s.capabilities.queue && running ? ' · Tab 예약' : ''}</small>
+        <details className="codexDesktopDetails sessionDetailsDisclosure" onKeyDown={event => {
+          if (event.key === 'Escape' && event.currentTarget.open) {
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector('summary')?.focus();
+          }
+        }}>
+          <summary aria-label="Session details" title="Session details"><Info size={16} /></summary>
+          <div className="sessionDetailsPopup">
+            <p>{session.connection.label || host} · <code>{cwd}</code></p>
+            {sessionDetails}
+          </div>
+        </details>
+      </div>
       {commandResult && <CodexControls result={commandResult} busy={commandBusy} running={running} readOnly={session.status !== 'running'} run={runCommand} close={closeControls} insert={text => { setDraft(text); closeControls(); promptRef.current?.focus(); }} />}
 
     </div>

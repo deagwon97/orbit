@@ -55,7 +55,6 @@
 .codexApproval { border:1px solid var(--chat-control-border); background:var(--chat-muted); border-radius:9px; padding:12px; margin-bottom:10px; max-height:40vh; overflow:auto; font-size:13px; }.codexApproval label { display:block; margin:10px 0; }.codexApproval input { display:block; width:100%; margin:7px 0; }.codexApproval button { font-size:12px; margin:4px 5px 4px 0; }.codexApprovalActions { display:flex; flex-wrap:wrap; gap:5px; }
 .codexOlder,.codexLatest { display:block; margin:0 auto 12px; font-size:11px; min-height:28px; }.codexEmpty { color:var(--chat-secondary); text-align:center; padding:60px 0; font-size:13px; }
 @media(max-width:700px) { .codexMessages { padding:15px; }.codexComposerArea { padding:10px 15px; }.codexMessage { font-size:13px; }.codexWork { font-size:11px; }.codexWork .codexCommand { font-size:11px; }.codexConnection { padding:7px 15px; } }
-.codexToolbar { display:flex; align-items:center; gap:5px; min-width:0; }.codexToolbar button { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .codexControlsBackdrop { position:fixed; inset:0; z-index:150; background:var(--orbit-scrim); display:flex; align-items:center; justify-content:center; padding:20px; }
 .codexControls { width:min(640px,100%); max-height:85vh; overflow:auto; background:var(--chat-surface); border:1px solid var(--chat-border); border-radius:13px; padding:20px; color:var(--chat-ink); font-size:13px; line-height:1.7; box-shadow:0 12px 50px var(--orbit-shadow); }
 .codexControls header { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:14px; }.codexControls header button { flex-shrink:0; }.codexControls label { display:block; margin:12px 0; }.codexControls select { display:block; width:100%; margin-top:7px; }.codexControls h4 { margin:18px 0 8px; }.codexControls pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto; background:var(--chat-muted); padding:12px; }.codexControls form > button { margin-top:12px; }
@@ -65,18 +64,18 @@
 .codexQuota { display:flex; flex-direction:column; gap:5px; margin:15px 0; }.codexQuota meter { width:100%; height:12px; }
 .codexSuggestions { max-height:240px; overflow:auto; margin-bottom:7px; border:1px solid var(--chat-border); border-radius:9px; background:var(--chat-muted); }.codexSuggestions button { display:flex; width:100%; border:0; border-radius:0; justify-content:flex-start; gap:15px; padding:8px 12px; font-size:12px; }.codexSuggestions button[aria-selected=true] { background:var(--chat-accent-soft); }.codexSuggestions span { color:var(--chat-secondary); }.codexSuggestions small { margin-left:auto; color:var(--chat-warning); }
 .codexQueue { border:1px solid var(--chat-border); border-radius:9px; padding:10px 12px; margin:0 0 10px; background:var(--chat-muted); font-size:12px; }.codexQueue header { display:flex; align-items:center; justify-content:space-between; gap:8px; }.codexQueue button { font-size:11px; min-height:26px; }.codexQueue ol { list-style:none; padding:0; margin:8px 0 0; max-height:130px; overflow:auto; }.codexQueue li { display:flex; justify-content:space-between; gap:10px; padding:4px 0; }.codexQueue li span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }.codexQueue button { flex-shrink:0; }.codexQueue p { color:var(--chat-warning); }
-@media(max-width:700px) { .codexControlsBackdrop { padding:12px; }.codexControls { padding:15px; max-height:88vh; }.codexFields { grid-template-columns:85px minmax(0,1fr); gap:7px; }.codexConnection { gap:5px; flex-wrap:wrap; }.codexToolbar button { max-width:150px; }.codexComposer > div { flex-wrap:wrap; } }
+@media(max-width:700px) { .codexControlsBackdrop { padding:12px; }.codexControls { padding:15px; max-height:88vh; }.codexFields { grid-template-columns:85px minmax(0,1fr); gap:7px; }.codexConnection { gap:5px; flex-wrap:wrap; }.codexComposer > div { flex-wrap:wrap; } }
 
 .codexChat button { background:var(--chat-muted); border-color:var(--chat-control-border); color:var(--chat-ink); }
 .codexChat button:hover:not(:disabled) { background:var(--chat-hover); }
 .codexChat button:focus-visible,.codexControls button:focus-visible { outline:2px solid var(--chat-accent); outline-offset:3px; }
-.codexConnection { display:flex; align-items:center; padding:8px 16px 4px; gap:6px; min-height:58px; flex:none; }
-.codexConnectionTitle { min-width:0; flex:1; display:grid; gap:3px; }
+.codexConnection { display:flex; align-items:center; padding:6px 16px; gap:6px; min-height:44px; flex:none; }
+.codexConnectionTitle { min-width:0; flex:1; display:flex; align-items:center; gap:10px; }
 .codexConnectionTitle strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
-.codexConnectionState { font-size:11px; color:var(--chat-secondary); }
+.codexConnectionState { flex:none; white-space:nowrap; font-size:11px; color:var(--chat-secondary); }
 .codexConnectionState::before { content:''; display:inline-block; width:6px; height:6px; margin-right:6px; border-radius:50%; background:var(--orbit-warning-mark); }
 .codexConnectionState[data-state=ready]::before { background:var(--chat-accent); }
-.codexChat .codexToolbar button { background:transparent; border:0; border-radius:20px; min-height:30px; font-size:11px; }
+.codexConnection .codexReconnect { flex:none; min-height:32px; }
 .codexChat .codexLocationToggle {
   display:flex; justify-content:flex-start; align-items:center; gap:7px; flex:none; min-width:0;
   min-height:36px; padding:0 10px; margin:0 16px 5px; border:0; border-radius:9px;
@@ -96,7 +95,6 @@
 .codexHost { min-width:0; overflow-wrap:anywhere; }
 .codexCwd { flex:1 0 100%; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace,monospace; color:var(--chat-accent); }
 .codexSessionDetails { flex:1 0 100%; min-width:0; display:flex; flex-wrap:wrap; gap:8px 14px; justify-content:space-between; align-items:center; border-top:1px solid var(--chat-border); padding-top:8px; }
-.codexChat .sessionDetailActions .dangerButton { color:var(--chat-danger); }
 .codexMessages { padding:28px max(24px, calc((100% - 820px) / 2)); scroll-padding-bottom:24px; }
 .codexMessage { font-size:15px; line-height:1.85; margin-bottom:32px; }
 .codexMessage.userMessage { width:fit-content; max-width:85%; margin-left:auto; border-radius:24px 7px 24px 24px; padding:12px 20px; }
@@ -108,6 +106,8 @@
 .codexProse h1,.codexProse h2,.codexProse h3,.codexProse h4 { line-height:1.4; margin:26px 0 14px; font-weight:600; }
 .codexProse h1 { font-size:25px; }.codexProse h2 { font-size:21px; }.codexProse h3 { font-size:18px; }
 .codexProse ul,.codexProse ol { padding-left:24px; }.codexProse li { padding-left:4px; margin:10px 0; }.codexProse li > p { margin-bottom:8px; }
+.codexProse .codexTaskItem { list-style:none; }
+.codexTaskCheckbox { min-height:0; margin:0 .45em 0 0; accent-color:var(--chat-accent); }
 .codexProse a { color:var(--chat-accent); text-underline-offset:3px; }.codexProse :not(pre) > code { background:var(--chat-muted); padding:2px 5px; border-radius:5px; font-size:.88em; }
 .codexProse blockquote { border-left:3px solid var(--chat-control-border); margin:16px 0; padding:4px 16px; color:var(--chat-secondary); }.codexProse hr { border:0; border-top:1px solid var(--chat-border); margin:24px 0; }
 .codexTable { overflow-x:auto; margin:20px 0; }.codexTable table { width:100%; border-collapse:collapse; text-align:left; font-size:.94em; }.codexTable th,.codexTable td { padding:13px 16px; border-bottom:1px solid var(--chat-border); min-width:100px; }.codexTable th { color:var(--chat-ink); font-weight:600; }
@@ -124,14 +124,15 @@
 .codexComposer .codexSend:hover:not(:disabled) { background:var(--orbit-accent-hover); }.codexComposer .codexSend:disabled { background:var(--chat-muted); color:var(--chat-secondary); opacity:1; }
 .codexComposer .codexQueueButton { border:0; border-radius:20px; height:38px; min-height:38px; padding:0 10px; color:var(--chat-secondary); font-size:11px; }
 .codexComposerMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px 0; color:var(--chat-secondary); font-size:10px; }
-.codexChat .codexComposerMeta button { background:none; border:0; font-size:11px; min-height:28px; padding:0; color:var(--chat-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.codexChat .codexComposerMeta > button { background:none; border:0; font-size:11px; min-height:28px; padding:0; color:var(--chat-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .codexComposerMeta small { flex-shrink:0; font-size:10px; }
+.codexDesktopDetails .sessionDetailsPopup { top:auto; bottom:calc(100% + 6px); max-height:min(280px,45vh); overflow:auto; }
 .codexShortcutBar { display:flex; align-items:center; gap:6px; padding:8px 2px 0; overflow-x:auto; }.codexShortcutBar button { min-height:36px; border-radius:10px; font-size:12px; }.codexShortcutBar button:last-child { margin-left:auto; }
 .codexControls select,.codexControls input,.codexControls button { background:var(--chat-muted); border-color:var(--chat-control-border); color:var(--chat-ink); }.codexControls input[type=checkbox] { accent-color:var(--chat-accent); }
 .codexChat .codexWork button { background:none; }.codexWork .codexCommand { background:none; color:var(--chat-accent); }.codexWorkHeading { flex-wrap:wrap; }.codexWork .codexCommand { flex-basis:50%; }.codexWorkHeading > button:last-child:not(.codexCommand) { flex:none; }
 @media(max-width:700px) {
   .codexMessages { padding:18px 18px 8px; }.codexMessage { font-size:15px; line-height:1.85; }.codexMessage.userMessage { max-width:92%; padding:11px 17px; }.codexProse h2 { font-size:20px; }
-  .codexComposerArea { padding:8px 12px max(8px,env(safe-area-inset-bottom)); }.codexComposer { border-radius:26px; padding:12px 12px 8px; }.codexComposer textarea { font-size:16px; min-height:30px; }.codexComposer .codexComposerActions { gap:3px; }.codexComposerMeta { padding:3px 7px 0; }.codexComposerMeta small { display:none; }.codexComposerMeta button { max-width:100%; }
+  .codexComposerArea { padding:8px 12px max(8px,env(safe-area-inset-bottom)); }.codexComposer { border-radius:26px; padding:12px 12px 8px; }.codexComposer textarea { font-size:16px; min-height:30px; }.codexComposer .codexComposerActions { gap:3px; }.codexComposerMeta { padding:3px 7px 0; }.codexComposerMeta small { display:none; }.codexComposerMeta > button { max-width:100%; }
   .codexEmpty { padding-top:10vh; }.codexEmpty h2 { font-size:23px; }
 }
 .codexChat { position:relative; }
@@ -150,12 +151,12 @@
     display:inline-flex; flex:none; width:44px; min-height:44px; border:0; padding:0;
     border-radius:50%; background:transparent; color:var(--chat-icon);
   }
+  .codexConnectionTitle { display:grid; gap:3px; }
   .codexConnectionState { font-size:10px; }
-  .codexToolbar { display:none; }
+  .codexConnection .codexReconnect,.codexDesktopDetails { display:none; }
   .codexChat .codexLocationToggle,.codexSessionContext.expanded { margin-inline:14px; }
-  .codexSessionDetails button { min-height:40px; }
   .codexMessages { padding:16px 18px 10px; }.codexMessage { font-size:15px; line-height:1.8; margin-bottom:28px; }.codexMessage.userMessage { max-width:92%; border-radius:21px 6px 21px 21px; padding:10px 15px; }.codexProse h2 { font-size:20px; }.codexCode pre { max-height:220px; }.codexWork { font-size:11px; }.codexWork button { min-height:32px; }.codexWorkHeading { gap:6px; }.codexWork .codexCommand { min-height:28px; }
-  .codexComposerArea { padding:8px 10px max(8px,env(safe-area-inset-bottom)); flex:none; }.codexComposer { border-radius:24px; padding:11px 10px 7px; box-shadow:none; }.codexComposer textarea { min-height:30px; max-height:min(130px,calc(var(--visual-viewport-height) * .24)); font-size:16px; padding:1px 6px 6px; }.codexComposer .codexComposerActions { gap:3px; margin-top:3px; }.codexComposer .codexIconButton,.codexComposer .codexSend { width:44px; height:44px; min-height:44px; }.codexComposer .codexSlashButton { display:none; }.codexComposer .codexQueueButton { min-height:44px; padding:0 8px; font-size:11px; gap:4px; }.codexQueueLabelFull { display:none; }.codexComposer .codexQueueLabelMobile { display:inline; }.codexComposerMeta { gap:7px; padding:3px 6px 0; }.codexComposerMeta button { max-width:calc(100% - 45px); min-height:30px; font-size:11px; }.codexComposerMeta small { display:none; }.codexYolo { margin-right:0; margin-left:auto; }
+  .codexComposerArea { padding:8px 10px max(8px,env(safe-area-inset-bottom)); flex:none; }.codexComposer { border-radius:24px; padding:11px 10px 7px; box-shadow:none; }.codexComposer textarea { min-height:30px; max-height:min(130px,calc(var(--visual-viewport-height) * .24)); font-size:16px; padding:1px 6px 6px; }.codexComposer .codexComposerActions { gap:3px; margin-top:3px; }.codexComposer .codexIconButton,.codexComposer .codexSend { width:44px; height:44px; min-height:44px; }.codexComposer .codexSlashButton { display:none; }.codexComposer .codexQueueButton { min-height:44px; padding:0 8px; font-size:11px; gap:4px; }.codexQueueLabelFull { display:none; }.codexComposer .codexQueueLabelMobile { display:inline; }.codexComposerMeta { gap:7px; padding:3px 6px 0; }.codexComposerMeta > button { max-width:calc(100% - 45px); min-height:30px; font-size:11px; }.codexComposerMeta small { display:none; }.codexYolo { margin-right:0; margin-left:auto; }
   .codexShortcutBar { padding:6px 0 0; gap:5px; }.codexShortcutBar button { min-height:40px; border-radius:10px; font-size:11px; padding:0 10px; }.codexShortcutBar button:last-child { min-width:40px; }.codexSuggestions { max-height:min(230px,calc(var(--visual-viewport-height) * .32)); }.codexSuggestions button { min-height:44px; gap:10px; }.codexSuggestions span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .codexImageDrafts { flex-direction:row; overflow-x:auto; overflow-y:hidden; max-height:110px; scroll-snap-type:x proximity; padding-bottom:3px; }.codexImageDraft { flex:0 0 min(290px,calc(100vw - 40px)); scroll-snap-align:start; padding:9px; }.codexImageDraft button { width:40px; min-height:44px; }.codexImageDraft > img { width:44px; height:44px; }.codexQueue { padding:8px 10px; }.codexQueue ol { max-height:85px; }.codexQueue button { min-height:40px; }.codexApproval button { min-height:44px; }.codexApproval input { font-size:16px; }.codexError button { min-width:40px; min-height:40px; }.codexError { max-height:100px; overflow:auto; }
   .codexControlsBackdrop { top:var(--visual-viewport-top); height:var(--visual-viewport-height); bottom:auto; align-items:flex-end; padding:0; background:var(--orbit-scrim); }.codexControls { width:100%; max-height:90%; border-radius:24px 24px 0 0; padding:16px 18px max(18px,env(safe-area-inset-bottom)); border-bottom:0; box-shadow:0 -12px 40px var(--orbit-shadow); overscroll-behavior:contain; }.codexControls > header { position:sticky; top:-16px; z-index:1; background:var(--chat-surface); padding:4px 0 10px; margin-bottom:8px; gap:8px; }.codexControls header button { width:44px; min-height:44px; padding:0; border-radius:50%; }.codexControls button,.codexControls select,.codexControls input:not([type=checkbox]) { min-height:44px; }.codexControls input:not([type=checkbox]),.codexControls select { font-size:16px; }.codexFields { grid-template-columns:86px minmax(0,1fr); gap:8px 10px; }.codexControls label { margin:12px 0; }.codexResumeList button { min-height:80px; padding:13px; }.codexEmpty { padding:clamp(20px,calc(var(--visual-viewport-height) * .1),85px) 8px 20px; }.codexEmpty h2 { font-size:23px; }.codexEmptyMark { font-size:32px; margin-bottom:12px; }
@@ -195,3 +196,7 @@
 .codexComposer.multiline > textarea { grid-column:1 / -1; grid-row:1; padding-inline:8px; }
 .codexComposer.multiline > .codexImagePicker,
 .codexComposer.multiline > .codexComposerActions { grid-row:2; }
+
+@media (width > 820px) {
+  .codexChat .codexRefresh,.codexChat .codexLocationToggle,.codexSessionContext.expanded { display:none; }
+}

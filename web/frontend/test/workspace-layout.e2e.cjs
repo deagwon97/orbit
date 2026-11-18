@@ -14,7 +14,7 @@ const sessionName = 'Build and test on ARM64';
     for (const width of [320, 390, 1440]) {
       const mobile = width < 821;
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' });
-      let saved, shortcut;
+      let saved, shortcut, deletedSession;
       await page.addInitScript(() => {
         localStorage.setItem('orbit.connections', JSON.stringify([
           { id: 'build', label: 'Build workstation', url: 'http://build.internal:7777', token: 'fixture' },
@@ -29,6 +29,10 @@ const sessionName = 'Build and test on ARM64';
           { id: 'fixture-cli', name: sessionName, tool: 'codex', mode: 'cli', cwd: project, status: 'running', pid: 19234 },
           { id: 'fixture-web', name: '대화 작업', tool: 'codex', mode: 'web', cwd: project, status: 'stopped' }
         ]);
+        if (route.request().method() === 'DELETE' && pathname.endsWith('/sessions/fixture-web')) {
+          deletedSession = 'fixture-web';
+          return fulfill({ ok: true });
+        }
         if (pathname.endsWith('/logs')) return fulfill({
           lines: [{ id: 1, timestamp: '2026-01-01T00:00:00Z', content: 'b3JiaXQgbG9n' }],
           has_more: false, next_after: 1, snapshot_last_id: 1
@@ -56,20 +60,47 @@ const sessionName = 'Build and test on ARM64';
         });
       });
       await page.goto(webUrl);
-      const themeToggle = page.getByRole('button', { name: 'Dark mode', exact: true });
+      const menuButton = page.getByRole('button', { name: 'Orbit menu', exact: true });
+      const menu = page.getByRole('dialog', { name: 'Orbit menu', exact: true });
+      const themeToggle = menu.getByRole('button', { name: 'Dark mode', exact: true });
       const scheme = () => page.locator('html').evaluate(el => getComputedStyle(el).colorScheme);
+      async function openMenu() {
+        await menuButton.click();
+        await menu.waitFor();
+        await page.waitForFunction(() => !!history.state?.orbitModal);
+      }
+      async function waitForMenuClose() {
+        await menu.waitFor({ state: 'hidden' });
+        await page.waitForFunction(() => !history.state?.orbitModal);
+      }
+      async function closeMenu() {
+        await menu.getByRole('button', { name: 'Close Orbit menu' }).click();
+        await waitForMenuClose();
+      }
       assert.equal(await scheme(), 'dark');
+      assert.equal(await page.locator('.app > .toolbar').count(), 0);
+      assert.equal(await page.locator('#session-list-pane').getByText('Orbit', { exact: true }).count(), 1);
+      await openMenu();
+      assert.equal(await menu.getByRole('button', { name: 'Build workstation', exact: true }).getAttribute('aria-current'), 'true');
+      await menu.getByText('http://build.internal:7777', { exact: true }).waitFor();
+      assert.equal(await menu.evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
       await themeToggle.click();
+      assert.equal(await scheme(), 'light');
+      await page.keyboard.press('Escape');
+      await waitForMenuClose();
+      assert(await menuButton.evaluate(el => document.activeElement === el));
       await page.reload();
+      await openMenu();
       assert.equal(await themeToggle.getAttribute('aria-pressed'), 'false');
       assert.equal(await scheme(), 'light');
       await themeToggle.click();
       assert.equal(await themeToggle.getAttribute('aria-pressed'), 'true');
       assert.equal(await scheme(), 'dark');
+      await page.goBack();
+      await waitForMenuClose();
       await page.reload();
-      assert.equal(await themeToggle.getAttribute('aria-pressed'), 'true');
       assert.equal(await scheme(), 'dark');
-      const row = page.getByRole('button', { name: new RegExp(sessionName) });
+      const row = page.locator('.sessions .row').filter({ hasText: sessionName });
       await row.waitFor();
       assert.match(await row.innerText(), /running\s+CLI/);
       const overflow = selector => page.locator(selector).evaluate(el => el.scrollWidth > el.clientWidth + 1);
@@ -111,7 +142,8 @@ const sessionName = 'Build and test on ARM64';
         const initialTerminalWidth = (await terminal.boundingBox()).width;
         await hideSessions.click();
         const showSessions = page.getByRole('button', { name: 'Show session list' });
-        assert(await showSessions.evaluate(button => button.closest('.toolbar') !== null));
+        assert(await showSessions.evaluate(button => getComputedStyle(button).position === 'absolute' && !!button.closest('.sessionWorkPane')));
+        assert.equal(await menuButton.isVisible(), false);
         assert.equal(await showSessions.getAttribute('aria-expanded'), 'false');
         assert.equal(await pane.isVisible(), false);
         assert.equal(await divider.isVisible(), false);
@@ -146,6 +178,20 @@ const sessionName = 'Build and test on ARM64';
         await terminal.getByRole('button', { name: 'Back to Sessions' }).click();
         await row.waitFor();
         assert.equal(await page.evaluate(() => !!history.state?.orbitDetail), false);
+      } else {
+        const otherCard = page.locator('.sessionCard').filter({ hasText: '대화 작업' });
+        await otherCard.getByLabel('Actions for 대화 작업').click();
+        assert.equal(await otherCard.getByRole('button', { name: 'Detach', exact: true }).count(), 0);
+        await otherCard.getByRole('button', { name: 'Delete session', exact: true }).click();
+        await otherCard.waitFor({ state: 'hidden' });
+        assert.equal(deletedSession, 'fixture-web');
+        assert.equal(await row.getAttribute('aria-current'), 'true');
+        await terminal.waitFor();
+        const card = page.locator('.sessionCard').filter({ hasText: sessionName });
+        await card.getByLabel(`Actions for ${sessionName}`).click();
+        await card.getByRole('button', { name: 'Detach', exact: true }).click();
+        await terminal.waitFor({ state: 'hidden' });
+        await row.waitFor();
       }
 
       await page.getByRole('button', { name: 'Files', exact: true }).click();
@@ -171,19 +217,27 @@ const sessionName = 'Build and test on ARM64';
         await code.fill('const unsaved = 2;');
         const syntaxColor = () => code.getByText('const', { exact: true }).evaluate(el => getComputedStyle(el).color);
         assert.equal(await syntaxColor(), 'rgb(154, 191, 255)');
+        await openMenu();
         await themeToggle.click();
         assert.equal(await scheme(), 'light');
         assert.equal(await syntaxColor(), 'rgb(0, 0, 255)');
         assert.equal(await code.innerText(), 'const unsaved = 2;');
         await themeToggle.click();
+        await closeMenu();
       }
-      await page.getByRole('button', { name: /Orbitd connections/ }).click();
-      await page.getByRole('button', { name: 'Home workstation', exact: true }).click();
-      await page.getByRole('button', { name: 'Orbitd connections · Home workstation' }).waitFor();
+      await openMenu();
+      await menu.getByRole('button', { name: 'Home workstation', exact: true }).click();
+      await waitForMenuClose();
+      await openMenu();
+      assert.equal(await menu.getByRole('button', { name: 'Home workstation', exact: true }).getAttribute('aria-current'), 'true');
       await themeToggle.click();
-      await page.reload();
-      assert.equal(await themeToggle.getAttribute('aria-pressed'), 'false');
+      await Promise.all([
+        page.waitForEvent('load'),
+        menu.getByRole('button', { name: 'Refresh', exact: true }).click()
+      ]);
       assert.equal(await scheme(), 'light');
+      await menuButton.waitFor();
+      assert.equal(await menu.count(), 0);
       await page.close();
     }
     console.log('Workspace layout passed at 320, 390 and 1440 pixels');
