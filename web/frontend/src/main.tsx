@@ -827,22 +827,11 @@ function App() {
   }, []);
 
   const mobileChatDetail = detailOpen && selected?.mode === "web" && !fileEditorOpen && !connectionsOpen;
-  useDialogHistory(() => setMobileChromeOpen(false), !!mobileChatDetail && mobileChromeOpen);
   if (!authed) return <Login onLogin={addConnection} />;
   return <main className={`app${mobileChatDetail ? " mobileChatDetail" : ""}${detailOpen ? " mobileDetailOpen" : ""}${mobileChromeOpen ? " mobileChromeOpen" : ""}`}>
-    {detailOpen && <button className="mobileChromeToggle" title="Show navigation" aria-label={mobileChromeOpen ? "탐색 메뉴 닫기" : "탐색 메뉴 열기"} aria-expanded={mobileChromeOpen} onClick={() => setMobileChromeOpen((value) => !value)}>
+    {detailOpen && !mobileChatDetail && <button className="mobileChromeToggle" title="Show navigation" aria-label={mobileChromeOpen ? "탐색 메뉴 닫기" : "탐색 메뉴 열기"} aria-expanded={mobileChromeOpen} onClick={() => setMobileChromeOpen((value) => !value)}>
       {mobileChromeOpen ? <X size={18} /> : <Menu size={18} />}
     </button>}
-    {mobileChatDetail && mobileChromeOpen && <div className="mobileChatNavBackdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setMobileChromeOpen(false);}}>
-      <nav className="mobileChatNav" role="dialog" aria-modal="true" aria-label="모바일 탐색" onKeyDown={event=>{if(event.key==="Escape")setMobileChromeOpen(false);if(event.key==="Tab"){const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));const first=buttons[0],last=buttons.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}}}>
-        <header><strong>Orbit</strong><button aria-label="모바일 탐색 닫기" onClick={()=>setMobileChromeOpen(false)}><X size={18}/></button></header>
-        <small>{selected.connection.label}</small>
-        <button autoFocus onClick={()=>{setMobileChromeOpen(false);setDetailOpen(false);}}><TerminalIcon size={18}/>세션 목록</button>
-        <button onClick={()=>{setMobileChromeOpen(false);setFileEditorOpen(true);setDetailOpen(false);}}><FolderOpen size={18}/>파일 탐색</button>
-        <button onClick={()=>{setMobileChromeOpen(false);setCreateOpen(true);}}><Plus size={18}/>새 세션</button>
-        <button onClick={()=>{setMobileChromeOpen(false);setConnectionsOpen(true);setDetailOpen(false);}}><Server size={18}/>서버 관리</button>
-      </nav>
-    </div>}
     <section className="toolbar">
       <strong>Orbit</strong>
       <div className="toolbarActions">
