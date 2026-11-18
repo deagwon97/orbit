@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, ChevronLeft, GitFork, Info, ListPlus, RefreshCcw, Server, Slash, SlidersHorizontal, Square } from 'lucide-react';
+import { ArrowUp, ChevronLeft, GitFork, Info, ListPlus, RefreshCcw, Slash, SlidersHorizontal, Square } from 'lucide-react';
 import { Marked, Tokenizer, type Token, type Tokens } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
@@ -9,6 +9,9 @@ import { CodexWorking } from './CodexWorking';
 import { CodexControls } from './CodexControls';
 import { suggestions, isCommand, type ConversationCommand } from './codex-command-input';
 import type { Session as OrbitSession } from './main';
+
+const RECONNECT_DELAY_MS = 5000;
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 type Session = { id: string; key: string; name: string; cwd: string; status: string; codex_thread_id?: string | null; connection: { label: string; url: string; token: string } };
 const chatMarkdown = new Marked({
@@ -140,7 +143,9 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
 }) {
   const state = useRef(newChatState()), socket = useRef<WebSocket | null>(null), counter = useRef(0);
   const pending = useRef(new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void; since: number; op: string; older: boolean; timer: number }>());
-  const [version, setVersion] = useState(0), [epoch, setEpoch] = useState(0), [connection, setConnection] = useState('connecting');
+  const [version, setVersion] = useState(0), [epoch, setEpoch] = useState(0);
+  const [connection, setConnection] = useState<'connecting' | 'ready' | 'offline' | 'stopped'>('connecting');
+  const reconnectAttempts = useRef(0);
   const [draft, setDraftValue] = useState(''), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
   const inputHistory = useRef<{ entries: string[]; index: number; draft: string } | null>(null);
   function setDraft(value: React.SetStateAction<string>) {
@@ -162,7 +167,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const hasUnsentInput = useRef(false);
   hasUnsentInput.current = !!draft || availableImages.length > 0;
   const [dragging,setDragging] = useState(false); const dragDepth=useRef(0);
-  const [locationOpen,setLocationOpen] = useState(false), [background,setBackground] = useState<any[]>([]);
+  const [background,setBackground] = useState<any[]>([]);
   useEffect(()=>{
     if(connection!=='ready'||!state.current.capabilities.commands)return;
     let disposed=false,busy=false;
@@ -222,32 +227,59 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
     });
   }
   useEffect(() => {
-    let disposed = false; setConnection('connecting'); setError('');
+    let disposed = false;
+    let failed = false;
+    let retryTimer: number | undefined;
+    setConnection('connecting');
+    setError('');
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${location.host}/api/v1/sessions/${encodeURIComponent(session.id)}/codex?token=${encodeURIComponent(session.connection.token)}&orbitd=${encodeURIComponent(session.connection.url)}`);
     socket.current = ws;
+
+    function clearPending(message: string) {
+      for (const entry of pending.current.values()) {
+        clearTimeout(entry.timer);
+        entry.reject(new Error(message));
+      }
+      pending.current.clear();
+    }
+
+    function disconnect(message?: string) {
+      if (disposed || failed) return;
+      failed = true;
+      if (message) setError(message);
+      socket.current = null;
+      clearPending('연결이 종료되었습니다. 전송 여부는 대화 이력에서 확인하세요.');
+      ws.close();
+
+      if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+        setConnection('stopped');
+        return;
+      }
+      setConnection('offline');
+      retryTimer = window.setTimeout(() => {
+        reconnectAttempts.current++;
+        setEpoch(value => value + 1);
+      }, RECONNECT_DELAY_MS);
+    }
+
     ws.onmessage = event => {
-      if (disposed) return;
+      if (disposed || failed) return;
       let message: any; try { message = JSON.parse(event.data); } catch { return; }
       const s = state.current;
       if (message.type === 'ready') {
         if (message.session?.id === session.id) onSessionChange(message.session);
         applyLiveState(s, message.state, s.revision);
         void request({ op: 'history' }).then(() => {
-          if (disposed) return;
+          if (disposed || failed) return;
+          reconnectAttempts.current = 0;
           setConnection('ready');
           if (s.capabilities.commands) {
             void request({ op: 'command', command: '/help' })
-              .then(result => { if (!disposed) setCommands(result.commands); })
-              .catch(error => { if (!disposed) setError(String(error)); });
+              .then(result => { if (!disposed && !failed) setCommands(result.commands); })
+              .catch(error => { if (!disposed && !failed) setError(String(error)); });
           }
-        }).catch(error => {
-          if (!disposed) {
-            setError(String(error));
-            setConnection('offline');
-            ws.close();
-          }
-        });
+        }).catch(error => disconnect(String(error)));
       } else if (message.type === 'result' || message.type === 'error') {
         const entry = pending.current.get(message.id);
         if (entry) {
@@ -263,21 +295,18 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       else if (message.type === 'request') { s.approvals.set(JSON.stringify(message.message.id), message.message); s.approvalsRevision = ++s.revision; }
       else if (message.type === 'resolved') { s.approvals.delete(JSON.stringify(message.requestId)); s.approvalsRevision = ++s.revision; }
       else if (message.type === 'resync') {
-        void request({ op: 'history' }).catch(e => { if (!disposed) setError(String(e)); });
-      } else if (message.type === 'disconnected') { setError(message.error); setConnection('offline'); }
+        void request({ op: 'history' }).catch(e => { if (!disposed && !failed) setError(String(e)); });
+      } else if (message.type === 'disconnected') disconnect(message.error);
       refresh();
     };
-    ws.onerror = () => { if (!disposed) setError('Codex 연결에 실패했습니다. 실행 호스트의 orbitd와 Codex 데몬을 확인하세요.'); };
-    ws.onclose = () => {
-      if (disposed) return;
-      for (const entry of pending.current.values()) { clearTimeout(entry.timer); entry.reject(new Error('연결이 종료되었습니다. 전송 여부는 대화 이력에서 확인하세요.')); }
-      pending.current.clear();
-      if (!disposed) setConnection('offline');
-    };
+    ws.onerror = () => disconnect('Codex 연결에 실패했습니다. 실행 호스트의 orbitd와 Codex 데몬을 확인하세요.');
+    ws.onclose = () => disconnect();
     return () => {
       disposed = true;
-      for (const entry of pending.current.values()) { clearTimeout(entry.timer); entry.reject(new Error('세션 연결을 닫았습니다.')); }
-      pending.current.clear(); ws.close(); if (socket.current === ws) socket.current = null;
+      window.clearTimeout(retryTimer);
+      clearPending('세션 연결을 닫았습니다.');
+      ws.close();
+      if (socket.current === ws) socket.current = null;
     };
   }, [session.key, epoch]);
   useLayoutEffect(() => { if (following.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }, [version, connection]);
@@ -432,16 +461,10 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       <button type="button" className="codexMobileBack" aria-label="세션 목록으로 돌아가기" onClick={onBack}><ChevronLeft size={22} /></button>
       <div className="codexConnectionTitle">
         <strong title={session.name}>{session.name}</strong>
-        <span className="codexConnectionState" data-state={connection}>{connection === 'ready' ? session.status === 'running' ? 'Codex 연결됨' : '종료된 세션 · 이력 조회' : connection === 'connecting' ? '연결 중…' : '연결 끊김'}</span>
+        <span className="codexConnectionState" data-state={connection}>{connection === 'ready' ? session.status === 'running' ? 'Codex 연결됨' : '종료된 세션 · 이력 조회' : connection === 'connecting' ? '연결 중…' : connection === 'stopped' ? '연결 중단' : '연결 끊김'}</span>
       </div>
-      {connection === 'offline' && <button type="button" className="codexReconnect" onClick={() => setEpoch(v => v + 1)}>다시 연결</button>}
       <button type="button" className="codexMobileCommands" aria-label="대화 명령 열기" disabled={connection !== 'ready' || commandBusy || !s.capabilities.commands} onClick={() => void runCommand('/help')}><SlidersHorizontal size={19} /></button>
-      <button type="button" className="codexRefresh" aria-label="대화 새로고침" title="대화 새로고침" disabled={connection === 'connecting'} onClick={() => setEpoch(v => v + 1)}><RefreshCcw size={19} /></button>
-    </div>
-    <button type="button" className="codexLocationToggle" aria-expanded={locationOpen} aria-controls="codex-execution-location" onClick={()=>setLocationOpen(!locationOpen)}><Server size={13}/><strong>{session.connection.label || host}</strong><span>{cwd?.split('/').filter(Boolean).at(-1) || '/'}</span><ChevronDown size={14}/></button>
-    <div id="codex-execution-location" className={`codexSessionContext${locationOpen ? ' expanded' : ''}`} aria-label="현재 세션 실행 위치">
-      <span className="codexMode">Web</span><strong title={session.connection.url}>{session.connection.label || host}</strong><span className="codexHost" title={host}>{host}</span><span className="codexCwd" title={cwd}>{cwd}</span>
-      <div className="codexSessionDetails">{sessionDetails}</div>
+      <button type="button" className="codexRefresh" aria-label="대화 새로고침" title="대화 새로고침" disabled={connection === 'connecting'} onClick={() => { reconnectAttempts.current = 0; setEpoch(v => v + 1); }}><RefreshCcw size={19} /></button>
     </div>
     <div className="codexMessages" ref={scroller} onScroll={() => { const n = scroller.current!; following.current = n.scrollHeight - n.scrollTop - n.clientHeight < 60; setShowLatest(!following.current); }}>
       {s.nextCursor && <button disabled={historyBusy} className="codexOlder" onClick={() => void older()}>Load earlier messages</button>}

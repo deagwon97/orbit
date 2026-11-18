@@ -1,12 +1,14 @@
 // Browser layout, Back navigation and interrupt checks; no model calls.
 const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
 (async()=>{
- const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let session,active=true,wsClient;
+ const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let session,active=true,wsClient,wsAttempts=0,failConnections=false;
  const startedAt=Math.floor((Date.now()-234000)/1000),settings={model:'gpt-6.1-sol-long-model-name-layout-check',effort:'medium',serviceTier:'priority',approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'},cwd:'/home/bdg/project/a-very-long-project-folder/mobile-layout-and-working-status-validation'};
  const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,resume:true},approvals:[],queue:{items:[],version:0,paused:false}});
  const limits={rateLimits:{limitName:'Codex',primary:{usedPercent:20,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+86400}}};
  const commands=[{name:'status',description:'세션 상태',duringTask:true},{name:'model',description:'모델 선택',duringTask:true},{name:'resume',description:'이전 대화',duringTask:true},{name:'help',description:'명령 안내',duringTask:true}];
- await page.routeWebSocket('**/api/v1/sessions/*/codex?*',ws=>{wsClient=ws;ws.send(JSON.stringify({type:'ready',state:snapshot()}));ws.onMessage(raw=>{
+ await page.routeWebSocket('**/api/v1/sessions/*/codex?*',ws=>{wsClient=ws;wsAttempts++;
+  if(failConnections){void ws.close({code:1011,reason:'QA unavailable'});return;}
+  ws.send(JSON.stringify({type:'ready',state:snapshot()}));ws.onMessage(raw=>{
   const b=JSON.parse(String(raw));ops.push(b);let result={};
   if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'}]}]},state:snapshot()};
   if(b.op==='command'){if(b.command==='/help')result={type:'help',commands};else if(b.command==='/status')result={type:'status',threadId:'12345678-1234-4234-8234-123456789012',state:snapshot()};else if(b.command==='/usage')result={type:'usage',...limits};else if(b.command==='/model')result={type:'model',state:snapshot(),models:[{id:settings.model,model:settings.model,supportedReasoningEfforts:[{reasoningEffort:'medium',description:'Medium'}]}]};else result={type:'resume',data:[],state:snapshot()};}
@@ -19,7 +21,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.goto(c.webUrl);await page.evaluate(c=>{localStorage.setItem('orbit.connections',JSON.stringify([{id:'mobile-ui',label:'Home workstation with a long host name',url:c.orbitdUrl,token:c.token}]));localStorage.setItem('orbit.activeConnection','mobile-ui');},c);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByLabel('Name',{exact:true}).fill(name);await dialog.getByPlaceholder('cwd',{exact:true}).fill(c.cwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor({timeout:60000});
   session=await page.evaluate(async({c,name})=>{const r=await fetch('/api/v1/sessions',{headers:{Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl}});return(await r.json()).find(s=>s.name===name);},{c,name});await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
   await assertFit('mobile');const time=await page.locator('.codexWorking time').innerText();if(!/3m|4m/.test(time))throw Error('Working timer did not use turn start');await page.waitForFunction(before=>document.querySelector('.codexWorking time').textContent!==before,time);if(await page.getByText('Reasoning summary',{exact:true}).count())throw Error('Empty reasoning shown');
-  await page.locator('.codexLocationToggle').click();await page.locator('.codexSessionContext').getByText(settings.cwd,{exact:true}).waitFor();await page.locator('.codexLocationToggle').click();
+  if(await page.locator('.codexChat > .codexConnection + .codexMessages').count()!==1)throw Error('Mobile chat header still has an extra location row');
   if(await page.getByRole('button',{name:'탐색 메뉴 열기',exact:true}).count())throw Error('Redundant chat navigation menu remains');
   const before=await page.locator('.codexMessages').boundingBox(),historyCount=ops.filter(o=>o.op==='history').length;
   await page.getByRole('textbox',{name:'Codex 메시지'}).fill('새로고침 중 유지할 입력');await page.getByRole('button',{name:'대화 새로고침',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.codexConnectionState')?.dataset.state==='ready');if(ops.filter(o=>o.op==='history').length<=historyCount)throw Error('Refresh did not reload history');if(await page.getByRole('textbox',{name:'Codex 메시지'}).inputValue()!=='새로고침 중 유지할 입력')throw Error('Refresh lost draft');await page.getByRole('textbox',{name:'Codex 메시지'}).fill('');const after=await page.locator('.codexMessages').boundingBox();if(before.height!==after.height)throw Error('Refresh changes chat layout');
@@ -55,25 +57,47 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(!ops.some(o=>o.op==='steer'&&o.text==='첫 줄\n두 번째 줄\n세 번째 줄'))throw Error('Multiline payload did not preserve newlines');
   if(await page.locator('.codexComposer.multiline').count())throw Error('Composer did not collapse after sending');
   await page.setViewportSize({width:1440,height:1000});
-  const header=page.locator('.codexConnection'),location=page.locator('.codexLocationToggle');
+  const header=page.locator('.codexConnection');
   await header.getByText(name,{exact:true}).waitFor();
   await header.getByText('Codex 연결됨',{exact:true}).waitFor();
-  if(await header.locator('button:visible').count()||await location.isVisible())throw Error('Desktop header still displays shortcuts or location controls');
+  if(await header.locator('button:visible').count())throw Error('Desktop header still displays shortcuts');
   const details=page.locator('.codexDesktopDetails');
   await details.locator('summary').click();
   await details.getByText(settings.cwd,{exact:true}).waitFor();
   if(await details.getByRole('button',{name:/^(Detach|Delete session)$/}).count())throw Error('Session actions still appear in chat details');
   await details.locator('summary').press('Escape');
   await details.getByText(settings.cwd,{exact:true}).waitFor({state:'hidden'});
+  await page.clock.install();
   const beforeReconnect=ops.filter(o=>o.op==='history').length;
+  const beforeAttempts=wsAttempts;
   await box.fill('다시 연결한 뒤에도 유지할 입력');
   wsClient.send(JSON.stringify({type:'disconnected',error:'QA disconnect'}));
   await header.getByText('연결 끊김',{exact:true}).waitFor();
-  const reconnect=header.getByRole('button',{name:'다시 연결',exact:true});
-  await reconnect.click();
+  if(await header.getByRole('button',{name:'다시 연결',exact:true}).count()||wsAttempts!==beforeAttempts)throw Error('Reconnect was manual or immediate');
+  await page.clock.fastForward(5000);
   await header.getByText('Codex 연결됨',{exact:true}).waitFor();
-  if(await reconnect.isVisible()||ops.filter(o=>o.op==='history').length<=beforeReconnect)throw Error('Desktop reconnect did not reload history');
-  if(await box.inputValue()!=='다시 연결한 뒤에도 유지할 입력')throw Error('Desktop reconnect lost draft');
+  if(wsAttempts!==beforeAttempts+1||ops.filter(o=>o.op==='history').length<=beforeReconnect)throw Error('Automatic reconnect did not reload history');
+  if(await box.inputValue()!=='다시 연결한 뒤에도 유지할 입력')throw Error('Reconnect lost draft');
+
+  failConnections=true;
+  const beforeFailures=wsAttempts;
+  await wsClient.close({code:1011,reason:'QA unavailable'});
+  const disconnected=header.locator('[data-state="offline"]');
+  for(let attempt=1;attempt<=5;attempt++){
+    await disconnected.waitFor();
+    await page.clock.fastForward(5000);
+    await header.locator(`[data-state="${attempt===5?'stopped':'offline'}"]`).waitFor();
+    if(wsAttempts!==beforeFailures+attempt)throw Error('Incorrect retry count after disconnect');
+  }
+  await header.getByText('연결 중단',{exact:true}).waitFor();
+  await page.clock.fastForward(10000);
+  if(wsAttempts!==beforeFailures+5)throw Error('Reconnect continued after five failures');
+  failConnections=false;
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole('button',{name:'대화 새로고침',exact:true}).click();
+  await header.getByText('Codex 연결됨',{exact:true}).waitFor();
+  if(await box.inputValue()!=='다시 연결한 뒤에도 유지할 입력')throw Error('Refresh from stopped state lost draft');
+  await page.setViewportSize({width:1440,height:1000});
   await command('/status');dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.getByRole('meter',{name:'Codex Weekly limit',exact:true}).waitFor();await assertFit('desktop status');await page.screenshot({path:'/workspace/output/orbit-status-desktop.png'});await page.goBack();await dialog.waitFor({state:'hidden'});await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   const interrupts=ops.filter(o=>o.op==='interrupt').length;await command('/help');await page.getByRole('dialog',{name:'대화 명령'}).waitFor();await page.getByRole('dialog').press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts)throw Error('Closing dialog interrupts work');
   await page.getByRole('textbox',{name:'Codex 메시지'}).focus();await page.getByRole('textbox',{name:'Codex 메시지'}).press('Escape');await page.locator('.codexWorking').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts+1)throw Error('Esc did not interrupt the active turn');
@@ -94,7 +118,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await actions.click();
   await card.getByRole('button',{name:'Delete session',exact:true}).click();
   await card.waitFor({state:'hidden'});
-  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,compactDesktopHeader:true,desktopReconnect:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true,listDetachAndDelete:true}));
+  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,compactDesktopHeader:true,automaticReconnect:true,reconnectStopsAfterFive:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,mobileLocationRowRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true,listDetachAndDelete:true}));
  }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText().catch(()=>'' )).slice(-1200));await page.screenshot({path:'/workspace/output/orbit-mobile-error.png'});throw e;}
  finally{await page.evaluate(async({c,id,name})=>{const headers={Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl};if(!id){const r=await fetch('/api/v1/sessions',{headers});if(r.ok)id=(await r.json()).find(s=>s.name===name)?.id;}if(id)await fetch('/api/v1/sessions/'+id,{method:'DELETE',headers});},{c,id:session?.id,name}).catch(()=>{});await browser.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

@@ -83,8 +83,6 @@ const {chromium} = require('/app/node_modules/playwright');
   await mock.setViewportSize({width:390,height:844});
   if(await mock.getByRole('button',{name:'키보드와 단축키'}).count())throw Error('Keyboard button remains');
   await mock.getByRole('textbox',{name:'Codex 메시지'}).fill('이 부분도 함께 확인해줘');
-  await mock.locator('.codexLocationToggle').click();
-  if(!(await mock.locator('.codexSessionContext').innerText()).includes('/home/bdg/project/agent-analysis'))throw Error('Execution location missing');
   if(await mock.locator('.codexComposerMeta > button').innerText()!=='GPT-6.1-Sol · medium · Fast')throw Error('Model status missing');
   if(await mock.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('Mobile chat overflow');
   await mock.locator('.codexMessages').evaluate(n=>n.scrollTop=0);await mock.screenshot({path:'/workspace/output/codex-design-mobile.png'});
