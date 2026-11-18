@@ -152,7 +152,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   .sessionWorkPane .floatingSessionListToggle {
     position: absolute;
     z-index: 4;
-    inset: 18px auto auto 18px;
+    inset: 6px auto auto 6px;
     display: inline-flex;
     width: 36px;
     min-height: 32px;
@@ -288,6 +288,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .orbitServerIdentity code { color: var(--orbit-secondary); font-size: 11px; }
 
 .workPane { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
+.workPane.sessionWorkPane { padding: 0; }
 .detailBackButton { display: none; }
 .terminalBox { flex: 1; height: 100%; min-height: 0; display: flex; flex-direction: column; background: #101214; color: white; border-radius: 8px; overflow: hidden; }
 .terminalTop {
@@ -1135,7 +1136,5 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .ansiup .ansi-bright-cyan { color: #34e2e2; }
 .ansiup .ansi-bright-white { color: #eeeeec; }
 
-.terminalBox.codexSessionPane { background: var(--chat-surface); color: var(--chat-ink); border: 1px solid var(--chat-border); }
-@media(max-width:820px) {
-  .mobileDetailOpen .terminalBox.codexSessionPane { border: 0; }
-}
+.sessionWorkPane > .terminalBox { border-radius: 0; }
+.terminalBox.codexSessionPane { background: var(--chat-surface); color: var(--chat-ink); }

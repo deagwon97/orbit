@@ -59,6 +59,10 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.setViewportSize({width:1440,height:1000});
   const header=page.locator('.codexConnection');
   await header.getByText(name,{exact:true}).waitFor();
+  if(!await page.locator('.codexSessionPane').evaluate(panel=>{
+    const outer=panel.parentElement.getBoundingClientRect(),inner=panel.getBoundingClientRect();
+    return ['top','left','right','bottom'].every(edge=>Math.abs(outer[edge]-inner[edge])<1)&&getComputedStyle(panel).borderRadius==='0px';
+  }))throw Error('Chat panel has outer spacing');
   await header.getByText('Codex 연결됨',{exact:true}).waitFor();
   if(await header.locator('button:visible').count())throw Error('Desktop header still displays shortcuts');
   const details=page.locator('.codexDesktopDetails');
