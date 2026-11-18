@@ -92,9 +92,17 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    }).length);
    if(completeRows!==3)throw Error('Queue rows or cancel buttons are cut off at '+width);
   }
-  await page.evaluate(()=>{document.documentElement.dataset.keyboardOpen='true';});
+  await page.evaluate(()=>{
+   Object.defineProperty(window.visualViewport,'height',{configurable:true,get:()=>440});
+   window.visualViewport.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForFunction(()=>document.documentElement.dataset.keyboardOpen==='true');
   if(await queueRows.locator('visible=true').count()!==1)throw Error('Keyboard queue preview should show one complete row');
-  await page.evaluate(()=>{delete document.documentElement.dataset.keyboardOpen;});
+  await page.evaluate(()=>{
+   delete window.visualViewport.height;
+   window.visualViewport.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForFunction(()=>document.documentElement.dataset.keyboardOpen==='false');
   updateQueue(queued);
   await queuePanel.getByText('대기 메시지 4개',{exact:true}).waitFor();
   await queuePanel.getByRole('button',{name:'전체 보기'}).click();
@@ -162,6 +170,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(!ops.some(op=>op.op==='steer'&&op.text===''&&JSON.stringify(op.files)===JSON.stringify(['notes.txt','table.csv','report.pdf'])))throw Error('General files were not sent for Codex input');
 
 
+  await page.getByRole('button',{name:'Interrupt current task',exact:true}).waitFor();
   await assertFit('mobile');const time=await page.locator('.codexWorking time').innerText();if(!/3m|4m/.test(time))throw Error('Working timer did not use turn start');await page.waitForFunction(before=>document.querySelector('.codexWorking time').textContent!==before,time);if(await page.getByText('Reasoning summary',{exact:true}).count())throw Error('Empty reasoning shown');
   if(await page.locator('.codexChat > .codexConnection + .codexMessages').count()!==1)throw Error('Mobile chat header still has an extra location row');
   if(await page.getByRole('button',{name:'탐색 메뉴 열기',exact:true}).count())throw Error('Redundant chat navigation menu remains');
@@ -199,6 +208,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(!ops.some(o=>o.op==='steer'&&o.text==='첫 줄\n두 번째 줄\n세 번째 줄'))throw Error('Multiline payload did not preserve newlines');
   if(await page.locator('.codexComposer.multiline').count())throw Error('Composer did not collapse after sending');
   await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'Interrupt',exact:true}).waitFor();
+  if(await page.getByRole('button',{name:'Interrupt current task',exact:true}).count())throw Error('Desktop shows a duplicate interrupt control');
   if(!await mic.isVisible()||await page.getByRole('button',{name:'명령 선택',exact:true}).count())throw Error('Desktop voice button did not replace the slash shortcut');
   await mic.click();
   await stopMic.press('Escape');
