@@ -10,6 +10,7 @@ import { CodexControls } from './CodexControls';
 import { suggestions, isCommand, type ConversationCommand } from './codex-command-input';
 import type { Session as OrbitSession } from './main';
 import { useVoiceInput } from './codex-voice-input';
+import { useDialogHistory } from './dialog-history';
 
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -135,6 +136,61 @@ function Approval({ request, item, reply }: { request: any; item?: CodexItem; re
     {error && <p role="alert">{error}</p>}
   </section>;
 }
+const queuePreviewLimit = 3;
+
+function MessageQueue({ queue, disabled, error, action }: {
+  queue: ReturnType<typeof newChatState>['queue'];
+  disabled: boolean;
+  error: string;
+  action: (op: string, entryId?: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const close = () => setOpen(false);
+  useDialogHistory(close, open);
+  useLayoutEffect(() => {
+    const panel = dialog.current;
+    if (!open || !panel) return;
+    panel.showModal();
+    return () => panel.close();
+  }, [open]);
+
+  const { items, paused } = queue;
+  const title = `대기 메시지 ${items.length}개${paused ? ' · 일시 중지' : ''}`;
+  const resume = paused && <button type="button" disabled={disabled} onClick={() => void action('queue/resume')}>대기열 다시 시작</button>;
+  const rows = (entries: typeof items) => <ol>{entries.map(entry => {
+    const count = (entry.images?.length ?? 0) + (entry.files?.length ?? 0);
+    const text = [count ? `첨부 ${count}개` : '', entry.text].filter(Boolean).join(' · ');
+    return <li key={entry.id}>
+      <span title={text}>{text}</span>
+      <button type="button" disabled={disabled} onClick={() => void action('queue/remove', entry.id)}>취소</button>
+    </li>;
+  })}</ol>;
+
+  return <section className="codexQueue" aria-label="대기 메시지">
+    <header>
+      <strong>{title}</strong>
+      <div className="codexQueueActions">
+        {resume}
+        <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)}>전체 보기</button>
+      </div>
+    </header>
+    {queue.error && <p>{queue.error}</p>}
+    {rows(items.slice(0, queuePreviewLimit))}
+    {open && <dialog className="workspaceDialog codexQueueDialog" ref={dialog} aria-label="대기 메시지 전체 보기"
+      onCancel={event => { event.preventDefault(); close(); }}
+      onClick={event => { if (event.target === event.currentTarget) close(); }}
+    >
+      <div className="codexQueueDialogBody">
+        <header><strong>{title}</strong><button type="button" autoFocus onClick={close}>닫기</button></header>
+        {(queue.error || error) && <p role="alert">{queue.error || error}</p>}
+        {resume}
+        {rows(items)}
+      </div>
+    </dialog>}
+  </section>;
+}
+
 export function CodexChat({ session, onSessionChange, onSessionFork, onBack, sessionDetails }: {
   session: Session;
   onSessionChange: (session: OrbitSession) => void;
@@ -505,7 +561,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
       {submissions.length>0&&<section className="codexSubmissions" aria-label="전송 중인 입력">{submissions.map(entry=><div className={entry.status} key={entry.id}><header><strong>{entry.status==='sending'?'전송 확인 중':'전송 확인 실패'}</strong>{entry.status==='failed'&&<><button type="button" onClick={()=>void restoreSubmission(entry)}>입력으로 복원</button><button type="button" aria-label="입력 기록 닫기" onClick={()=>changeSubmissions(items=>items.filter(item=>item.id!==entry.id))}>×</button></>}</header><p>{entry.text}{entry.attachments.length?` · 첨부 ${entry.attachments.length}개`:''}</p>{entry.error&&<small>{entry.error}</small>}</div>)}</section>}
       {queueTurn&&<div className="codexInputHint">리뷰·문맥 압축 중인 입력은 다음 턴에 전달합니다.</div>}
       {showLatest && <button className="codexLatest" onClick={() => { following.current = true; setShowLatest(false); if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; }}>↓ Jump to latest</button>}
-      {s.queue.items.length > 0 && <section className="codexQueue" aria-label="대기 메시지"><header><strong>대기 메시지 {s.queue.items.length}개{s.queue.paused ? ' · 일시 중지' : ''}</strong>{s.queue.paused && <button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/resume')}>대기열 다시 시작</button>}</header>{s.queue.error && <p>{s.queue.error}</p>}<ol>{s.queue.items.map(entry => <li key={entry.id}><span title={entry.text}>{(entry.images?.length || entry.files?.length) ? `첨부 ${(entry.images?.length ?? 0) + (entry.files?.length ?? 0)}개` : ''}{entry.text && (entry.images?.length || entry.files?.length) ? ' · ' : ''}{entry.text}</span><button disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} onClick={() => void queueAction('queue/remove', entry.id)}>취소</button></li>)}</ol></section>}
+      {s.queue.items.length > 0 && <MessageQueue key={session.key} queue={s.queue} disabled={commandBusy || connection !== 'ready' || session.status !== 'running'} error={error} action={queueAction} />}
       {[...s.approvals.values()].map(r => <Approval key={JSON.stringify(r.id)} request={r} item={s.items.get(r.params.itemId)} reply={request} />)}
       {error && <div className="codexError" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="오류 닫기">×</button></div>}
       {matches.length > 0 && <div id="codex-command-list" className="codexSuggestions" role="listbox" aria-label="대화 명령">{matches.map((command, index) => <button type="button" key={command.name} role="option" aria-selected={index === selectedCommand % matches.length} aria-disabled={running && !command.duringTask} onMouseDown={e => e.preventDefault()} onClick={() => { setDraft(`/${command.name}${command.usage ? ' ' : ''}`); promptRef.current?.focus(); }}><strong>/{command.name}</strong><span>{command.description}</span>{running && !command.duringTask && <small>작업 후</small>}</button>)}</div>}

@@ -26,7 +26,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   };
  });
  const startedAt=Math.floor((Date.now()-234000)/1000),settings={model:'gpt-6.1-sol-long-model-name-layout-check',effort:'medium',serviceTier:'priority',approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'},cwd:'/home/bdg/project/a-very-long-project-folder/mobile-layout-and-working-status-validation'};
- const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,fileAttachments:true,resume:true},approvals:[],queue:{items:[],version:0,paused:false}});
+ let queue={items:[],version:0,paused:false};
+ const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,fileAttachments:true,resume:true},approvals:[],queue});
  const limits={rateLimits:{limitName:'Codex',primary:{usedPercent:20,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+86400}}};
  const commands=[{name:'status',description:'세션 상태',duringTask:true},{name:'model',description:'모델 선택',duringTask:true},{name:'resume',description:'이전 대화',duringTask:true},{name:'help',description:'명령 안내',duringTask:true}];
  const testCwd=c.cwd||'/home/qa/project';
@@ -63,6 +64,10 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'}]}]},state:snapshot()};
   if(b.op==='command'){if(b.command==='/help')result={type:'help',commands};else if(b.command==='/status')result={type:'status',threadId:'12345678-1234-4234-8234-123456789012',state:snapshot()};else if(b.command==='/usage')result={type:'usage',...limits};else if(b.command==='/model')result={type:'model',state:snapshot(),models:[{id:settings.model,model:settings.model,supportedReasoningEfforts:[{reasoningEffort:'medium',description:'Medium'}]}]};else result={type:'resume',data:[],state:snapshot()};}
   if(b.op==='interrupt'){active=false;ws.send(JSON.stringify({type:'notification',message:{method:'turn/completed',params:{turn:{id:'ui-turn',status:'interrupted'}}}}));}
+  if(b.op==='queue/remove'){
+   queue={...queue,items:queue.items.filter(item=>item.id!==b.entryId),version:queue.version+1};
+   result=snapshot();
+  }
   ws.send(JSON.stringify({type:'result',id:b.id,result}));
  });});
  async function command(text){const box=page.getByRole('textbox',{name:'Codex 메시지'});await box.fill(text);await page.getByRole('button',{name:'명령 실행',exact:true}).click();}
@@ -70,6 +75,39 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  try{
   await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
+  const queuePanel=page.locator('.codexQueue');
+  const queueRows=queuePanel.locator(':scope > ol > li');
+  const updateQueue=items=>{
+   queue={...queue,items,version:queue.version+1};
+   wsClient.send(JSON.stringify({type:'state',state:snapshot()}));
+  };
+  const queued=Array.from({length:4},(_,index)=>({id:'queued-'+index,text:'대기 항목 '+index}));
+  updateQueue(queued.slice(0,3));
+  await queuePanel.getByText('대기 메시지 3개',{exact:true}).waitFor();
+  for(const width of [320,390]){
+   await page.setViewportSize({width,height:844});
+   const completeRows=await queueRows.evaluateAll(rows=>rows.filter(row=>{
+    const list=row.parentElement.getBoundingClientRect(), button=row.querySelector('button').getBoundingClientRect();
+    return button.height>=39&&button.top>=list.top&&button.bottom<=list.bottom;
+   }).length);
+   if(completeRows!==3)throw Error('Queue rows or cancel buttons are cut off at '+width);
+  }
+  await page.evaluate(()=>{document.documentElement.dataset.keyboardOpen='true';});
+  if(await queueRows.locator('visible=true').count()!==1)throw Error('Keyboard queue preview should show one complete row');
+  await page.evaluate(()=>{delete document.documentElement.dataset.keyboardOpen;});
+  updateQueue(queued);
+  await queuePanel.getByText('대기 메시지 4개',{exact:true}).waitFor();
+  await queuePanel.getByRole('button',{name:'전체 보기'}).click();
+  const queueDialog=page.getByRole('dialog',{name:'대기 메시지 전체 보기'});
+  await queueDialog.getByText('대기 항목 3',{exact:true}).waitFor();
+  await queueDialog.getByRole('listitem').filter({hasText:'대기 항목 3'}).getByRole('button',{name:'취소'}).click();
+  await queueDialog.getByText('대기 항목 3',{exact:true}).waitFor({state:'hidden'});
+  if(!ops.some(op=>op.op==='queue/remove'&&op.entryId==='queued-3'))throw Error('Queue dialog removed the wrong entry');
+  await page.goBack();
+  await queueDialog.waitFor({state:'hidden'});
+  await page.getByText('Codex 연결됨',{exact:true}).waitFor();
+  updateQueue([]);
+  await queuePanel.waitFor({state:'hidden'});
   const mic=page.getByRole('button',{name:'음성 입력 시작',exact:true});
   const voiceDraft=page.getByRole('textbox',{name:'Codex 메시지'});
   await voiceDraft.fill('작성 중');
