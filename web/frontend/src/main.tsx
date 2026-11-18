@@ -611,6 +611,11 @@ function App() {
   const [masterPaneWidth, setMasterPaneWidth] = useState(savedMasterPaneWidth);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const sessionListToggleRef = useRef<HTMLButtonElement>(null);
+  const focusSessionListToggle = useRef(false);
+  React.useLayoutEffect(() => {
+    if (focusSessionListToggle.current) sessionListToggleRef.current?.focus({ preventScroll: true });
+    focusSessionListToggle.current = false;
+  }, [sessionsCollapsed]);
   const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
@@ -838,6 +843,23 @@ function App() {
 
   const sessionsOpen = !connectionsOpen && !fileEditorOpen;
   const sessionListLabel = sessionsCollapsed ? "Show session list" : "Hide session list";
+  function changeSessionList(collapsed: boolean) {
+    if (collapsed === sessionsCollapsed) return;
+    focusSessionListToggle.current = true;
+    setSessionsCollapsed(collapsed);
+  }
+  const sessionListButton = <button
+    type="button"
+    className="iconButton sessionListToggle"
+    ref={sessionListToggleRef}
+    title={sessionListLabel}
+    aria-label={sessionListLabel}
+    aria-controls="session-list-pane"
+    aria-expanded={!sessionsCollapsed}
+    onClick={() => changeSessionList(!sessionsCollapsed)}
+  >
+    {sessionsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+  </button>;
   const themeButton = <button
     type="button"
     className="iconButton themeToggle"
@@ -857,18 +879,7 @@ function App() {
   return <main className={`app${detailOpen ? " mobileDetailOpen" : ""}`}>
     <section className="toolbar">
       <strong>Orbit</strong>
-      {sessionsOpen && <button
-        type="button"
-        className="iconButton sessionListToggle"
-        ref={sessionListToggleRef}
-        title={sessionListLabel}
-        aria-label={sessionListLabel}
-        aria-controls="session-list-pane"
-        aria-expanded={!sessionsCollapsed}
-        onClick={() => setSessionsCollapsed(collapsed => !collapsed)}
-      >
-        {sessionsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-      </button>}
+      {sessionsOpen && sessionsCollapsed && sessionListButton}
       <div className="toolbarActions">
         {activeConnection && (
           <button
@@ -915,6 +926,7 @@ function App() {
           <div className="paneTabs">
             <button className="activeButton"><TerminalIcon size={14} />Sessions</button>
             <button onClick={() => { setFileEditorOpen(true); setDetailOpen(false); }}><FolderOpen size={14} />Files</button>
+            {!sessionsCollapsed && sessionListButton}
           </div>
           <div className="sessionListHeader">
             <button className="primaryButton" title="New session" disabled={busy} onClick={() => setCreateOpen(true)}><Plus size={16} />New session</button>
@@ -928,10 +940,7 @@ function App() {
             </button>)}
           </div>
         </div>
-        <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} controls="session-list-pane" onCollapse={() => {
-          setSessionsCollapsed(true);
-          sessionListToggleRef.current?.focus({ preventScroll: true });
-        }} />
+        <PaneResizer width={masterPaneWidth} onWidthChange={setMasterPaneWidth} controls="session-list-pane" onCollapse={() => changeSessionList(true)} />
         <div className="workPane">
           {selected ? <SessionPane
             session={selected}
