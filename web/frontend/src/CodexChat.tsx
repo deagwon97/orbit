@@ -318,7 +318,9 @@ export function CodexChat({ session, onSessionChange, onBack }: { session: Sessi
             if (running && (draft.trim() || availableImages.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
           }
           if (event.key === 'Enter') {
-            if (event.shiftKey || window.matchMedia('(pointer: coarse)').matches) return;
+            // A touch device can report a mouse as its primary pointer, including in desktop mode.
+            const desktopKeyboard = navigator.maxTouchPoints === 0 && window.matchMedia('(pointer: fine) and (hover: hover)').matches;
+            if (event.shiftKey || !desktopKeyboard) return;
             event.preventDefault();
             if (matches.length && !matches.some(command => `/${command.name}` === draft)) { void runCommand(`/${matches[selectedCommand % matches.length].name}`, {}, true); return; }
             event.currentTarget.form?.requestSubmit();

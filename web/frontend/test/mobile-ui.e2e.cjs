@@ -31,6 +31,17 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   const box=page.getByRole('textbox',{name:'Codex 메시지'}),inputOps=ops.filter(o=>['send','steer','queue'].includes(o.op)).length;
   await box.press('End');await box.press('Enter');await box.press('Shift+Enter');
   if(await box.inputValue()!=='작업 중 보충 지시\n\n'||ops.filter(o=>['send','steer','queue'].includes(o.op)).length!==inputOps)throw Error('Mobile Enter should insert newlines without submitting');
+  // A touch browser in desktop mode can report a fine primary pointer.
+  await page.evaluate(() => {
+    const matchMedia = window.matchMedia.bind(window);
+    window.matchMedia = query => {
+      if (query === '(pointer: coarse)') return matchMedia('not all');
+      if (query === '(pointer: fine) and (hover: hover)') return matchMedia('all');
+      return matchMedia(query);
+    };
+  });
+  await box.press('Enter');
+  if(await box.inputValue()!=='작업 중 보충 지시\n\n\n')throw Error('Touch desktop mode submitted instead of inserting a newline');
   const wide=await box.boundingBox(),bottomPlus=await page.getByRole('button',{name:'이미지 첨부',exact:true}).boundingBox(),bottomSend=await page.locator('.codexSend').boundingBox();
   if(wide.width<=input.width+50||bottomPlus.y<wide.y+wide.height||Math.abs(bottomPlus.y-bottomSend.y)>2)throw Error('Multiline buttons did not move below full-width input');
   await box.fill('자동 줄바꿈을 확인하는 긴 문장입니다. '.repeat(5));
@@ -39,11 +50,15 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(await page.locator('.codexComposer.multiline').count())throw Error('Composer did not return to one row');
   await box.fill('첫 줄\n두 번째 줄\n세 번째 줄');
   await page.evaluate(()=>{Object.defineProperty(window.visualViewport,'height',{configurable:true,get:()=>440});window.visualViewport.dispatchEvent(new Event('resize'));});await page.waitForFunction(()=>document.documentElement.dataset.keyboardOpen==='true');await assertFit('keyboard viewport');await page.evaluate(()=>{delete window.visualViewport.height;window.visualViewport.dispatchEvent(new Event('resize'));});await page.screenshot({path:'/workspace/output/orbit-chat-mobile.png'});
+  await page.locator('.codexSend').click();
+  await page.waitForFunction(()=>document.querySelector('.codexComposer textarea').value==='');
+  if(!ops.some(o=>o.op==='steer'&&o.text==='첫 줄\n두 번째 줄\n세 번째 줄'))throw Error('Multiline payload did not preserve newlines');
+  if(await page.locator('.codexComposer.multiline').count())throw Error('Composer did not collapse after sending');
   await page.setViewportSize({width:1440,height:1000});await command('/status');dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.getByRole('meter',{name:'Codex Weekly limit',exact:true}).waitFor();await assertFit('desktop status');await page.screenshot({path:'/workspace/output/orbit-status-desktop.png'});await page.goBack();await dialog.waitFor({state:'hidden'});await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   const interrupts=ops.filter(o=>o.op==='interrupt').length;await command('/help');await page.getByRole('dialog',{name:'대화 명령'}).waitFor();await page.getByRole('dialog').press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts)throw Error('Closing dialog interrupts work');
   await page.getByRole('textbox',{name:'Codex 메시지'}).focus();await page.getByRole('textbox',{name:'Codex 메시지'}).press('Escape');await page.locator('.codexWorking').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts+1)throw Error('Esc did not interrupt the active turn');
   await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'세션 목록으로 돌아가기',exact:true}).click();await page.locator('.sessions .row').filter({hasText:name}).waitFor();await assertFit('session cards');await page.screenshot({path:'/workspace/output/orbit-sessions-mobile.png'});
-  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true}));
+  if(errors.length)throw Error(errors.join('\n'));console.log(JSON.stringify({mobileWidths:[320,390,768],weeklyLimitBars:true,statusDesktopAndMobile:true,dialogBack:true,nestedDialogBack:true,chatMenuRemoved:true,refreshPreservesDraft:true,noChatJump:true,singleRowComposer:true,multilineComposer:true,mobileEnterNewline:true,touchDesktopMode:true,multilinePayload:true,leftAttachment:true,keyboardButtonRemoved:true,visualViewport:true,workingTimer:true,escInterrupt:true,emptyReasoningHidden:true,sessionCards:true}));
  }catch(e){console.log('Browser errors:',errors);console.log('Diagnostic:',(await page.locator('.codexChat').innerText().catch(()=>'' )).slice(-1200));await page.screenshot({path:'/workspace/output/orbit-mobile-error.png'});throw e;}
  finally{await page.evaluate(async({c,id,name})=>{const headers={Authorization:'Bearer '+c.token,'x-orbitd-url':c.orbitdUrl};if(!id){const r=await fetch('/api/v1/sessions',{headers});if(r.ok)id=(await r.json()).find(s=>s.name===name)?.id;}if(id)await fetch('/api/v1/sessions/'+id,{method:'DELETE',headers});},{c,id:session?.id,name}).catch(()=>{});await browser.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
