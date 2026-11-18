@@ -10,11 +10,14 @@ test('late history snapshots preserve streamed output and completed lifecycle st
   observe(state, { method: 'turn/completed', params: { turn: { id: 't', status: 'completed' } } });
   mergeHistory(state, { thread: { turns: [{ id: 't', status: 'inProgress', items: [{ id: 'a', type: 'agentMessage', text: 'stale' }] }] }, state: { activeTurn: 't', approvals: [] } }, since, false);
   assert.equal(state.items.get('a').text, 'new answer'); assert.equal(state.active, null);
+  assert(state.forkableTurns.has('t'));
 });
 test('older history prepends without replacing newer items or losing newer lifecycle state', () => {
   const state = newChatState(); putItem(state, { id: 'new', type: 'agentMessage', text: 'latest' }); state.active = 'running';
   mergeHistory(state, { thread: { turns: [{ id: 'old-turn', status: 'completed', items: [{ id: 'old', type: 'agentMessage', text: 'older' }] }] }, state: { activeTurn: null }, nextCursor: 'next' }, state.revision, true);
   assert.deepEqual(state.order, ['old', 'new']); assert.equal(state.active, 'running'); assert.equal(state.nextCursor, 'next');
+  assert(state.forkableTurns.has('old-turn'));
+  assert(!state.forkableTurns.has('running'));
 });
 test('reasoning renders supplied summaries only, while command and MCP output stream', () => {
   const state = newChatState();

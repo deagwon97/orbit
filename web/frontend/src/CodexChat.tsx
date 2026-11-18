@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, ChevronLeft, ListPlus, RefreshCcw, Server, Slash, SlidersHorizontal, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, ChevronLeft, GitFork, ListPlus, RefreshCcw, Server, Slash, SlidersHorizontal, Square } from 'lucide-react';
 import { marked } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
@@ -8,6 +8,7 @@ import { progressCaption, progressLabel, queuesDuringTurn, specificActivity } fr
 import { CodexWorking } from './CodexWorking';
 import { CodexControls } from './CodexControls';
 import { suggestions, isCommand, type ConversationCommand } from './codex-command-input';
+import type { Session as OrbitSession } from './main';
 
 type Session = { id: string; key: string; name: string; cwd: string; status: string; codex_thread_id?: string | null; connection: { label: string; url: string; token: string } };
 function Inline({ text }: { text: string }) {
@@ -78,11 +79,18 @@ function Approval({ request, item, reply }: { request: any; item?: CodexItem; re
     {error && <p role="alert">{error}</p>}
   </section>;
 }
-export function CodexChat({ session, onSessionChange, onBack, sessionDetails }: { session: Session; onSessionChange: (session: any) => void; onBack: () => void; sessionDetails: React.ReactNode }) {
+export function CodexChat({ session, onSessionChange, onSessionFork, onBack, sessionDetails }: {
+  session: Session;
+  onSessionChange: (session: OrbitSession) => void;
+  onSessionFork: (session: OrbitSession, open: boolean) => void;
+  onBack: () => void;
+  sessionDetails: React.ReactNode;
+}) {
   const state = useRef(newChatState()), socket = useRef<WebSocket | null>(null), counter = useRef(0);
   const pending = useRef(new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void; since: number; op: string; older: boolean; timer: number }>());
   const [version, setVersion] = useState(0), [epoch, setEpoch] = useState(0), [connection, setConnection] = useState('connecting');
   const [draft, setDraft] = useState(''), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState('');
+  const [forkingTurn, setForkingTurn] = useState<string | null>(null);
   const [commands, setCommands] = useState<ConversationCommand[]>([]), [commandResult, setCommandResult] = useState<any>(null), [commandBusy, setCommandBusy] = useState(false), [selectedCommand, setSelectedCommand] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null), commandView = useRef(0);
   function closeControls() { commandView.current++;setCommandResult(null); }
@@ -94,6 +102,8 @@ export function CodexChat({ session, onSessionChange, onBack, sessionDetails }: 
   function changeSubmissions(update:(items:Submission[])=>Submission[]){const next=update(submissionsRef.current);submissionsRef.current=next;setSubmissions(next);try{if(next.length)sessionStorage.setItem(submissionKey,JSON.stringify(next));else sessionStorage.removeItem(submissionKey);}catch{}}
   const images = useImages(session, !!state.current.capabilities.images && session.status === 'running' && connection === 'ready', setError);
   const availableImages=images.items.filter(item=>!reservedImages.current.has(item.key));
+  const hasUnsentInput = useRef(false);
+  hasUnsentInput.current = !!draft || availableImages.length > 0;
   const [dragging,setDragging] = useState(false); const dragDepth=useRef(0);
   const [locationOpen,setLocationOpen] = useState(false), [background,setBackground] = useState<any[]>([]);
   useEffect(()=>{
@@ -279,7 +289,29 @@ export function CodexChat({ session, onSessionChange, onBack, sessionDetails }: 
     try { await request({ op: 'history', cursor: state.current.nextCursor }); refresh(); requestAnimationFrame(() => { node.scrollTop = top + node.scrollHeight - height; }); }
     catch (e) { setError(String(e)); } finally { setHistoryBusy(false); }
   }
+  async function forkTurn(turnId: string) {
+    setForkingTurn(turnId);
+    setError('');
+    try {
+      const result = await request({ op: 'fork', turnId });
+      const open = !hasUnsentInput.current || window.confirm(
+        '포크한 세션을 목록에 추가했습니다. 지금 이동하면 이 세션에서 작성 중인 입력이 사라집니다. 이동할까요?'
+      );
+      onSessionFork(result.session, open);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setForkingTurn(null);
+    }
+  }
   const s = state.current, running = !!s.active;
+  const forkBoundaries = new Map<string, string>();
+  if (s.capabilities.fork) {
+    for (const id of s.order) {
+      const turnId = s.items.get(id)?.turnId;
+      if (turnId && turnId !== s.active && s.forkableTurns.has(turnId)) forkBoundaries.set(turnId, id);
+    }
+  }
   const matches = suggestions(draft, commands);
   const commandInput = isCommand(draft);
   const queueTurn=queuesDuringTurn([...s.items.values()],s.active);
@@ -297,7 +329,19 @@ export function CodexChat({ session, onSessionChange, onBack, sessionDetails }: 
     <div className="codexMessages" ref={scroller} onScroll={() => { const n = scroller.current!; following.current = n.scrollHeight - n.scrollTop - n.clientHeight < 60; setShowLatest(!following.current); }}>
       {s.nextCursor && <button disabled={historyBusy} className="codexOlder" onClick={() => void older()}>이전 대화 불러오기</button>}
       {!s.order.length && connection === 'ready' && <div className="codexEmpty"><span className="codexEmptyMark">✳</span><h2>어떤 작업을 시작할까요?</h2></div>}
-      {s.order.map(id => { const item = s.items.get(id)!; return item.type === 'userMessage' || item.type === 'agentMessage' || item.type === 'system' ? <article className={`codexMessage ${item.type}`} key={id}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog key={id} item={item} />; })}
+      {s.order.map(id => {
+        const item = s.items.get(id)!;
+        const message = ['userMessage', 'agentMessage', 'system'].includes(item.type);
+        const canFork = forkBoundaries.get(item.turnId) === id;
+        return <React.Fragment key={id}>
+          {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} />}
+          {canFork && <div className="codexTurnActions">
+            <button type="button" disabled={connection !== 'ready' || forkingTurn !== null} onClick={() => void forkTurn(item.turnId)}>
+              <GitFork size={14} />{forkingTurn === item.turnId ? '포크 중…' : '여기서 포크'}
+            </button>
+          </div>}
+        </React.Fragment>;
+      })}
 
     </div>
     <div className="codexComposerArea">

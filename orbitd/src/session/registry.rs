@@ -76,14 +76,7 @@ impl SessionRegistry {
             };
             session.codex_thread_id = Some(id);
             session.status = SessionStatus::Running;
-            if let Err(error) = self
-                .save_web_session(&session)
-                .and_then(|_| self.db.create_session(&session))
-            {
-                handle.close().await;
-                return Err(error);
-            }
-            self.web.lock().await.insert(session.id.clone(), handle);
+            self.register_web_session(&session, handle, false).await?;
             audit::append(
                 &self.config.audit_path,
                 audit::AuditEvent {
@@ -131,6 +124,87 @@ impl SessionRegistry {
 
     pub fn codex_available(&self) -> bool {
         self.config.codex_socket.exists()
+    }
+
+    async fn register_web_session(
+        &self,
+        session: &Session,
+        handle: crate::codex::CodexSession,
+        has_history: bool,
+    ) -> Result<()> {
+        let mut web = self.web.lock().await;
+        if has_history {
+            self.has_input.lock().unwrap().insert(session.id.clone());
+        }
+        let result = self.save_web_session(session).and_then(|_| {
+            self.db.create_session(session).inspect_err(|_| {
+                let _ = std::fs::remove_file(self.web_metadata_path(&session.id));
+            })
+        });
+        if let Err(error) = result {
+            self.has_input.lock().unwrap().remove(&session.id);
+            drop(web);
+            handle.close().await;
+            return Err(error);
+        }
+        web.insert(session.id.clone(), handle);
+        Ok(())
+    }
+
+    pub async fn fork_web_thread(
+        &self,
+        ident: &str,
+        source_thread: &str,
+        turn_id: &str,
+    ) -> Result<Session> {
+        anyhow::ensure!(
+            !turn_id.trim().is_empty() && turn_id.len() <= 256,
+            "올바른 턴을 선택하세요."
+        );
+        let source = self.get_session(ident)?;
+        anyhow::ensure!(
+            source.mode == SessionMode::Web
+                && source.tool == "codex"
+                && source.codex_thread_id.as_deref() == Some(source_thread),
+            "대화가 변경되었습니다. 다시 연결한 뒤 포크하세요."
+        );
+        let id = Uuid::new_v4().simple().to_string()[..12].to_string();
+        let child = crate::codex::CodexSession::connect(&self.config.codex_socket).await?;
+        child.bind_uploads(&id);
+        let (thread_id, cwd) = match child.fork(source_thread, turn_id).await {
+            Ok(fork) => fork,
+            Err(error) => {
+                child.close().await;
+                return Err(error);
+            }
+        };
+        let session = Session {
+            id,
+            name: format!(
+                "{} · 포크",
+                source.name.chars().take(95).collect::<String>()
+            ),
+            tool: source.tool,
+            mode: SessionMode::Web,
+            cwd,
+            codex_thread_id: Some(thread_id),
+            pid: None,
+            status: SessionStatus::Running,
+            created_at: Utc::now(),
+            last_attached_at: None,
+            exit_code: None,
+        };
+        self.register_web_session(&session, child, true).await?;
+        audit::append(
+            &self.config.audit_path,
+            audit::AuditEvent {
+                timestamp: String::new(),
+                action: "session.fork.web",
+                session_id: Some(&session.id),
+                detail: Some(&source.id),
+            },
+        );
+        Ok(session)
     }
 
     pub async fn codex_session(&self, ident: &str) -> Result<crate::codex::CodexSession> {
@@ -478,6 +552,68 @@ mod tests {
         let db = Arc::new(Db::open().unwrap());
         db.migrate().unwrap();
         db
+    }
+    #[tokio::test]
+    async fn fork_registers_a_distinct_web_session_with_durable_history() {
+        let fixture = crate::codex::tests::fixture().await;
+        let mut config = Config::default();
+        config.codex_socket = fixture.socket.clone();
+        config.data_dir = fixture.directory.join("data");
+        config.audit_path = fixture.directory.join("audit");
+        let restored_config = config.clone();
+        let registry = SessionRegistry::new(database(), config);
+        let source = registry
+            .create_session(
+                serde_json::from_value(serde_json::json!({
+                    "tool":"codex","mode":"web","cwd":fixture.directory
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(registry
+            .fork_web_thread(&source.id, "old-thread", "turn-1")
+            .await
+            .is_err());
+        assert!(registry
+            .fork_web_thread(&source.id, "test-thread", "unknown")
+            .await
+            .is_err());
+        assert!(registry
+            .fork_web_thread(&source.id, "test-thread", "ignored")
+            .await
+            .is_err());
+        assert_eq!(
+            registry
+                .list_sessions(ListSessionsQuery::default())
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let branch = registry
+            .fork_web_thread(&source.id, "test-thread", "turn-1")
+            .await
+            .unwrap();
+        assert_ne!(source.id, branch.id);
+        assert_eq!(branch.codex_thread_id.as_deref(), Some("forked-thread"));
+        assert!(branch.pid.is_none());
+        assert_eq!(
+            registry.get_session(&source.id).unwrap().codex_thread_id,
+            source.codex_thread_id
+        );
+        assert!(registry
+            .codex_session(&source.id)
+            .await
+            .unwrap()
+            .connected());
+
+        let restored = SessionRegistry::new(database(), restored_config);
+        assert_eq!(
+            restored.get_session(&branch.id).unwrap().codex_thread_id,
+            branch.codex_thread_id
+        );
+        assert!(restored.has_input.lock().unwrap().contains(&branch.id));
     }
     #[tokio::test]
     async fn web_sessions_have_no_pty_and_restore_the_same_thread_mapping_after_restart() {

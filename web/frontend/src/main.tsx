@@ -229,7 +229,7 @@ const cmHighlight = HighlightStyle.define([
   { tag: tags.invalid,                   textDecoration: "underline wavy var(--orbit-danger)" },
 ]);
 
-type Session = {
+export type Session = {
   mode?: "cli" | "web";
   codex_thread_id?: string | null;
   id: string;
@@ -934,6 +934,12 @@ function App() {
             reload={load}
             onBack={closeDetail}
             onSessionChange={session => setSessions(items => items.map(item => item.key === selected.key ? { ...session, connection: selected.connection, key: selected.key } : item))}
+            onSessionFork={(session, open) => {
+              const key = connectionKey(selected.connection.id, session.id);
+              const branch = { ...session, key, connection: selected.connection };
+              setSessions(items => [branch, ...items.filter(item => item.key !== key)]);
+              if (open) setSelectedKey(key);
+            }}
           /> : <div className="empty"><TerminalIcon />Select a session</div>}
         </div>
       </>}
@@ -1566,6 +1572,7 @@ function ConnectionModal(props: {
 function SessionPane(props: {
   onBack: () => void;
   onSessionChange: (session: Session) => void;
+  onSessionFork: (session: Session, open: boolean) => void;
   session: ConnectedSession;
   onDetach: () => void;
   onDelete: () => void;
@@ -1589,7 +1596,7 @@ function SessionPane(props: {
   </>;
 
   if (props.session.mode === "web") return <div className="terminalBox codexSessionPane">
-    <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} onBack={props.onBack} sessionDetails={details} />
+    <CodexChat key={`${props.session.key}:${props.session.codex_thread_id}`} session={props.session} onSessionChange={props.onSessionChange} onSessionFork={props.onSessionFork} onBack={props.onBack} sessionDetails={details} />
   </div>;
 
   return <div className="terminalBox cliSessionPane">

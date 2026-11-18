@@ -25,6 +25,10 @@
 .codexMessage.userMessage { margin-left:12%; padding:11px 16px; border-radius:12px; background:var(--chat-accent-soft); }
 .codexMessage.system { color:var(--chat-warning); font-size:12px; }
 .codexMessage small { display:block; font-weight:600; color:var(--chat-secondary); margin-bottom:7px; }
+.codexTurnActions { display:flex; margin:-12px 0 20px; }
+.codexChat .codexTurnActions button { min-height:34px; padding:0 8px; border:0; background:transparent; color:var(--chat-secondary); font-size:11px; }
+.codexChat .codexTurnActions button:hover:not(:disabled) { background:var(--chat-hover); color:var(--chat-accent); }
+@media (max-width:820px) { .codexChat .codexTurnActions button { min-height:44px; } }
 .codexProse { white-space:pre-wrap; }
 .codexCode { margin:12px 0; min-width:0; }
 .codexCode pre { white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:280px; margin:0; border:1px solid var(--chat-border); padding:13px; background:var(--chat-muted); border-radius:7px; font:12px/1.7 ui-monospace,monospace; }

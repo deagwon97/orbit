@@ -239,7 +239,7 @@ impl CodexSession {
     }
     pub fn snapshot(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true,"liveInput":true}})
+        json!({"activeTurn":state.active,"connected":state.connected,"approvals":state.approvals.values().cloned().collect::<Vec<_>>(),"settings":state.settings,"tokenUsage":state.tokens,"queue":{"items":state.queue,"paused":state.queue_paused,"error":state.queue_error,"version":state.queue_version},"capabilities":{"commands":true,"steer":true,"queue":true,"images":true,"resume":true,"liveInput":true,"fork":true}})
     }
     pub async fn create(&self, cwd: &Path) -> Result<String> {
         let result = self
@@ -264,6 +264,63 @@ impl CodexSession {
             )
             .await?["thread"]
             .clone())
+    }
+    pub(crate) async fn fork(
+        &self,
+        source_thread: &str,
+        turn_id: &str,
+    ) -> Result<(String, std::path::PathBuf)> {
+        let result = self
+            .rpc(
+                "thread/fork",
+                json!({
+                    "threadId": source_thread,
+                    "lastTurnId": turn_id,
+                    "excludeTurns": true,
+                }),
+            )
+            .await?;
+        let thread = &result["thread"];
+        let id = thread["id"]
+            .as_str()
+            .filter(|id| !id.is_empty() && *id != source_thread)
+            .context("Codex did not return a new thread ID")?
+            .to_string();
+        let cwd = std::path::PathBuf::from(
+            thread["cwd"]
+                .as_str()
+                .context("Missing fork working directory")?,
+        );
+        anyhow::ensure!(
+            cwd.is_absolute() && cwd.is_dir(),
+            "포크한 대화의 작업 폴더를 찾을 수 없습니다."
+        );
+        // Older app servers can ignore an unknown cutoff field.
+        let last_turn = if thread["historyMode"] == "paginated" {
+            self.rpc(
+                "thread/turns/list",
+                json!({
+                    "threadId":id,"limit":1,"sortDirection":"desc","itemsView":"summary"
+                }),
+            )
+            .await?["data"][0]
+                .clone()
+        } else {
+            self.rpc("thread/read", json!({"threadId":id,"includeTurns":true}))
+                .await?["thread"]["turns"]
+                .as_array()
+                .and_then(|turns| turns.last())
+                .cloned()
+                .unwrap_or_default()
+        };
+        anyhow::ensure!(
+            last_turn["id"] == turn_id && last_turn["status"] == "completed",
+            "선택한 턴까지의 기록을 확인할 수 없습니다. Codex 버전과 턴 상태를 확인하세요."
+        );
+        let mut state = self.state.lock().unwrap();
+        state.thread_id = id.clone();
+        state.settings = controls::resume_settings(&result);
+        Ok((id, cwd))
     }
     pub async fn resume(&self, thread_id: &str, cwd: &Path) -> Result<()> {
         let read = self
@@ -578,6 +635,10 @@ pub(crate) mod tests {
                             ws.send(Message::Text(json!({"id":m["id"],"error":{"code":-32602,"message":"no rollout found for thread id missing-thread"}}).to_string())).await.unwrap();
                             continue;
                         }
+                        if method == "thread/fork" && p["lastTurnId"] == "unknown" {
+                            ws.send(Message::Text(json!({"id":m["id"],"error":{"code":-32602,"message":"Unknown fork turn"}}).to_string())).await.unwrap();
+                            continue;
+                        }
                         if method == "thread/turns/list" && empty {
                             ws.send(Message::Text(json!({"id":m["id"],"error":{"code":-32602,"message":"thread is not materialized yet; unavailable before first user message"}}).to_string())).await.unwrap();
                             continue;
@@ -622,6 +683,15 @@ pub(crate) mod tests {
                                     &json!({"threadId":p["threadId"],"excludeTurns":true})
                                 );
                                 json!({"thread":{"id":thread_id,"cwd":cwd},"cwd":cwd,"model":settings["model"],"modelProvider":"openai","reasoningEffort":settings["effort"],"approvalPolicy":settings["approvalPolicy"],"sandbox":settings["sandboxPolicy"],"serviceTier":settings["serviceTier"]})
+                            }
+                            "thread/fork" => {
+                                assert_eq!(p["threadId"], "test-thread");
+                                assert_eq!(p["excludeTurns"], true);
+                                assert!(
+                                    p["lastTurnId"] == "turn-1" || p["lastTurnId"] == "ignored"
+                                );
+                                thread_id = "forked-thread".into();
+                                json!({"thread":{"id":thread_id,"cwd":cwd,"historyMode":"paginated"},"cwd":cwd,"model":settings["model"],"sandbox":settings["sandboxPolicy"]})
                             }
                             "thread/list" => {
                                 json!({"data":[{"id":"11111111-1111-4111-8111-111111111111","name":"Saved conversation","cwd":cwd,"preview":"saved answer","updatedAt":1700000000,"status":{"type":"notLoaded"}}],"nextCursor":null})

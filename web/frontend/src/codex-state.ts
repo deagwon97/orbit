@@ -1,7 +1,7 @@
 export type CodexItem = { id: string; type: string; [key: string]: any };
 export function newChatState() {
   return { items: new Map<string, CodexItem>(), order: [] as string[], versions: new Map<string, number>(), revision: 0,
-    activity: '', turnStarts: new Map<string, number>(), lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null, settings: {} as any, tokenUsage: null as any, capabilities: {} as any, queue: { items: [] as any[], paused: false, error: null as string | null, version: 0 } };
+    activity: '', turnStarts: new Map<string, number>(), lifecycle: 0, approvalsRevision: 0, active: null as string | null, completed: new Set<string>(), forkableTurns: new Set<string>(), approvals: new Map<string, any>(), nextCursor: null as string | null, settings: {} as any, tokenUsage: null as any, capabilities: {} as any, queue: { items: [] as any[], paused: false, error: null as string | null, version: 0 } };
 }
 export type ChatState = ReturnType<typeof newChatState>;
 export function putItem(state: ChatState, item: CodexItem) {
@@ -30,6 +30,8 @@ export function observe(state: ChatState, message: any) {
   } else if (method === 'turn/completed') {
     if (state.active === p.turn.id) {state.active = null;state.activity='';}
     state.completed.add(p.turn.id); state.lifecycle = ++state.revision;
+    if (p.turn.status === 'completed') state.forkableTurns.add(p.turn.id);
+    else state.forkableTurns.delete(p.turn.id);
     for (const item of p.turn.items || []) putItem(state, { ...item, turnId: p.turn.id, status: item.status || p.turn.status });
     for (const item of state.items.values()) if (item.turnId === p.turn.id && item.status === 'inProgress') putItem(state, { ...item, status: p.turn.status });
     for (const [id, request] of state.approvals) if (request.params.turnId === p.turn.id) state.approvals.delete(id);
@@ -89,7 +91,13 @@ export function applyLiveState(state: ChatState, live: any, since: number) {
   if (state.approvalsRevision <= since) state.approvals = new Map((live.approvals || []).map((r: any) => [JSON.stringify(r.id), r]));
 }
 export function mergeHistory(state: ChatState, result: any, since: number, older: boolean) {
-  for(const turn of result.thread.turns || []) rememberTurnStart(state,turn);
+  for (const turn of result.thread.turns || []) {
+    rememberTurnStart(state, turn);
+    if (!state.completed.has(turn.id)) {
+      if (turn.status === 'completed') state.forkableTurns.add(turn.id);
+      else state.forkableTurns.delete(turn.id);
+    }
+  }
   const history: CodexItem[] = (result.thread.turns || []).flatMap((turn: any) => (turn.items || []).map((item: CodexItem) => ({ ...item, turnId: turn.id, status: item.status || (turn.status === 'inProgress' ? 'inProgress' : turn.status) })));
   const ids: string[] = [];
   for (const item of history) {
