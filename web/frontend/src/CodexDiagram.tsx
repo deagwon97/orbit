@@ -41,7 +41,10 @@ async function renderMermaid(text: string) {
   });
   const mermaid = await mermaidModule;
   const staging = document.createElement('div');
-  staging.hidden = true;
+  // Mermaid measures the SVG inside its temporary iframe. Hiding the staging
+  // element with display:none gives it an empty layout and clips the drawing.
+  staging.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;visibility:hidden;pointer-events:none';
+  staging.setAttribute('aria-hidden', 'true');
   document.body.append(staging);
   try {
     const { svg } = await mermaid.render(`orbit-diagram-${++nextDiagramId}`, text, staging);
