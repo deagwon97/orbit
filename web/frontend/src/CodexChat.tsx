@@ -585,7 +585,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
 
     </div>
     <div className="codexComposerArea">
-      {running && <CodexWorking key={s.active!} sessionKey={session.key} turnId={s.active!} startedAt={s.turnStarts.get(s.active!) || null} activity={working} disabled={connection !== 'ready'} interrupt={()=>void request({op:'interrupt'}).catch(e=>setError(String(e)))}/>}
+      {connection === 'ready' && s.active && <CodexWorking key={s.active} sessionKey={session.key} turnId={s.active} startedAt={s.turnStarts.get(s.active) || null} activity={working} interrupt={()=>void request({op:'interrupt'}).catch(e=>setError(String(e)))}/>}
       {background.length>0&&<button type="button" className="codexBackground" onClick={()=>void runCommand('/ps')}>View {background.length} background {background.length === 1 ? 'terminal' : 'terminals'}</button>}
       {submissions.length>0&&<section className="codexSubmissions" aria-label="전송 중인 입력">{submissions.map(entry=><div className={entry.status} key={entry.id}><header><strong>{entry.status==='sending'?'전송 확인 중':'전송 확인 실패'}</strong>{entry.status==='failed'&&<><button type="button" onClick={()=>void restoreSubmission(entry)}>입력으로 복원</button><button type="button" aria-label="입력 기록 닫기" onClick={()=>changeSubmissions(items=>items.filter(item=>item.id!==entry.id))}>×</button></>}</header><p>{entry.text}{entry.attachments.length?` · 첨부 ${entry.attachments.length}개`:''}</p>{entry.error&&<small>{entry.error}</small>}</div>)}</section>}
       {queueTurn&&<div className="codexInputHint">리뷰·문맥 압축 중인 입력은 다음 턴에 전달합니다.</div>}

@@ -258,9 +258,12 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await box.fill('다시 연결한 뒤에도 유지할 입력');
   wsClient.send(JSON.stringify({type:'disconnected',error:'QA disconnect'}));
   await header.getByText('연결 끊김',{exact:true}).waitFor();
+  const workingStatus=page.locator('.codexWorking');
+  if(await workingStatus.isVisible())throw Error('Working timer remained visible after disconnect');
   if(await header.getByRole('button',{name:'다시 연결',exact:true}).count()||wsAttempts!==beforeAttempts)throw Error('Reconnect was manual or immediate');
   await page.clock.fastForward(5000);
   await header.getByText('Codex 연결됨',{exact:true}).waitFor();
+  await workingStatus.waitFor({state:'visible'});
   if(wsAttempts!==beforeAttempts+1||ops.filter(o=>o.op==='history').length<=beforeReconnect)throw Error('Automatic reconnect did not reload history');
   if(await box.inputValue()!=='다시 연결한 뒤에도 유지할 입력')throw Error('Reconnect lost draft');
 
@@ -275,6 +278,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
     if(wsAttempts!==beforeFailures+attempt)throw Error('Incorrect retry count after disconnect');
   }
   await header.getByText('연결 중단',{exact:true}).waitFor();
+  if(await workingStatus.isVisible())throw Error('Working timer remained visible after reconnect attempts stopped');
   await page.clock.fastForward(10000);
   if(wsAttempts!==beforeFailures+5)throw Error('Reconnect continued after five failures');
   failConnections=false;
