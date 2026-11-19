@@ -75,6 +75,16 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  try{
   await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
+  const modeLabel=page.locator('.codexComposerMeta .codexMode');
+  await modeLabel.filter({hasText:/^Default$/}).waitFor();
+  wsClient.send(JSON.stringify({type:'notification',message:{
+   method:'thread/settings/updated',params:{threadSettings:{...settings,collaborationMode:{mode:'plan'}}},
+  }}));
+  await modeLabel.filter({hasText:/^Plan$/}).waitFor();
+  wsClient.send(JSON.stringify({type:'notification',message:{
+   method:'thread/settings/updated',params:{threadSettings:{...settings,collaborationMode:{mode:'default'}}},
+  }}));
+  await modeLabel.filter({hasText:/^Default$/}).waitFor();
   const cwdDetails=page.locator('.codexCwd');
   const cwdSummary=cwdDetails.locator('summary');
   await cwdDetails.locator('.codexCwdCompact').waitFor();

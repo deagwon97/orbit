@@ -127,6 +127,8 @@
 .codexComposerMeta { position:relative; display:flex; align-items:center; gap:10px; padding:6px 8px 0; color:var(--chat-secondary); font-size:10px; }
 .codexChat .codexComposerMeta > button { background:none; border:0; font-size:11px; min-height:28px; min-width:0; padding:0; color:var(--chat-secondary); }
 .codexComposerMeta > button > span, .codexCwd summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.codexMode { flex:none; white-space:nowrap; }
+.codexMode[data-mode="plan"] { color:var(--chat-accent); font-weight:600; }
 .codexCwd { min-width:0; max-width:45%; }
 .codexCwd summary { display:flex; align-items:center; min-height:28px; border-radius:4px; cursor:pointer; list-style:none; font:11px ui-monospace,monospace; }
 .codexCwd summary::-webkit-details-marker { display:none; }

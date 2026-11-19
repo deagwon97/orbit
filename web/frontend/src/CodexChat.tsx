@@ -553,6 +553,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const working=specificActivity([...s.items.values()],s.approvals.size,s.active,s.activity);
   const host = (() => { try { return new URL(session.connection.url).host; } catch { return session.connection.url; } })();
   const cwd = s.settings.cwd || session.cwd;
+  const planMode = s.settings.collaborationMode?.mode === 'plan';
   const workingFolder = cwd?.replace(/\/+$/, '').split('/').pop();
   const compactCwd = workingFolder && workingFolder !== cwd ? `…/${workingFolder}` : cwd;
   return <div className={`codexChat${dragging ? ' dragging' : ''}`} onDragEnter={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++;setDragging(true); } }} onDragOver={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault();event.dataTransfer.dropEffect='copy'; } }} onDragLeave={event => { event.preventDefault();if(--dragDepth.current<=0){dragDepth.current=0;setDragging(false);} }} onDrop={event => { if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);attachments.add(Array.from(event.dataTransfer.files)); }}>
@@ -655,6 +656,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         <button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">
           <span>{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</span>
         </button>
+        {connection === 'ready' && <span className="codexMode" data-mode={planMode ? 'plan' : 'default'} title="대화 모드">{planMode ? 'Plan' : 'Default'}</span>}
         {s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}
         <details className="codexDesktopDetails sessionDetailsDisclosure">
           <summary aria-label="Session details" title="Session details"><Info size={16} /></summary>
