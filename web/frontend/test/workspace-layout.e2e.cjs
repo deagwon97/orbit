@@ -19,8 +19,11 @@ const sessionName = 'Build and test on ARM64';
       let canCreateFile = false, tempPath, tempSession, submittedSession;
       let tempFoldersCreated = 0, failFirstRun = width === 320;
       const entries = [
+        { name: '.agents', path: project + '/.agents', kind: 'dir' },
+        { name: '.gitignore', path: project + '/.gitignore', kind: 'file' },
         { name: 'README.md', path, kind: 'file' },
-        { name: 'example.js', path: project + '/example.js', kind: 'file' }
+        { name: 'example.js', path: project + '/example.js', kind: 'file' },
+        ...Array.from({ length: 36 }, (_, i) => ({ name: `sample-${i}.txt`, path: `${project}/sample-${i}.txt`, kind: 'file' })),
       ];
       await page.addInitScript(() => {
         localStorage.setItem('orbit.connections', JSON.stringify([
@@ -59,7 +62,17 @@ const sessionName = 'Build and test on ARM64';
           lines: [{ id: 1, timestamp: '2026-01-01T00:00:00Z', content: 'b3JiaXQgbG9n' }],
           has_more: false, next_after: 1, snapshot_last_id: 1
         });
-        if (pathname.endsWith('/entries')) return fulfill({ path: project, home: project, parent: null, entries, can_create_file: canCreateFile });
+        if (pathname.endsWith('/entries')) {
+          const query = new URL(route.request().url()).searchParams;
+          assert.equal(query.get('include_hidden'), 'true');
+          const folder = project + '/.agents';
+          if (query.get('path') === folder) {
+            return fulfill({ path: folder, home: project, parent: project, entries: [
+              { name: '.settings', path: folder + '/.settings', kind: 'file' },
+            ] });
+          }
+          return fulfill({ path: project, home: project, parent: null, entries, can_create_file: canCreateFile });
+        }
         if (route.request().method() === 'POST' && (pathname.endsWith('/dirs') || pathname.endsWith('/files'))) {
           const body = route.request().postDataJSON();
           if (pathname.endsWith('/dirs') && body.name.startsWith('orbit-tmp-')) {
@@ -270,8 +283,6 @@ const sessionName = 'Build and test on ARM64';
       const sidebarAppearance = locator => locator.evaluate(panel => ({
         width: panel.getBoundingClientRect().width,
         background: getComputedStyle(panel).backgroundColor,
-        listPadding: getComputedStyle(panel.querySelector('.paneList')).padding,
-        rowRadius: getComputedStyle(panel.querySelector('.paneListItem')).borderRadius,
       }));
       const sessionsAppearance = await sidebarAppearance(page.locator('#session-list-pane'));
       await page.getByRole('button', { name: 'Files', exact: true }).click();
@@ -279,6 +290,29 @@ const sessionName = 'Build and test on ARM64';
       await fileRow.waitFor();
       assert.deepEqual(await sidebarAppearance(page.locator('.fileExplorer')), sessionsAppearance);
       assert.equal(await overflow('.fileExplorerList'), false, `file list overflows at ${width}px`);
+      const explorerList = page.locator('.fileExplorerList');
+      const style = await explorerList.evaluate(list => {
+        const row = list.querySelector('.fileEntryRow');
+        list.scrollTop = 120;
+        const result = {
+          scrollbar: getComputedStyle(list).scrollbarWidth,
+          scrolled: list.scrollTop > 0,
+          border: getComputedStyle(row).borderTopWidth,
+          height: row.getBoundingClientRect().height,
+        };
+        list.scrollTop = 0;
+        return result;
+      });
+      assert.deepEqual(style, { scrollbar: 'none', scrolled: true, border: '0px', height: mobile ? 36 : 30 });
+      await explorerList.getByRole('button', { name: '.gitignore', exact: true }).waitFor();
+      const hiddenFolder = explorerList.getByRole('button', { name: '.agents', exact: true });
+      await hiddenFolder.click();
+      const hiddenChild = explorerList.getByRole('button', { name: '.settings', exact: true });
+      await hiddenChild.waitFor();
+      assert.equal(await hiddenFolder.getAttribute('aria-expanded'), 'true');
+      assert((await hiddenChild.locator('svg').boundingBox()).x > (await hiddenFolder.locator('svg').boundingBox()).x);
+      await hiddenFolder.click();
+      await hiddenChild.waitFor({ state: 'hidden' });
 
       const newFolderButton = page.getByRole('button', { name: 'New folder', exact: true });
       const newFileButton = page.getByRole('button', { name: 'New file', exact: true });
@@ -314,6 +348,7 @@ const sessionName = 'Build and test on ARM64';
       await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
       await editor.getByRole('textbox').fill('# Updated on ' + width);
+      assert.equal(await explorerList.locator('.fileEntryRow[title="README.md"]').getAttribute('aria-current'), 'true');
       await editor.getByRole('button', { name: 'Save', exact: true }).click();
       await editor.getByRole('button', { name: 'Saved', exact: true }).waitFor();
       assert.deepEqual(saved, { path, content: '# Updated on ' + width });

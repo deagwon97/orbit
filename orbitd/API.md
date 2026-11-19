@@ -12,7 +12,7 @@ All endpoints except `/healthz` require `Authorization: Bearer <token>`.
 - `WS /api/v1/sessions/:id/attach` relays JSON messages documented in `ARCHITECTURE.md`.
 - `GET /api/v1/fs/dirs?path=/path` lists visible child directories. If `path` is omitted, the server uses `$ORBIT_WORKSPACE` or the `orbitd` current working directory.
 - `POST /api/v1/fs/dirs` creates one child directory with `{ "parent": "/path", "name": "child" }`.
-- `GET /api/v1/fs/entries?path=/path` lists visible files and directories, sorted with directories first.
+- `GET /api/v1/fs/entries?path=/path` lists visible files and directories, sorted with directories first. Pass `include_hidden=true` to include dotfiles and hidden directories, as the Files tab does.
 - `GET /api/v1/fs/files?path=/path/file.txt` reads a UTF-8 text file up to 10 MB.
 - `PUT /api/v1/fs/files` writes a text file with `{ "path": "/path/file.txt", "content": "..." }`.
 

@@ -1348,8 +1348,9 @@ function FileWorkspace(props: {
     if (options.root) setListBusy(true);
     setLoadingPaths((current) => new Set(current).add(key));
     try {
-      const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      const response = await api(`/api/v1/fs/entries${query}`, {}, connection) as ListEntriesResponse;
+      const query = new URLSearchParams({ include_hidden: "true" });
+      if (path) query.set("path", path);
+      const response = await api(`/api/v1/fs/entries?${query}`, {}, connection) as ListEntriesResponse;
       setListing(current => options.root || !current || current.path === response.path ? response : current);
       setTree((current) => ({ ...current, [response.path]: response.entries }));
       setExpanded((current) => {
@@ -1463,19 +1464,20 @@ function FileWorkspace(props: {
       const isExpanded = expanded.has(entry.path);
       const isLoading = loadingPaths.has(entry.path);
       const children = isDir && isExpanded ? tree[entry.path] ?? [] : [];
-      const entryIcon = isDir
-        ? <FolderOpen size={14} />
-        : getFileViewKind(entry.path) === "image"
-          ? <ImageIcon size={14} />
-          : <FileText size={14} />;
+      const EntryIcon = isDir
+        ? isExpanded ? ChevronDown : ChevronRight
+        : getFileViewKind(entry.path) === "image" ? ImageIcon : FileText;
       const row = <button
         key={entry.path}
-        className={`fileEntryRow paneListItem${openedFile?.path === entry.path ? " active" : ""}`}
-        style={{ "--file-indent": `${depth * 14}px` } as React.CSSProperties}
+        type="button"
+        className="fileEntryRow"
+        aria-expanded={isDir ? isExpanded : undefined}
+        aria-current={openedFile?.path === entry.path ? "true" : undefined}
+        title={entry.name}
+        style={{ "--file-indent": `${depth * 12}px` } as React.CSSProperties}
         onClick={() => isDir ? void toggleDir(entry) : void openFile(entry.path)}
       >
-        {isDir ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
-        {entryIcon}
+        <EntryIcon size={15} aria-hidden="true" />
         <span>{entry.name}</span>
       </button>;
       const childRows = isDir && isExpanded ? [

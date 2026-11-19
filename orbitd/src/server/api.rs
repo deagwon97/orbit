@@ -205,9 +205,16 @@ async fn create_entry(req: CreateEntryRequest, kind: FsEntryKind) -> Response {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListEntriesQuery {
+    path: Option<String>,
+    #[serde(default)]
+    include_hidden: bool,
+}
+
 pub async fn list_entries(
     State(_state): State<AppState>,
-    Query(query): Query<ListDirsQuery>,
+    Query(query): Query<ListEntriesQuery>,
 ) -> Response {
     let fallback = std::env::var("ORBIT_WORKSPACE")
         .map(PathBuf::from)
@@ -241,7 +248,7 @@ pub async fn list_entries(
     let mut entries = Vec::new();
     while let Ok(Some(entry)) = read_dir.next_entry().await {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if !query.include_hidden && name.starts_with('.') {
             continue;
         }
         if let Ok(ft) = entry.file_type().await {

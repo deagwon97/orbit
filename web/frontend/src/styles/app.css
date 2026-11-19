@@ -758,21 +758,32 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
 .fileCreateFolderButton { margin-inline-start: auto; }
 .fileCreateForm { display: grid; gap: 12px; }
 .fileCreateForm .modalContext { overflow-wrap: anywhere; white-space: normal; }
+.fileExplorerList { padding: 4px 6px 8px; scrollbar-width: none; }
+.fileExplorerList::-webkit-scrollbar { display: none; }
 .fileEntryRow {
-  min-height: 38px;
-  grid-template-columns: 14px 18px minmax(0, 1fr);
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  width: 100%;
+  min-height: 30px;
   gap: 6px;
-  margin-bottom: 6px;
-  padding-inline-start: min(calc(12px + var(--file-indent)), 45%);
+  padding: 0 8px;
+  padding-inline-start: min(calc(8px + var(--file-indent)), 45%);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  text-align: start;
   font-size: 13px;
 }
 .fileEntryRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fileEntryRow.active { color: var(--orbit-accent); }
+.fileEntryRow svg { color: var(--orbit-secondary); }
+.fileEntryRow:hover { background: var(--orbit-hover); }
+.fileEntryRow[aria-current="true"] { color: var(--orbit-accent); background: var(--orbit-accent-soft); }
+.fileEntryRow[aria-current="true"] svg { color: inherit; }
 .fileEntryLoading {
   min-height: 28px;
   display: flex;
   align-items: center;
-  padding-inline-start: min(calc(56px + var(--file-indent)), calc(45% + 44px));
+  padding-inline-start: min(calc(41px + var(--file-indent)), 60%);
   color: var(--orbit-secondary);
   font-size: 12px;
 }
@@ -1053,7 +1064,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   .terminalTop { min-height: 58px; gap: 5px; padding: 5px 8px; }
   .terminalTop button, .sessionDetailsDisclosure summary { min-height: 44px; }
   .sessionDetailsDisclosure summary { width: 44px; }
-  .sessionListHeader button, .fileExplorerActions button, .fileEntryRow { min-height: 44px; }
+  .sessionListHeader button, .fileExplorerActions button { min-height: 44px; }
+  .fileEntryRow { min-height: 36px; }
   .sessions .row { padding: 13px; }
   .sessions .pill { margin-right: 37px; }
   .sessions .sessionCardActions { top: 2px; width: 44px; min-height: 44px; }
