@@ -16,6 +16,7 @@ const sessionName = 'Build and test on ARM64';
       const mobile = width < 821;
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' });
       let saved, shortcut, deletedSession;
+      const imageRequests = [];
       let canCreateFile = false, tempPath, tempSession, submittedSession;
       let tempFoldersCreated = 0, failFirstRun = width === 320;
       const entries = [
@@ -88,6 +89,17 @@ const sessionName = 'Build and test on ARM64';
           const created = { name: body.name, path: project + '/' + body.name, kind: pathname.endsWith('/dirs') ? 'dir' : 'file' };
           entries.push(created);
           return route.fulfill({ status: 201, json: { path: created.path } });
+        }
+        if (pathname.endsWith('/fs/raw')) {
+          const requested = new URL(route.request().url());
+          imageRequests.push(requested.searchParams.get('path'));
+          assert.deepEqual([...requested.searchParams.keys()], ['path']);
+          assert.equal(route.request().headers()['authorization'], 'Bearer fixture');
+          assert.equal(route.request().headers()['x-orbitd-url'], 'http://build.internal:7777');
+          return route.fulfill({
+            contentType: 'image/svg+xml',
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>',
+          });
         }
         if (pathname.endsWith('/files')) {
           if (route.request().method() === 'PUT') {
@@ -347,14 +359,21 @@ const sessionName = 'Build and test on ARM64';
       await page.getByRole('button', { name: 'notes.txt', exact: true }).waitFor();
       await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
-      await editor.getByRole('textbox').fill('# Updated on ' + width);
+      const markdown = '# Updated on ' + width + '\n\n![Markdown image](./docs/desktop.svg)\n\n<p><img src="docs/../assets/test%20image.svg" alt="HTML image" width="8"></p>';
+      await editor.getByRole('textbox').fill(markdown);
       assert.equal(await explorerList.locator('.fileEntryRow[title="README.md"]').getAttribute('aria-current'), 'true');
       await editor.getByRole('button', { name: 'Save', exact: true }).click();
       await editor.getByRole('button', { name: 'Saved', exact: true }).waitFor();
-      assert.deepEqual(saved, { path, content: '# Updated on ' + width });
+      assert.deepEqual(saved, { path, content: markdown });
       assert.equal(await overflow('.fileTabs'), false);
       await editor.getByRole('button', { name: 'Preview', exact: true }).click();
       await editor.getByRole('heading', { name: 'Updated on ' + width }).waitFor();
+      for (const name of ['Markdown image', 'HTML image']) {
+        const image = editor.getByRole('img', { name, exact: true });
+        await image.waitFor();
+        await page.waitForFunction(alt => [...document.images].some(img => img.alt === alt && img.naturalWidth === 8), name);
+      }
+      assert.deepEqual(imageRequests.sort(), [project + '/assets/test image.svg', project + '/docs/desktop.svg']);
       if (mobile) {
         await editor.getByRole('button', { name: 'Back to Explorer' }).click();
         await page.getByRole('button', { name: 'README.md', exact: true }).click();

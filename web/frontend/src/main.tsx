@@ -9,7 +9,7 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FilePlu
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { marked } from "marked";
+import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { basicSetup, EditorView } from "codemirror";
 import { search } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting, StreamLanguage } from "@codemirror/language";
@@ -1453,11 +1453,6 @@ function FileWorkspace(props: {
   const rootEntries = listing ? tree[listing.path] ?? [] : [];
   const viewKind = openedFile ? getFileViewKind(openedFile.path) : null;
 
-  const renderedMarkdown = useMemo(() => {
-    if (!openedFile || viewKind !== "markdown" || viewMode !== "view") return "";
-    return marked(editContent) as string;
-  }, [editContent, openedFile?.path, viewMode, viewKind]);
-
   function renderTree(entries: FsEntry[], depth = 0): React.ReactNode[] {
     return entries.flatMap((entry) => {
       const isDir = entry.kind === "dir";
@@ -1536,7 +1531,7 @@ function FileWorkspace(props: {
             <img src={rawFileUrl(openedFile.path, connection)} alt={fileName} />
           </div>
         ) : viewKind === "markdown" && viewMode === "view" ? (
-          <div className="fileMarkdownPreview" dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
+          <FileMarkdownPreview source={editContent} path={openedFile.path} server={connection.url} token={connection.token} />
         ) : viewKind === "code" ? (
           <CodeEditor value={editContent} path={openedFile.path} onChange={setEditContent} />
         ) : (
