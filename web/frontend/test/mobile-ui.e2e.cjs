@@ -30,7 +30,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   '  subgraph ORB["orb · 터미널 클라이언트"]', '    Entry["orb 실행"] -->|"인자 없이 실행"| TUI["TUI"]',
   '    Entry -->|"하위 명령"| CLI["CLI"]', '    TUI --> Client["internal/client"]', '    CLI --> Client', '  end',
   '  Browser["브라우저 · React 웹 UI"] --> Proxy["Fastify 프록시"]',
-  '  Client --> Daemon["orbitd"]', '  Proxy --> Daemon', '~~~', '',
+  '  Client --> Daemon["orbitd"]', '  Proxy --> Daemon',
+  '  Daemon --> Session["Session"] --> Worker["Worker"] --> State["State"]', '~~~', '',
   '~~~svg', '<svg viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg"><text x="10" y="30">SVG diagram</text></svg>', '~~~', '',
   '~~~html', '<!doctype html><html><head><style>article{display:flex;gap:16px}</style></head><body><article><span>Start</span> → <span>Finish</span></article><img src="/diagram-preview-fixture.png" alt=""><script>document.body.dataset.previewScript = "ran";</script></body></html>', '~~~', '',
   '~~~mermaid', 'flowchart LR', '  A -->', '~~~',
@@ -171,17 +172,40 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await mermaidFrame.getByText('orbitd', {exact:true}).waitFor();
   if(!await mermaidFrame.locator('svg .edgePaths path').count())throw Error('Mermaid preview lost the flowchart edge');
   const mermaidSvg=mermaidFrame.locator('svg');
-  const validDiagram=()=>mermaidSvg.evaluate(svg=>{
+  const waitForFittedDiagram=()=>page.waitForFunction(()=>{
+   const doc=document.querySelector('iframe[title="Mermaid preview"]')?.contentDocument;
+   const svg=doc?.querySelector('svg');
+   if(!svg)return false;
    const view=svg.viewBox.baseVal,bounds=svg.getBBox();
+   const {scrollHeight,clientHeight,scrollWidth,clientWidth}=doc.documentElement;
    return bounds.width>0&&bounds.height>0&&
     view.x<=bounds.x&&view.y<=bounds.y&&
     view.x+view.width>=bounds.x+bounds.width&&view.y+view.height>=bounds.y+bounds.height&&
+    scrollHeight<=clientHeight+1&&scrollWidth<=clientWidth+1&&
     svg.getBoundingClientRect().height>40;
-  });
-  if(!await validDiagram())throw Error('Mermaid preview is blank or clips artwork on mobile');
+  },{},{timeout:5000});
+  await waitForFittedDiagram();
   await page.setViewportSize({width:1440,height:900});
-  if(!await validDiagram())throw Error('Mermaid preview is blank or clips artwork on desktop');
+  await waitForFittedDiagram();
+  const inlineHeight=await mermaidSvg.evaluate(svg=>svg.getBoundingClientRect().height);
+  if(inlineHeight<=560)throw Error('The tall fixture must exercise the former 560px height cap');
   await page.setViewportSize({width:390,height:844});
+  const enlargeDiagram=page.getByRole('button',{name:'Enlarge Mermaid diagram',exact:true});
+  await enlargeDiagram.click();
+  const diagramDialog=page.getByRole('dialog',{name:'Mermaid diagram',exact:true});
+  const expandedSvg=diagramDialog.frameLocator('iframe[title="Expanded Mermaid preview"]').locator('svg');
+  await expandedSvg.waitFor();
+  const fittedWidth=(await expandedSvg.boundingBox()).width;
+  await diagramDialog.getByRole('button',{name:'Zoom in',exact:true}).click();
+  await expandedSvg.waitFor();
+  if((await expandedSvg.boundingBox()).width<=fittedWidth)throw Error('Zoom did not enlarge the diagram');
+  await page.goBack();
+  await diagramDialog.waitFor({state:'hidden'});
+  await enlargeDiagram.focus();
+  await page.keyboard.press('Enter');
+  await diagramDialog.waitFor();
+  await page.keyboard.press('Escape');
+  await diagramDialog.waitFor({state:'hidden'});
   const mermaidBlock=page.locator('.codexCode').filter({has:page.locator('iframe[title="Mermaid preview"]')}).first();
   await mermaidBlock.getByRole('button',{name:'Show source',exact:true}).click();
   await page.locator('.codexCode pre').filter({hasText:'터미널 클라이언트'}).waitFor();
