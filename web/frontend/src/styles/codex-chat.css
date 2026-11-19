@@ -39,6 +39,10 @@
 .codexCode button { width:26px; min-height:26px; padding:0; background:transparent; color:var(--chat-secondary); border-color:transparent; }
 .codexCode button:hover:not(:disabled) { background:var(--chat-hover); color:var(--chat-ink); }
 .codexCode .codexCodeCopy { margin-left:auto; }
+.codexCode .codexDiagramToggle { width:auto; padding:0 8px; font-size:11px; }
+.codexDiagramPreview { display:block; width:100%; height:100px; border:0; border-radius:0 0 6px 6px; background:#fff; }
+.codexDiagramPreview[data-ready="false"] { position:absolute; width:1px; height:1px; visibility:hidden; pointer-events:none; }
+.codexDiagramStatus { padding:10px 13px; color:var(--chat-secondary); font-size:12px; }
 .codexCodeCopyStatus { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .codexCodeCopy[data-status="copied"] { color:var(--chat-accent); }
 .codexCodeCopy[data-status="failed"] { color:var(--chat-danger); }
@@ -129,6 +133,18 @@
 .codexComposerMeta > button > span, .codexCwd summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .codexMode { flex:none; white-space:nowrap; }
 .codexMode[data-mode="plan"] { color:var(--chat-accent); font-weight:600; }
+.codexModePicker { display:none; }
+@media (width > 820px) {
+  .codexModeLabel { display:none; }
+  .codexModePicker { display:inline-flex; gap:2px; padding:2px; border:1px solid var(--chat-border); border-radius:7px; }
+  .codexModePicker label { position:relative; }
+  .codexModePicker input { position:absolute; width:1px; height:1px; min-height:0; margin:0; opacity:0; }
+  .codexModePicker input + span { display:block; min-width:40px; padding:4px 7px; border-radius:4px; text-align:center; cursor:pointer; }
+  .codexModePicker input:not(:disabled) + span:hover { background:var(--chat-hover); }
+  .codexModePicker input:checked + span { color:var(--chat-accent); background:var(--chat-accent-soft); font-weight:600; }
+  .codexModePicker input:focus-visible + span { outline:2px solid var(--chat-accent); outline-offset:1px; }
+  .codexModePicker input:disabled + span { cursor:default; }
+}
 .codexCwd { min-width:0; max-width:45%; }
 .codexCwd summary { display:flex; align-items:center; min-height:28px; border-radius:4px; cursor:pointer; list-style:none; font:11px ui-monospace,monospace; }
 .codexCwd summary::-webkit-details-marker { display:none; }

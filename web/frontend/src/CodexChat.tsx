@@ -12,6 +12,7 @@ import type { Session as OrbitSession } from './main';
 import { useVoiceInput } from './codex-voice-input';
 import { useDialogHistory } from './dialog-history';
 import { copyText } from './clipboard';
+import { CodexDiagram, diagramFormat, type DiagramFormat } from './CodexDiagram';
 
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -52,15 +53,18 @@ function Inline({ tokens = [] }: { tokens?: Token[] }) {
     return <React.Fragment key={i}>{'text' in token ? token.text : token.raw}</React.Fragment>;
   })}</>;
 }
-function CodeBlock({ text }: { text: string }) {
+function CodeBlock({ text, format, streaming }: { text: string; format?: DiagramFormat; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false), [long, setLong] = useState(false);
+  const [previewOverride, setPreviewOverride] = useState<boolean>();
+  const canPreview = !!format && !streaming;
+  const preview = canPreview && (previewOverride ?? format === 'Mermaid');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const pre = useRef<HTMLPreElement>(null);
   useLayoutEffect(() => {
     const node = pre.current; if (!node || expanded) return;
     const measure = () => setLong(node.scrollHeight > node.clientHeight);
     const resize = new ResizeObserver(measure); resize.observe(node); measure(); return () => resize.disconnect();
-  }, [text, expanded]);
+  }, [text, expanded, preview]);
   useEffect(() => {
     if (copyStatus === 'idle') return;
     const timer = window.setTimeout(() => setCopyStatus('idle'), 2000);
@@ -77,7 +81,10 @@ function CodeBlock({ text }: { text: string }) {
   </button>;
   return <div className={`codexCode ${expanded ? 'expanded' : ''}`}>
     <div className="codexCodeToolbar">
-      {(long || expanded) && toggle}
+      {!preview && (long || expanded) && toggle}
+      {canPreview && <button type="button" className="codexDiagramToggle" onClick={() => setPreviewOverride(!preview)}>
+        {preview ? 'Show source' : `Preview ${format}`}
+      </button>}
       <button type="button" className="codexCodeCopy" data-status={copyStatus} disabled={!text}
         aria-label="Copy code" title={feedback || 'Copy code'}
         onClick={async () => setCopyStatus(await copyText(text) ? 'copied' : 'failed')}>
@@ -85,17 +92,17 @@ function CodeBlock({ text }: { text: string }) {
       </button>
       <span className="codexCodeCopyStatus" role="status">{feedback}</span>
     </div>
-    <pre ref={pre}><code>{text}</code></pre>
-    {expanded && <div className="codexCodeFooter">{toggle}</div>}
+    {preview && format ? <CodexDiagram text={text} format={format} /> : <pre ref={pre}><code>{text}</code></pre>}
+    {!preview && expanded && <div className="codexCodeFooter">{toggle}</div>}
   </div>;
 }
-function Markdown({ text }: { text: string }) {
+function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   function blocks(tokens: Token[] = [], tightList = false): React.ReactNode {
     return tokens.map((token, i) => {
       switch (token.type) {
         case 'space':
         case 'def': return null;
-        case 'code': return <CodeBlock key={i} text={token.text} />;
+        case 'code': return <CodeBlock key={i} text={token.text} streaming={streaming} format={diagramFormat(token.lang, token.text)} />;
         case 'heading': return React.createElement(`h${token.depth}`, { key: i }, <Inline tokens={token.tokens} />);
         case 'paragraph': return <p key={i}><Inline tokens={token.tokens} /></p>;
         case 'text': {
@@ -244,6 +251,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const [forkingTurn, setForkingTurn] = useState<string | null>(null);
   const [commands, setCommands] = useState<ConversationCommand[]>([]), [commandResult, setCommandResult] = useState<any>(null), [commandBusy, setCommandBusy] = useState(false), [selectedCommand, setSelectedCommand] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null), commandView = useRef(0);
+  const modePicker = useRef<HTMLDivElement>(null);
   function closeControls() { commandView.current++;setCommandResult(null); }
   const reservedAttachments=useRef(new Set<string>()),inFlight=useRef(0);
   const submissionKey=`orbit.submissions.${session.key}:${session.codex_thread_id||''}`;
@@ -408,6 +416,16 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
     if (commandBusy || connection !== 'ready') return;
     if ((consumeDraft || /^\/resume\s+[0-9a-f-]{36}$/i.test(command.trim())) && attachments.items.length) { setError('파일이 첨부되어 있습니다. 슬래시 명령을 실행하려면 첨부를 해제하거나 일반 메시지로 보내세요.'); return; }
     if (!state.current.capabilities.commands) { setError('현재 orbitd는 대화 명령을 지원하지 않습니다. 새 바이너리로 교체하고 다시 연결하세요.'); return; }
+    const inlinePlan = /^\/plan(?:\s|$)/.test(command) && window.matchMedia('(width > 820px)').matches;
+    if (inlinePlan && command === '/plan') {
+      if (!canChangeMode) {
+        setError('현재 대화에서 모드를 바꿀 수 없습니다.');
+        return;
+      }
+      if (consumeDraft) setDraft('');
+      modePicker.current?.querySelector<HTMLInputElement>('input:checked')?.focus();
+      return;
+    }
     if (/^\/permissions?\s+full-access$/.test(command.trim()) && !extra.confirmFullAccess) command = '/permissions';
     setCommandBusy(true); setError(''); const before = draft, view = commandView.current;
     try {
@@ -437,7 +455,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         const anchor = document.createElement('a'); anchor.href = url; anchor.download = `codex-${session.id}.md`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
         result = { type: 'export', message: '대화 전체를 Markdown으로 다운로드했습니다.' };
       }
-      if (view === commandView.current) setCommandResult((previous: any) => result.type === 'resume' && extra.cursor && previous?.type === 'resume' ? { ...result, data: [...new Map([...previous.data,...result.data].map((thread: any) => [thread.id,thread])).values()] } : result);
+      if (view === commandView.current && !(inlinePlan && result.type === 'plan')) setCommandResult((previous: any) => result.type === 'resume' && extra.cursor && previous?.type === 'resume' ? { ...result, data: [...new Map([...previous.data,...result.data].map((thread: any) => [thread.id,thread])).values()] } : result);
       if (consumeDraft) setDraft(value => value === before ? '' : value);
       refresh();
     } catch (e) { setError(String(e)); } finally { setCommandBusy(false); }
@@ -554,6 +572,8 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
   const host = (() => { try { return new URL(session.connection.url).host; } catch { return session.connection.url; } })();
   const cwd = s.settings.cwd || session.cwd;
   const planMode = s.settings.collaborationMode?.mode === 'plan';
+  const canChangeMode = connection === 'ready' && !!s.capabilities.commands && session.status === 'running' &&
+    !running && !commandBusy && !voiceActive && inFlight.current === 0;
   const workingFolder = cwd?.replace(/\/+$/, '').split('/').pop();
   const compactCwd = workingFolder && workingFolder !== cwd ? `…/${workingFolder}` : cwd;
   return <div className={`codexChat${dragging ? ' dragging' : ''}`} onDragEnter={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++;setDragging(true); } }} onDragOver={event => { if(event.dataTransfer.types.includes('Files')) { event.preventDefault();event.dataTransfer.dropEffect='copy'; } }} onDragLeave={event => { event.preventDefault();if(--dragDepth.current<=0){dragDepth.current=0;setDragging(false);} }} onDrop={event => { if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);attachments.add(Array.from(event.dataTransfer.files)); }}>
@@ -575,7 +595,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         const message = ['userMessage', 'agentMessage', 'system'].includes(item.type);
         const canFork = forkBoundaries.get(item.turnId) === id;
         return <React.Fragment key={id}>
-          {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} />}
+          {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} streaming={item.status === 'inProgress'} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} />}
           {canFork && <div className="codexTurnActions">
             <button type="button" disabled={connection !== 'ready' || forkingTurn !== null} onClick={() => void forkTurn(item.turnId)}>
               <GitFork size={14} />{forkingTurn === item.turnId ? 'Forking…' : 'Fork here'}
@@ -600,6 +620,12 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         <AttachmentPicker {...attachmentSupport} add={attachments.add} />
         <textarea rows={1} enterKeyHint="enter" ref={promptRef} aria-label="Codex 메시지" aria-expanded={matches.length > 0} aria-controls="codex-command-list" placeholder={running ? '추가 지시…' : '메시지 입력…'} value={draft} maxLength={100000} onPaste={event => { const files=Array.from(event.clipboardData.files);if(!files.length)return;event.preventDefault();attachments.add(files);const text=event.clipboardData.getData('text/plain');if(text){const node=event.currentTarget,start=node.selectionStart,end=node.selectionEnd;setDraft(draft.slice(0,start)+text+draft.slice(end));} }} onChange={e => { setDraft(e.target.value); setSelectedCommand(0); }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.code === 'KeyP' &&
+            window.matchMedia('(width > 820px)').matches && canChangeMode) {
+            event.preventDefault();
+            if (!event.repeat) void runCommand(planMode ? '/plan off' : '/plan on');
+            return;
+          }
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             if (matches.length) {
               event.preventDefault();
@@ -656,7 +682,22 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         <button type="button" disabled={!s.capabilities.commands || commandBusy || connection !== 'ready'} onClick={() => void runCommand('/model')} title="모델 및 추론 강도">
           <span>{s.settings.model || 'Codex'}{s.settings.effort ? ` · ${s.settings.effort}` : ''}{['fast','priority'].includes(s.settings.serviceTier) ? ' · Fast' : ''}</span>
         </button>
-        {connection === 'ready' && <span className="codexMode" data-mode={planMode ? 'plan' : 'default'} title="대화 모드">{planMode ? 'Plan' : 'Default'}</span>}
+        {connection === 'ready' && <>
+          <span className="codexMode codexModeLabel" data-mode={planMode ? 'plan' : 'default'} title="대화 모드">{planMode ? 'Plan' : 'Default'}</span>
+          <div ref={modePicker} className="codexMode codexModePicker" role="radiogroup" aria-label="대화 모드" title="대화 모드 · Alt+P">
+            {['Default', 'Plan'].map(label => {
+              const isPlan = label === 'Plan';
+              return <label key={label}>
+                <input type="radio" name={`codex-mode-${session.key}`} checked={planMode === isPlan} disabled={!canChangeMode}
+                  onChange={() => {
+                    void runCommand(isPlan ? '/plan on' : '/plan off');
+                    promptRef.current?.focus();
+                  }} />
+                <span>{label}</span>
+              </label>;
+            })}
+          </div>
+        </>}
         {s.settings.sandboxPolicy?.type === 'dangerFullAccess' && s.settings.approvalPolicy === 'never' && <span className="codexYolo" title="전체 접근 · 승인 안 함">YOLO</span>}
         <details className="codexDesktopDetails sessionDetailsDisclosure">
           <summary aria-label="Session details" title="Session details"><Info size={16} /></summary>

@@ -25,6 +25,12 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    }
   };
  });
+ const diagramAnswer=[
+  '~~~', 'flowchart TB', '  subgraph ORB["터미널 클라이언트"]', '    CLI["터미널"] --> Daemon["orbitd"]', '  end', '~~~', '',
+  '~~~svg', '<svg viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg"><text x="10" y="30">SVG diagram</text></svg>', '~~~', '',
+  '~~~html', '<!doctype html><html><head><style>article{display:flex;gap:16px}</style></head><body><article><span>Start</span> → <span>Finish</span></article><img src="/diagram-preview-fixture.png" alt=""><script>document.body.dataset.previewScript = "ran";</script></body></html>', '~~~', '',
+  '~~~mermaid', 'flowchart LR', '  A -->', '~~~',
+ ].join('\n');
  const startedAt=Math.floor((Date.now()-234000)/1000),settings={model:'gpt-6.1-sol-long-model-name-layout-check',effort:'medium',serviceTier:'priority',approvalPolicy:'never',sandboxPolicy:{type:'dangerFullAccess'},cwd:'/home/bdg/project/a-very-long-project-folder/mobile-layout-and-working-status-validation'};
  let queue={items:[],version:0,paused:false};
  const snapshot=()=>({connected:true,activeTurn:active?'ui-turn':null,settings,tokenUsage:{total:{inputTokens:123456,cachedInputTokens:64000,outputTokens:3456,totalTokens:126912},last:{totalTokens:12000},modelContextWindow:200000},capabilities:{commands:true,steer:true,queue:true,images:true,fileAttachments:true,resume:true},approvals:[],queue});
@@ -61,9 +67,13 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(failConnections){void ws.close({code:1011,reason:'QA unavailable'});return;}
   ws.send(JSON.stringify({type:'ready',state:snapshot()}));ws.onMessage(raw=>{
   const b=JSON.parse(String(raw));ops.push(b);let result={};
-  if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'}]}]},state:snapshot()};
+  if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'},{id:'diagrams',type:'agentMessage',status:'completed',text:diagramAnswer}]}]},state:snapshot()};
   if(b.op==='command'){if(b.command==='/help')result={type:'help',commands};else if(b.command==='/status')result={type:'status',threadId:'12345678-1234-4234-8234-123456789012',state:snapshot()};else if(b.command==='/usage')result={type:'usage',...limits};else if(b.command==='/model')result={type:'model',state:snapshot(),models:[{id:settings.model,model:settings.model,supportedReasoningEfforts:[{reasoningEffort:'medium',description:'Medium'}]}]};else result={type:'resume',data:[],state:snapshot()};}
   if(b.op==='interrupt'){active=false;ws.send(JSON.stringify({type:'notification',message:{method:'turn/completed',params:{turn:{id:'ui-turn',status:'interrupted'}}}}));}
+  if(b.op==='command'&&/^\/plan(?: |$)/.test(b.command)){
+   if(b.command!=='/plan')settings.collaborationMode={mode:b.command==='/plan on'?'plan':'default'};
+   result={type:'plan',state:snapshot()};
+  }
   if(b.op==='queue/remove'){
    queue={...queue,items:queue.items.filter(item=>item.id!==b.entryId),version:queue.version+1};
    result=snapshot();
@@ -75,7 +85,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  try{
   await page.goto(c.webUrl);await page.evaluate(connection=>{localStorage.setItem('orbit.connections',JSON.stringify([connection]));localStorage.setItem('orbit.activeConnection',connection.id);},connection);await page.reload();await page.getByTitle('New session',{exact:true}).click();let dialog=page.getByRole('dialog');await dialog.getByRole('radio', { name: 'Web · Chat', exact: true }).check();await dialog.getByPlaceholder('cwd',{exact:true}).fill(testCwd);await dialog.getByRole('button',{name:'Run',exact:true}).click();await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   await page.waitForFunction(()=>history.state?.orbitDetail===true&&!history.state?.orbitModal);
-  const modeLabel=page.locator('.codexComposerMeta .codexMode');
+  const modeLabel=page.locator('.codexModeLabel');
   await modeLabel.filter({hasText:/^Default$/}).waitFor();
   wsClient.send(JSON.stringify({type:'notification',message:{
    method:'thread/settings/updated',params:{threadSettings:{...settings,collaborationMode:{mode:'plan'}}},
@@ -135,7 +145,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   updateQueue([]);
   await queuePanel.waitFor({state:'hidden'});
-  const codeBlock=page.locator('.codexMessage.agentMessage .codexCode');
+  const codeBlock=page.locator('.codexMessage.agentMessage .codexCode').first();
   const expectedCode=Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n');
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   const toolbar=codeBlock.locator('.codexCodeToolbar');
@@ -153,6 +163,28 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(await collapse.locator('.lucide-minus').count()!==2)throw Error('Expanded code lost its collapse controls');
   await collapse.last().click();
   await expand.waitFor();
+  const mermaidFrame=page.frameLocator('iframe[title="Mermaid preview"]').first();
+  await mermaidFrame.getByText('orbitd', {exact:true}).waitFor();
+  if(!await mermaidFrame.locator('svg .edgePaths path').count())throw Error('Mermaid preview lost the flowchart edge');
+  const mermaidBlock=page.locator('.codexCode').filter({has:page.locator('iframe[title="Mermaid preview"]')}).first();
+  await mermaidBlock.getByRole('button',{name:'Show source',exact:true}).click();
+  await page.locator('.codexCode pre').filter({hasText:'터미널 클라이언트'}).waitFor();
+  await page.getByRole('button',{name:'Preview Mermaid',exact:true}).click();
+  await mermaidFrame.locator('svg').waitFor();
+  await page.getByRole('button',{name:'Preview SVG',exact:true}).click();
+  await page.frameLocator('iframe[title="SVG preview"]').getByText('SVG diagram',{exact:true}).waitFor();
+  let previewRequests=0;
+  await page.route('**/diagram-preview-fixture.png',route=>{previewRequests++;return route.abort();});
+  await page.getByRole('button',{name:'Preview HTML',exact:true}).click();
+  const htmlFrame=page.frameLocator('iframe[title="HTML preview"]');
+  await htmlFrame.getByText('Finish',{exact:true}).waitFor();
+  if(await htmlFrame.locator('article').evaluate(node=>getComputedStyle(node).display)!=='flex')throw Error('HTML preview dropped the diagram stylesheet');
+  if(await page.locator('iframe[title="HTML preview"]').getAttribute('sandbox')!=='allow-same-origin')throw Error('HTML preview lost its sandbox');
+  const previewImage=htmlFrame.locator('img');
+  await previewImage.waitFor({state:'attached'});
+  if(!await previewImage.evaluate(node=>node.complete&&!node.naturalWidth)||previewRequests)throw Error('HTML preview loaded an external image');
+  if(await htmlFrame.locator('script, body[data-preview-script]').count())throw Error('HTML preview retained executable script');
+  await page.getByText('Diagram could not be rendered.',{exact:false}).waitFor();
   const mic=page.getByRole('button',{name:'음성 입력 시작',exact:true});
   const voiceDraft=page.getByRole('textbox',{name:'Codex 메시지'});
   await voiceDraft.fill('작성 중');
@@ -300,7 +332,23 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await command('/status');dialog=page.getByRole('dialog',{name:'세션 상태'});await dialog.getByRole('meter',{name:'Codex Weekly limit',exact:true}).waitFor();await assertFit('desktop status');await page.screenshot({path:'/workspace/output/orbit-status-desktop.png'});await page.goBack();await dialog.waitFor({state:'hidden'});await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   const interrupts=ops.filter(o=>o.op==='interrupt').length;await command('/help');await page.getByRole('dialog',{name:'대화 명령'}).waitFor();await page.getByRole('dialog').press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts)throw Error('Closing dialog interrupts work');
   await page.getByRole('textbox',{name:'Codex 메시지'}).focus();await page.getByRole('textbox',{name:'Codex 메시지'}).press('Escape');await page.locator('.codexWorking').waitFor({state:'hidden'});if(ops.filter(o=>o.op==='interrupt').length!==interrupts+1)throw Error('Esc did not interrupt the active turn');
+  const modePicker=page.getByRole('radiogroup',{name:'대화 모드',exact:true});
+  const planChoice=modePicker.getByRole('radio',{name:'Plan',exact:true});
+  await box.fill('유지할 초안');
+  await box.press('Alt+p');
+  await modePicker.getByRole('radio',{name:'Plan',exact:true,checked:true}).waitFor();
+  if(await box.inputValue()!=='유지할 초안'||await page.getByRole('dialog').count())throw Error('Desktop mode shortcut should keep the draft and avoid a modal');
+  await command('/plan');
+  if(!await planChoice.evaluate(el=>el===document.activeElement))throw Error('Desktop /plan should focus the current mode');
+  await planChoice.press('ArrowLeft');
+  await modePicker.getByRole('radio',{name:'Default',exact:true,checked:true}).waitFor();
+  if(!ops.some(op=>op.command==='/plan off')||!await box.evaluate(el=>el===document.activeElement))throw Error('Desktop mode selection did not return to the composer');
   await page.setViewportSize({width:390,height:844});
+  await command('/plan');
+  const mobilePlan=page.getByRole('dialog',{name:'Plan 모드',exact:true});
+  await mobilePlan.getByRole('button',{name:'Plan 모드',exact:true}).waitFor();
+  await mobilePlan.getByRole('button',{name:'명령 창 닫기'}).click();
+  await mobilePlan.waitFor({state:'hidden'});
   const back=page.getByRole('button',{name:'세션 목록으로 돌아가기',exact:true});
   await back.click();
   const card=page.locator('.sessionCard').filter({has:page.getByTitle(name,{exact:true})});
