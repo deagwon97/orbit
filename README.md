@@ -1,5 +1,7 @@
 # Orbit
 
+[한국어 문서](docs/ko/README.md)
+
 > A lightweight daemon for managing and multiplexing configurable AI coding agent sessions.
 
 Orbit decouples AI coding agent sessions from your terminal. The `orbitd` daemon owns all PTY processes, sessions, and logs. The `orb` client (TUI or CLI) connects via REST/WebSocket — you can detach, reattach, and inspect sessions independently of your terminal lifetime.
@@ -13,8 +15,26 @@ Orbit decouples AI coding agent sessions from your terminal. The `orbitd` daemon
 - **Scrollback + logs** — Sessions keep a configurable scrollback buffer; logs are persisted in-memory and as raw files.
 - **Configurable agent backends** — `orbitd` reads backend command definitions from YAML, while keeping `codex`, `claude`, `opencode`, and `pi` defaults.
 - **REST API + filesystem API** — JSON API for sessions, directory browsing, folder creation, and text file read/write.
-- **Web terminal + editor** — Browser-based xterm.js attach with mobile-friendly controls, folder picker, a lightweight text file editor, and multiple `orbitd` connection profiles.
+- **Web workspace** — Browser-based terminal attach, native Codex chat, a file tree that shows hidden entries, text editing, and multiple `orbitd` connection profiles.
 - **Audit trail** — All session lifecycle events are recorded to `audit.jsonl`.
+
+## Screenshots
+
+![Orbit desktop workspace with the session list, Codex chat, and image attachments](docs/screenshots/desktop-chat.png)
+
+### Mobile terminal and chat
+
+<p>
+  <img src="docs/screenshots/mobile-terminal.png" alt="Codex CLI session with mobile terminal shortcuts" width="280" />
+  <img src="docs/screenshots/mobile-chat.png" alt="Codex Web chat with command output and an attachment" width="280" />
+</p>
+
+### Creating sessions and managing servers
+
+<p>
+  <img src="docs/screenshots/new-session.png" alt="New session dialog with Web and CLI options" width="420" />
+  <img src="docs/screenshots/server-connections.png" alt="Orbit menu showing example server connections" width="390" />
+</p>
 
 ## Architecture
 
@@ -25,11 +45,12 @@ Terminal                    Browser (web UI)
        |                   (same-origin reverse proxy)
        |                           |
        |  REST: sessions CRUD, logs, filesystem
-       |  WebSocket: attach
+       |  WebSocket: PTY attach or Codex chat
        v
        orbitd (Rust + axum)
               |
-              +-------> configured agent backends (child processes)
+              +-------> configured agent backends (PTY child processes)
+              +-------> existing Codex App Server (Web sessions)
               |
               | In-memory SQLite (sessions + logs)
               | Raw log files (./tmp/<id>.log)
@@ -79,7 +100,8 @@ sudo bash script/install.sh --prebuilt
 Run the installer again from the updated checkout. It prepares both binaries
 before replacing either and preserves existing systemd and `orb` connection
 settings. The systemd service restarts after replacement, so finish work in
-attached sessions before upgrading.
+running CLI sessions before upgrading. Web sessions can reconnect to their
+saved Codex conversation after the restart.
 
 ### After install
 
@@ -198,11 +220,13 @@ Base: `http://127.0.0.1:7777` — all endpoints except `/healthz` require `Autho
 | `POST`   | `/api/v1/sessions/:id/stop`        | Stop a running session                           |
 | `DELETE` | `/api/v1/sessions/:id`             | Delete session (kills process if running)        |
 | `GET`    | `/api/v1/sessions/:id/logs?tail=N` | Get base64-encoded log chunks                    |
-| `GET`    | `/api/v1/sessions/:id/attach`      | WebSocket upgrade for live attach                |
+| `GET`    | `/api/v1/sessions/:id/attach`       | WebSocket for live CLI terminal attach           |
+| `GET`    | `/api/v1/sessions/:id/codex`        | WebSocket for Codex Web chat                      |
 | `GET`    | `/api/v1/fs/dirs?path=...`         | List visible subdirectories for a path           |
 | `POST`   | `/api/v1/fs/dirs`                  | Create a child directory                         |
-| `GET`    | `/api/v1/fs/entries?path=...`      | List visible files and directories for a path    |
+| `GET`    | `/api/v1/fs/entries?path=...`      | List files and directories, with optional `include_hidden=true` |
 | `GET`    | `/api/v1/fs/files?path=...`        | Read a UTF-8 text file, up to 10 MB              |
+| `POST`   | `/api/v1/fs/files`                 | Create an empty file with `parent` and `name`   |
 | `PUT`    | `/api/v1/fs/files`                 | Write UTF-8 text content to a file               |
 
 **Create session** request body:
@@ -216,7 +240,7 @@ Base: `http://127.0.0.1:7777` — all endpoints except `/healthz` require `Autho
 }
 ```
 
-The `tool` field is a backend ID from `/api/v1/backends`.
+The `tool` field is a backend ID from `/api/v1/backends`. The optional `mode` defaults to `cli`. For a supported Codex backend, send `mode: "web"` with an empty or omitted `env` object. See the [API reference](orbitd/API.md) for attachment routes.
 
 **WebSocket attach** — JSON-framed messages:
 
@@ -227,7 +251,7 @@ The `tool` field is a backend ID from `/api/v1/backends`.
 ← { "type": "stdout", "data": "<base64>" }
 ```
 
-**Filesystem API** — `path` defaults to `$ORBIT_WORKSPACE` when set, otherwise the `orbitd` process working directory. Hidden entries are omitted. Directory listings return canonical paths plus `parent` and `home` references; file reads reject non-files, non-UTF-8 content, and files larger than 10 MB.
+**Filesystem API** — `path` defaults to `$ORBIT_WORKSPACE` when set, otherwise the `orbitd` process working directory. The Files tab requests `include_hidden=true` on `/api/v1/fs/entries` to show hidden files and directories. API calls without this parameter and the folder picker omit hidden entries. Directory listings return canonical paths plus `parent` and `home` references; file reads reject non-files, non-UTF-8 content, and files larger than 10 MB.
 
 ## Configuration
 
@@ -262,7 +286,8 @@ Default paths and runtime settings:
 | `listen`               | `127.0.0.1:7777`                           | —                    |
 | `config_path`          | `/etc/orbitd/config.yaml`                  | `ORBITD_CONFIG`      |
 | `token_path`           | `/etc/orbitd/token`                        | `ORBITD_TOKEN_PATH`  |
-| `data_dir`             | `~/.local/share/orbit`                     | —                    |
+| `data_dir`             | `~/.local/share/orbit`                     | `ORBIT_DATA_DIR`     |
+| `codex_socket`         | `app-server-control/app-server-control.sock` under `CODEX_HOME` or `~/.codex` | `ORBIT_CODEX_SOCKET` |
 | `session_logs_dir`     | `./tmp` (relative to `orbitd` working dir) | —                    |
 | `audit_path`           | `~/.local/share/orbit/audit.jsonl`         | —                    |
 | `process_path`         | `$PATH` from server environment            | —                    |
@@ -333,69 +358,57 @@ go build -o orb .
 ### Verification
 
 ```bash
-cd orbitd && cargo check --workspace
-cd orb    && go test ./... && go build -o orb .
+(cd orbitd && cargo test --locked --workspace)
+(cd orb && go test ./... && go build -o orb .)
 ```
 
 ### Web UI (optional)
 
-The web client consists of two parts that run together:
+The Vite frontend uses a Fastify reverse proxy to reach the selected `orbitd` server. Server labels, URLs, and tokens are stored in the browser. Use **Orbit menu → Add server** to connect. The URL must be reachable from the web backend.
 
-- **Backend** (Fastify/Node.js on port 3001) — reverse proxy to `orbitd`.
-  Proxies `orbitd` session, backend, filesystem, and attach endpoints:
-  - `GET /api/v1/auth/check` — validate a configured `orbitd` URL/token pair
-  - `GET /api/v1/fs/dirs?path=...` — browse server directories
-  - `POST /api/v1/fs/dirs` — create a new empty directory
-  - `GET /api/v1/fs/entries?path=...` — browse files and directories
-  - `GET /api/v1/fs/files?path=...` — read a text file
-  - `PUT /api/v1/fs/files` — save a text file
-- **Frontend** (React + xterm.js + Vite) — browser-based session UI with
-  xterm.js terminal, folder picker, text file editor, session list, log viewer,
-  and an Orbitd view for adding/removing multiple backend connections.
+#### Run locally from a fresh checkout
+
+With `orbitd` running and Node.js 22 installed, run these commands from the repository root in two terminals.
 
 ```bash
-cd web/backend   && npm install && npm run dev
-cd web/frontend  && npm install && npm run dev
+# Terminal 1
+npm ci --prefix web/backend
+npm run dev --prefix web/backend
+
+# Terminal 2
+npm ci --prefix web/frontend
+npm run dev --prefix web/frontend
 ```
 
-For a single local daemon, the simplest setup is:
+Open the URL printed by Vite. For the default local daemon, add `http://127.0.0.1:7777` and use the token from `~/.config/orbit/orb/token` or `/etc/orbitd/token`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3001` | Web backend listen port |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | Web backend's fallback daemon URL |
+| `ORBIT_TOKEN` | empty | Fallback Bearer token when a connection supplies none |
+| `ORBIT_API_URL` | `http://127.0.0.1:3001` | Vite's development proxy target |
+
+#### Run with Docker Compose
 
 ```bash
-export ORBITD_URL=http://127.0.0.1:7777
-export ORBIT_TOKEN="$(cat ~/.config/orbit/orb/token)"
-cd web/backend && npm run dev
+mkdir -p .playwright-mcp/output
+docker compose -f docker-compose.dev.yaml up -d --build
 ```
 
-Then open the Vite frontend and add an Orbitd connection:
+Open `http://localhost:14000`. The API is on `http://localhost:14001`, and the local Playwright MCP endpoint is `http://127.0.0.1:18932/mcp`. Inside that Playwright container, open `http://orbit-dev-web:3000`.
 
-| Field | Example                                                          | Notes                                                     |
-| ----- | ---------------------------------------------------------------- | --------------------------------------------------------- |
-| Name  | `local`                                                          | Display label in the web UI                               |
-| URL   | `http://127.0.0.1:7777`                                          | The `orbitd` HTTP endpoint reachable from the web backend |
-| Token | contents of `~/.config/orbit/orb/token` (or `/etc/orbitd/token`) | Bearer token generated by `orbitd`                        |
+The backend uses `http://host.docker.internal:7777` for a daemon on the Docker host. The daemon must listen on an internal address reachable from Docker. Use that same URL when adding the connection. The daemon token is mounted read-only from `/etc/orbitd/token`. Set `ORBIT_TOKEN_PATH` to use another token file.
 
-The web backend accepts the following environment variables:
+Source edits reload automatically. After changing dependencies, run `docker compose -f docker-compose.dev.yaml run --rm --no-deps orbit-dev-web npm ci` for the frontend or substitute `orbit-dev-api` for the backend. Stop the stack with `docker compose -f docker-compose.dev.yaml down`.
 
-| Variable      | Default                 | Description                           |
-| ------------- | ----------------------- | ------------------------------------- |
-| `PORT`        | `3001`                  | Web backend listen port               |
-| `ORBITD_URL`  | `http://127.0.0.1:7777` | Fallback upstream orbitd URL          |
-| `ORBIT_TOKEN` | `""`                    | Fallback Bearer token for orbitd auth |
+#### Codex CLI and Web sessions
 
-In the browser, add an `orbitd` connection with a label, URL, and Bearer token.
-Connections are stored in `localStorage`; each proxied request sends the selected
-upstream URL to the web backend, and the backend validates that it is an HTTP(S)
-URL before forwarding. This lets one web UI list and attach sessions from
-multiple `orbitd` instances.
+Choose **CLI · Terminal** for a PTY or **Web · Chat** for the integrated chat. Web mode uses the existing Codex App Server on the selected host. It requires a Codex daemon socket accessible to the `orbitd` service user.
 
-Mobile behavior is optimized for terminal use:
+New Web conversations default to **`gpt-6.2-sol · medium · Fast · YOLO`**. YOLO grants full filesystem access and does not prompt for approval. Use `/model`, `/fast`, and `/permissions` to change the current conversation. `/resume` switches to a saved conversation within the same Orb session. **Fork here** opens a separate session from a completed turn. The attachment picker supports images and general files, at up to 50 MiB each.
 
-- Opening a session uses the full viewport, hides the global toolbar, and removes
-  the terminal chrome until the top-right menu button is opened.
-- The top-right menu restores navigation plus the session header with Detach and
-  Delete controls.
-- The frontend includes `manifest.json`, an app icon, and a small service worker
-  for installable/mobile web-app behavior.
+See the [Codex Web guide](docs/ko/CODEX-WEB.md) for setup, command details, and session behavior.
 
 ## systemd Service
 
@@ -469,7 +482,8 @@ created  →  running  →  stopped    (normal exit)
                       →  removed    (DELETE API / TUI rm)
 ```
 
-Sessions are stored in an in-memory SQLite database and are **not persisted** across `orbitd` restarts. Raw PTY output files (`./tmp/<id>.log`) survive a restart but cannot be reattached.
+- **CLI** — Restarting `orbitd` ends the running PTYs and clears the in-memory session registry. Raw PTY logs in `./tmp/<id>.log` remain on disk.
+- **Codex Web** — `orbitd` restores the saved Orb session and Codex thread mapping from `$ORBIT_DATA_DIR/codex-sessions/` (default `~/.local/share/orbit/codex-sessions/`). The Codex App Server owns the conversation history. Unsent queue entries are lost when `orbitd` restarts.
 
 ## Troubleshooting
 

@@ -1,5 +1,7 @@
 # Orbit
 
+[English README](../../README.md)
+
 > 설정 가능한 AI 코딩 에이전트 세션을 관리하고 멀티플렉싱하는 경량 데몬
 
 Orbit은 AI 코딩 에이전트 세션을 터미널 수명과 분리한다. `orbitd` 데몬이 모든 PTY 프로세스, 세션, 로그를 소유하고, `orb` 클라이언트(TUI 또는 CLI)가 REST/WebSocket으로 연결한다. 터미널 수명과 관계없이 세션을 detach/reattach하고 로그를 확인할 수 있다.
@@ -13,8 +15,26 @@ Orbit은 AI 코딩 에이전트 세션을 터미널 수명과 분리한다. `orb
 - **스크롤백 + 로그** — 설정 가능한 스크롤백 버퍼, 인메모리 + raw 파일 이중 저장
 - **설정 가능한 에이전트 백엔드** — `orbitd`가 YAML의 백엔드 명령 정의를 읽고 실행한다. 기본값으로 `codex`, `claude`, `opencode`, `pi`를 제공한다.
 - **REST API + 파일시스템 API** — 세션, 디렉토리 탐색, 폴더 생성, 텍스트 파일 읽기/쓰기용 JSON API
-- **웹 터미널 + 편집기** — 브라우저 기반 xterm.js attach, 폴더 선택기, 경량 텍스트 파일 편집기
+- **웹 작업 공간** — 터미널 연결, Codex 채팅, 숨김 항목을 표시하는 파일 트리, 텍스트 편집기, 여러 `orbitd` 연결
 - **감사 로그** — 모든 세션 생명주기 이벤트가 `audit.jsonl`에 기록
+
+## 스크린샷
+
+![세션 목록, Codex 채팅, 이미지 첨부가 보이는 Orbit 데스크톱 화면](../screenshots/desktop-chat.png)
+
+### 모바일 터미널과 채팅
+
+<p>
+  <img src="../screenshots/mobile-terminal.png" alt="모바일 터미널 단축키가 보이는 Codex CLI 세션" width="280" />
+  <img src="../screenshots/mobile-chat.png" alt="명령 출력과 첨부가 보이는 Codex Web 채팅" width="280" />
+</p>
+
+### 세션 생성과 서버 관리
+
+<p>
+  <img src="../screenshots/new-session.png" alt="Web과 CLI를 선택하는 새 세션 창" width="420" />
+  <img src="../screenshots/server-connections.png" alt="예시 서버 연결이 표시된 Orbit 메뉴" width="390" />
+</p>
 
 ## 아키텍처
 
@@ -25,11 +45,12 @@ Terminal                    Browser (web UI)
        |                   (동일 출처 리버스 프록시)
        |                           |
        |  REST: sessions CRUD, logs, filesystem
-       |  WebSocket: attach
+       |  WebSocket: PTY attach 또는 Codex 채팅
        v
        orbitd (Rust + axum)
               |
-              +-------> configured agent backends (child processes)
+              +-------> 에이전트 백엔드 (PTY 자식 프로세스)
+              +-------> 기존 Codex App Server (Web 세션)
               |
               | In-memory SQLite (sessions + logs)
               | Raw log files (./tmp/<id>.log)
@@ -82,7 +103,7 @@ export ORBITD_TOKEN_PATH="$HOME/.config/orbit/orbitd/token"
 | `~/.config/orbit/orb/config.yaml` | 선택적 클라이언트 설정 (orbitd URL) |
 | `~/.config/orbit/orb/token` | Bearer 토큰 (보통 `/etc/orbitd/token`에 대한 심볼릭 링크) |
 
-세션 메타데이터와 로그는 인메모리 SQLite 데이터베이스에 저장된다 — **`orbitd`가 종료되면 모든 데이터가 사라진다**. Raw PTY 출력은 오프라인 확인을 위해 `./tmp/<session-id>.log`에도 기록된다.
+CLI 터미널은 `orbitd` 재시작 시 종료된다. Web 세션은 저장된 Codex 대화에 다시 연결할 수 있다. [세션 라이프사이클](#세션-라이프사이클)에서 저장 범위를 확인할 수 있다.
 
 ### 개발 중 클라이언트 실행
 
@@ -177,11 +198,13 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 | `POST` | `/api/v1/sessions/:id/stop` | 실행 중인 세션 중지 |
 | `DELETE` | `/api/v1/sessions/:id` | 세션 삭제 (실행 중이면 프로세스 종료) |
 | `GET` | `/api/v1/sessions/:id/logs?tail=N` | base64 인코딩 로그 청크 조회 |
-| `GET` | `/api/v1/sessions/:id/attach` | WebSocket 업그레이드로 라이브 attach |
+| `GET` | `/api/v1/sessions/:id/attach` | CLI 터미널 연결용 WebSocket |
+| `GET` | `/api/v1/sessions/:id/codex` | Codex Web 채팅용 WebSocket |
 | `GET` | `/api/v1/fs/dirs?path=...` | 지정 경로의 표시 가능한 하위 디렉토리 조회 |
 | `POST` | `/api/v1/fs/dirs` | 하위 디렉토리 생성 |
-| `GET` | `/api/v1/fs/entries?path=...` | 지정 경로의 표시 가능한 파일/디렉토리 조회 |
+| `GET` | `/api/v1/fs/entries?path=...` | 파일과 폴더 조회. `include_hidden=true`로 숨김 항목 포함 |
 | `GET` | `/api/v1/fs/files?path=...` | UTF-8 텍스트 파일 읽기, 최대 10 MB |
+| `POST` | `/api/v1/fs/files` | `parent`와 `name`으로 빈 파일 생성 |
 | `PUT` | `/api/v1/fs/files` | UTF-8 텍스트 내용을 파일에 쓰기 |
 
 **세션 생성** 요청 본문:
@@ -195,7 +218,7 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 }
 ```
 
-`tool` 필드는 `/api/v1/backends`에서 받은 백엔드 ID다.
+`tool` 필드는 `/api/v1/backends`에서 받은 백엔드 ID다. `mode`를 생략하면 `cli`로 실행한다. Web이 지원되는 Codex 백엔드는 `mode: "web"`을 사용하고 `env`는 비우거나 생략한다. 첨부 엔드포인트는 [API 문서](../../orbitd/API.md)를 참고한다.
 
 **WebSocket attach** — JSON 프레임 메시지:
 
@@ -206,7 +229,7 @@ Base URL: `http://127.0.0.1:7777` — `/healthz`를 제외한 모든 엔드포�
 ← { "type": "stdout", "data": "<base64>" }
 ```
 
-**파일시스템 API** — `path`를 생략하면 `$ORBIT_WORKSPACE`가 설정된 경우 그 값을 사용하고, 아니면 `orbitd` 프로세스의 작업 디렉토리를 사용한다. 숨김 항목은 제외된다. 디렉토리 목록은 canonical path와 `parent`, `home` 참조를 반환하며, 파일 읽기는 파일이 아닌 경로, 비 UTF-8 내용, 10 MB 초과 파일을 거부한다.
+**파일시스템 API** — `path`를 생략하면 `$ORBIT_WORKSPACE`가 설정된 경우 그 값을 사용하고, 아니면 `orbitd` 프로세스의 작업 디렉토리를 사용한다. Files 탭은 `/api/v1/fs/entries`에 `include_hidden=true`를 전달해 숨김 파일과 폴더를 표시한다. 해당 매개변수를 생략한 API 호출과 폴더 선택기에서는 숨김 항목을 제외한다. 디렉토리 목록은 canonical path와 `parent`, `home` 참조를 반환하며, 파일 읽기는 파일이 아닌 경로, 비 UTF-8 내용, 10 MB 초과 파일을 거부한다.
 
 ## 설정
 
@@ -241,7 +264,8 @@ backends:
 | `listen` | `127.0.0.1:7777` | — |
 | `config_path` | `/etc/orbitd/config.yaml` | `ORBITD_CONFIG` |
 | `token_path` | `/etc/orbitd/token` | `ORBITD_TOKEN_PATH` |
-| `data_dir` | `~/.local/share/orbit` | — |
+| `data_dir` | `~/.local/share/orbit` | `ORBIT_DATA_DIR` |
+| `codex_socket` | `CODEX_HOME` 또는 `~/.codex` 아래의 `app-server-control/app-server-control.sock` | `ORBIT_CODEX_SOCKET` |
 | `session_logs_dir` | `./tmp` (orbitd 작업 디렉토리 기준) | — |
 | `audit_path` | `~/.local/share/orbit/audit.jsonl` | — |
 | `process_path` | 서버 환경의 `$PATH` | — |
@@ -312,55 +336,57 @@ go build -o orb .
 ### 검증
 
 ```bash
-cd orbitd && cargo check --workspace
-cd orb    && go test ./... && go build -o orb .
+(cd orbitd && cargo test --locked --workspace)
+(cd orb && go test ./... && go build -o orb .)
 ```
 
 ### 웹 UI (선택사항)
 
-웹 클라이언트는 함께 실행되는 두 부분으로 구성된다:
+Vite 프론트엔드는 Fastify 프록시를 통해 선택한 `orbitd`에 연결한다. 서버 이름·URL·토큰은 브라우저에 저장한다. **Orbit 메뉴 → Add server**에서 웹 백엔드가 접근할 수 있는 URL을 등록한다.
 
-- **백엔드** (Fastify/Node.js, 3001번 포트) — `orbitd`의 리버스 프록시.
-  `orbitd`의 세션, 백엔드, 파일시스템, attach 엔드포인트를 프록시한다:
-  - `GET /api/v1/auth/check` — 설정된 `orbitd` URL/token 조합 검증
-  - `GET /api/v1/fs/dirs?path=...` — 서버 디렉토리 탐색
-  - `POST /api/v1/fs/dirs` — 새 빈 디렉토리 생성
-  - `GET /api/v1/fs/entries?path=...` — 파일과 디렉토리 탐색
-  - `GET /api/v1/fs/files?path=...` — 텍스트 파일 읽기
-  - `PUT /api/v1/fs/files` — 텍스트 파일 저장
-- **프론트엔드** (React + xterm.js + Vite) — 브라우저 기반 세션 UI.
-  xterm.js 터미널, 폴더 선택기, 텍스트 파일 편집기, 세션 목록, 여러 `orbitd` 연결 관리 포함.
+#### 클론한 저장소에서 실행
+
+`orbitd`를 실행하고 Node.js 22를 준비한다. 저장소 루트의 터미널 두 개에서 각각 실행한다.
 
 ```bash
-cd web/backend   && npm install && npm run dev
-cd web/frontend  && npm install && npm run dev
+# 터미널 1
+npm ci --prefix web/backend
+npm run dev --prefix web/backend
+
+# 터미널 2
+npm ci --prefix web/frontend
+npm run dev --prefix web/frontend
 ```
 
-단일 로컬 데몬을 사용할 때 가장 단순한 설정:
-
-```bash
-export ORBITD_URL=http://127.0.0.1:7777
-export ORBIT_TOKEN="$(cat ~/.config/orbit/orb/token)"
-cd web/backend && npm run dev
-```
-
-이후 Vite 프론트엔드를 열고 Orbitd 연결을 추가한다:
-
-| 필드 | 예시 | 설명 |
-|------|------|------|
-| Name | `local` | 웹 UI에 표시할 이름 |
-| URL | `http://127.0.0.1:7777` | 웹 백엔드에서 접근 가능한 `orbitd` HTTP 엔드포인트 |
-| Token | `~/.config/orbit/orb/token` 내용 (또는 `/etc/orbitd/token`) | `orbitd`가 생성한 Bearer token |
-
-웹 백엔드는 다음 환경 변수를 지원한다:
+Vite가 출력한 URL을 연다. 기본 로컬 데몬은 `http://127.0.0.1:7777`을 등록하고 `~/.config/orbit/orb/token` 또는 `/etc/orbitd/token`의 토큰을 사용한다.
 
 | 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `PORT` | `3001` | 웹 백엔드 수신 포트 |
-| `ORBITD_URL` | `http://127.0.0.1:7777` | fallback 업스트림 orbitd URL |
-| `ORBIT_TOKEN` | `""` | fallback orbitd 인증용 Bearer 토큰 |
+| --- | --- | --- |
+| `PORT` | `3001` | 웹 백엔드 포트 |
+| `ORBITD_URL` | `http://127.0.0.1:7777` | 웹 백엔드의 기본 데몬 주소 |
+| `ORBIT_TOKEN` | 비어 있음 | 연결에 토큰이 없을 때 사용할 Bearer 토큰 |
+| `ORBIT_API_URL` | `http://127.0.0.1:3001` | Vite 개발 프록시 대상 |
 
-브라우저의 Orbitd 연결은 label, URL, Bearer token으로 구성되며 `localStorage`에 저장된다. 각 프록시 요청은 선택된 업스트림 URL을 웹 백엔드로 전달하고, 백엔드는 HTTP(S) URL인지 검증한 뒤 `orbitd`로 전달한다. 따라서 하나의 웹 UI에서 여러 `orbitd` 인스턴스의 세션을 조회하고 attach할 수 있다.
+#### Docker Compose로 실행
+
+```bash
+mkdir -p .playwright-mcp/output
+docker compose -f docker-compose.dev.yaml up -d --build
+```
+
+웹은 `http://localhost:14000`, API는 `http://localhost:14001`, Playwright MCP는 `http://127.0.0.1:18932/mcp`에서 열린다. Playwright 컨테이너에서는 `http://orbit-dev-web:3000`에 접근한다.
+
+Docker 호스트의 데몬 주소는 `http://host.docker.internal:7777`이다. 데몬을 Docker에서 접근할 수 있는 내부 주소에서 수신하도록 설정하고, 웹 연결에도 이 URL을 입력한다. 토큰 파일은 `/etc/orbitd/token`에서 읽기 전용으로 마운트한다. 다른 파일을 쓰려면 `ORBIT_TOKEN_PATH`를 지정한다.
+
+소스 변경은 자동으로 반영된다. 의존성이 바뀌면 `docker compose -f docker-compose.dev.yaml run --rm --no-deps orbit-dev-web npm ci`를 실행한다. 백엔드 의존성은 서비스 이름을 `orbit-dev-api`로 바꿔 실행한다. 중지할 때는 `docker compose -f docker-compose.dev.yaml down`을 사용한다.
+
+#### Codex CLI와 Web 세션
+
+**CLI · Terminal**은 PTY로 실행한다. **Web · Chat**은 선택한 호스트에서 이미 실행 중인 Codex App Server에 연결하며, `orbitd` 서비스 계정이 해당 소켓에 접근할 수 있어야 한다.
+
+새 Web 대화의 기본값은 **`gpt-6.2-sol · medium · Fast · YOLO`**다. YOLO는 전체 파일시스템 접근을 허용하고 승인을 묻지 않는다. `/model`, `/fast`, `/permissions`로 현재 대화 설정을 바꿀 수 있다. `/resume`은 같은 Orb 세션에서 저장된 대화로 전환하고, **Fork here**는 완료된 턴에서 별도 세션을 연다. 이미지와 일반 파일은 파일당 50 MiB까지 첨부할 수 있다.
+
+서버 준비와 전체 명령 목록은 [Codex Web 가이드](CODEX-WEB.md)를 참고한다.
 
 ## systemd 배포
 
@@ -400,7 +426,8 @@ created  →  running  →  stopped    (정상 종료)
                       →  removed    (DELETE API / TUI rm)
 ```
 
-세션은 인메모리 SQLite 데이터베이스에 저장되므로 **`orbitd` 재시작 시 유지되지 않는다**. Raw PTY 출력 파일(`./tmp/<id>.log`)은 재시작 후에도 남지만, 재attach할 수는 없다.
+- **CLI** — `orbitd`를 재시작하면 실행 중인 PTY가 종료되고 메모리의 세션 목록이 초기화된다. Raw PTY 로그(`./tmp/<id>.log`)는 디스크에 남는다.
+- **Codex Web** — `orbitd`는 `$ORBIT_DATA_DIR/codex-sessions/`(기본값 `~/.local/share/orbit/codex-sessions/`)에 저장한 Orb 세션과 Codex 대화 연결을 복원한다. 대화 이력은 Codex App Server가 관리한다. 아직 전송되지 않은 대기열은 `orbitd` 재시작 시 사라진다.
 
 ## 문제 해결
 

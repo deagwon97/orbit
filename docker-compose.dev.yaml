@@ -1,0 +1,85 @@
+name: orbit-dev
+
+services:
+  orbit-dev-web:
+    build:
+      context: ./web/frontend
+      dockerfile: Dockerfile.dev
+    container_name: orbit-dev-web
+    environment:
+      ORBIT_API_URL: http://orbit-dev-api:3001
+    ports:
+      - "127.0.0.1:14000:3000"
+    volumes:
+      - ./web/frontend:/app
+      - web-node-modules:/app/node_modules
+    depends_on:
+      orbit-dev-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  orbit-dev-api:
+    build:
+      context: ./web/backend
+      dockerfile: Dockerfile.dev
+    container_name: orbit-dev-api
+    environment:
+      PORT: "3001"
+      ORBITD_URL: http://host.docker.internal:7777
+    command: ["sh", "-c", "export ORBIT_TOKEN=$$(cat /run/secrets/orbit_token); exec npm run dev"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:14001:3001"
+    volumes:
+      - ./web/backend:/app
+      - api-node-modules:/app/node_modules
+    secrets:
+      - orbit_token
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  orbit-dev-playwright-mcp:
+    image: mcr.microsoft.com/playwright/mcp@sha256:3d871c22ea2d4cca0966e2cfb1860e1cb03eb7353725a3d6cffd133296fb04eb
+    container_name: orbit-dev-playwright-mcp
+    command:
+      - --headless
+      - --browser=chromium
+      - --no-sandbox
+      - --host=0.0.0.0
+      - --port=8931
+      - --allowed-hosts=localhost,localhost:18932,127.0.0.1,127.0.0.1:18932
+      - --allowed-origins=http://orbit-dev-web:3000;http://localhost:14000;http://127.0.0.1:14000
+      - --block-service-workers
+      - --caps=vision,devtools
+      - --console-level=debug
+      - --grant-permissions=clipboard-read,clipboard-write
+      - --shared-browser-context
+      - --save-session
+      - --output-dir=/workspace/output
+      - --viewport-size=1440x1000
+    ports:
+      - "127.0.0.1:18932:8931"
+    volumes:
+      - ./.playwright-mcp/output:/workspace/output
+    depends_on:
+      orbit-dev-web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  web-node-modules:
+  api-node-modules:
+
+secrets:
+  orbit_token:
+    file: ${ORBIT_TOKEN_PATH:-/etc/orbitd/token}

@@ -1,7 +1,10 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  server: { proxy: { "/api": { target: "http://127.0.0.1:3001", ws: true } } }
-});
+  server: {
+    allowedHosts: ["orbit-dev-web"],
+    proxy: { "/api": { target: loadEnv(mode, ".", "").ORBIT_API_URL || "http://127.0.0.1:3001", ws: true } }
+  }
+}));

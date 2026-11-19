@@ -16,3 +16,4 @@ node_modules
 docker-compose.yaml
 docker-compose.yml
 nginx/
+.playwright-mcp/
