@@ -5,7 +5,7 @@ import { CodexChat } from "./CodexChat";
 import { copyText } from "./clipboard";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Eye, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -1342,6 +1342,15 @@ function FileWorkspace(props: {
   const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit");
   const [creation, setCreation] = useState<{ kind: "folder" | "file"; parent: string } | null>(null);
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 820px)").matches);
+
+  useEffect(() => {
+    const breakpoint = window.matchMedia("(max-width: 820px)");
+    const update = () => setMobile(breakpoint.matches);
+    breakpoint.addEventListener("change", update);
+    update();
+    return () => breakpoint.removeEventListener("change", update);
+  }, []);
 
   async function loadEntries(path?: string, options: { root?: boolean } = {}) {
     const key = path ?? "__root__";
@@ -1452,6 +1461,19 @@ function FileWorkspace(props: {
   const lineCount = editContent ? editContent.split("\n").length : 0;
   const rootEntries = listing ? tree[listing.path] ?? [] : [];
   const viewKind = openedFile ? getFileViewKind(openedFile.path) : null;
+  const markdownPreview = viewKind === "markdown" && viewMode === "view";
+  const mobileMarkdownPreview = mobile && detailOpen && markdownPreview;
+  const closePreview = () => setViewMode("edit");
+  const previewButton = useRef<HTMLButtonElement>(null);
+  const previewBack = useRef<HTMLButtonElement>(null);
+  const wasPreviewing = useRef(false);
+  useDialogHistory(closePreview, mobileMarkdownPreview);
+  useEffect(() => {
+    if (mobileMarkdownPreview) previewBack.current?.focus({ preventScroll: true });
+    else if (wasPreviewing.current && mobile && detailOpen) previewButton.current?.focus({ preventScroll: true });
+    wasPreviewing.current = mobileMarkdownPreview;
+  }, [mobileMarkdownPreview, mobile, detailOpen]);
+  const saveLabel = saving ? "Saving..." : isDirty ? "Save" : "Saved";
 
   function renderTree(entries: FsEntry[], depth = 0): React.ReactNode[] {
     return entries.flatMap((entry) => {
@@ -1508,19 +1530,21 @@ function FileWorkspace(props: {
       </div>
     </aside>
     <PaneResizer width={masterPaneWidth} onWidthChange={onMasterPaneWidth} />
-    <section className="workPane fileEditorSurface">
+    <section className={`workPane fileEditorSurface${markdownPreview || viewKind === "image" ? " fileReading" : ""}`}>
       <div className="fileTabs">
-        <button className="detailBackButton" aria-label="Back to Explorer" onClick={onBack}><ChevronLeft size={20} /></button>
+        <button ref={previewBack} className="detailBackButton" aria-label={mobileMarkdownPreview ? "Back to editor" : "Back to Explorer"} onClick={mobileMarkdownPreview ? closePreview : onBack}><ChevronLeft size={20} /></button>
         {openedFile ? <div className={`fileTab${isDirty ? " dirty" : ""}`} title={openedFile.path}>
           {viewKind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
           <span>{fileName}</span>
         </div> : <div className="fileTab muted">Welcome</div>}
-        {openedFile && viewKind !== "image" && <button className="fileSaveButton" disabled={saving || !isDirty} onClick={saveFile}>
-          <Save size={14} />{saving ? "Saving..." : isDirty ? "Save" : "Saved"}
+        {openedFile && viewKind !== "image" && <button className="fileSaveButton" disabled={saving || !isDirty} aria-busy={saving} aria-label={saveLabel} title={saveLabel} onClick={saveFile}>
+          <Save size={16} aria-hidden="true" /><span>{saveLabel}</span>
         </button>}
         {openedFile && viewKind === "markdown" && <div className="fileViewActions">
-          <button className={viewMode === "edit" ? "activeButton" : ""} aria-pressed={viewMode === "edit"} onClick={() => setViewMode("edit")}>Edit</button>
-          <button className={viewMode === "view" ? "activeButton" : ""} aria-pressed={viewMode === "view"} onClick={() => setViewMode("view")}>Preview</button>
+          <button className={viewMode === "edit" ? "fileEditButton activeButton" : "fileEditButton"} aria-pressed={viewMode === "edit"} onClick={closePreview}>Edit</button>
+          <button ref={previewButton} className={viewMode === "view" ? "filePreviewButton activeButton" : "filePreviewButton"} aria-label="Preview" title="Preview" aria-pressed={viewMode === "view"} onClick={() => setViewMode("view")}>
+            <Eye size={18} aria-hidden="true" /><span>Preview</span>
+          </button>
         </div>}
       </div>
       {openedFile ? <>
@@ -1530,7 +1554,7 @@ function FileWorkspace(props: {
           <div className="fileImageViewer">
             <img src={rawFileUrl(openedFile.path, connection)} alt={fileName} />
           </div>
-        ) : viewKind === "markdown" && viewMode === "view" ? (
+        ) : markdownPreview ? (
           <FileMarkdownPreview source={editContent} path={openedFile.path} server={connection.url} token={connection.token} />
         ) : viewKind === "code" ? (
           <CodeEditor value={editContent} path={openedFile.path} onChange={setEditContent} />

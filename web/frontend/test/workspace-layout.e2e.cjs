@@ -359,13 +359,15 @@ const sessionName = 'Build and test on ARM64';
       await page.getByRole('button', { name: 'notes.txt', exact: true }).waitFor();
       await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
-      const markdown = '# Updated on ' + width + '\n\n![Markdown image](./docs/desktop.svg)\n\n<p><img src="docs/../assets/test%20image.svg" alt="HTML image" width="8"></p>';
+      const markdown = '# Updated on ' + width + '\n\n![Markdown image](./docs/desktop.svg)\n\n<p><img src="docs/../assets/test%20image.svg" alt="HTML image" width="8"></p>\n\n' +
+        Array.from({ length: 32 }, (_, i) => `문서 본문 ${i + 1}`).join('\n\n');
       await editor.getByRole('textbox').fill(markdown);
       assert.equal(await explorerList.locator('.fileEntryRow[title="README.md"]').getAttribute('aria-current'), 'true');
       await editor.getByRole('button', { name: 'Save', exact: true }).click();
-      await editor.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+      await editor.locator('.fileStatusBar').getByText('Saved', { exact: true }).waitFor();
       assert.deepEqual(saved, { path, content: markdown });
       assert.equal(await overflow('.fileTabs'), false);
+      if (mobile) assert((await editor.locator('.fileTabs').boundingBox()).height <= 52);
       await editor.getByRole('button', { name: 'Preview', exact: true }).click();
       await editor.getByRole('heading', { name: 'Updated on ' + width }).waitFor();
       for (const name of ['Markdown image', 'HTML image']) {
@@ -375,6 +377,24 @@ const sessionName = 'Build and test on ARM64';
       }
       assert.deepEqual(imageRequests.sort(), [project + '/assets/test image.svg', project + '/docs/desktop.svg']);
       if (mobile) {
+        const preview = editor.locator('.fileMarkdownPreview');
+        const previewBox = await preview.boundingBox();
+        assert.equal(previewBox.width, width);
+        assert(previewBox.y <= 52 && Math.abs(previewBox.y + previewBox.height - 844) <= 1);
+        await editor.locator('.fileBreadcrumb').waitFor({ state: 'hidden' });
+        await editor.locator('.fileStatusBar').waitFor({ state: 'hidden' });
+        await preview.getByText('문서 본문 32', { exact: true }).scrollIntoViewIfNeeded();
+        assert((await preview.evaluate(node => node.scrollTop)) > 0);
+        await page.goBack();
+        assert.equal(await editor.getByRole('textbox').inputValue(), markdown);
+        const draft = markdown + '\n\n저장 전 수정';
+        await editor.getByRole('textbox').fill(draft);
+        await editor.getByRole('button', { name: 'Preview', exact: true }).click();
+        await preview.getByText('저장 전 수정', { exact: true }).waitFor();
+        await editor.getByRole('button', { name: 'Back to editor' }).click();
+        await page.waitForFunction(() => !history.state?.orbitModal);
+        assert.equal(await editor.getByRole('textbox').inputValue(), draft);
+        await editor.getByRole('textbox').fill(markdown);
         await editor.getByRole('button', { name: 'Back to Explorer' }).click();
         await page.getByRole('button', { name: 'README.md', exact: true }).click();
         await editor.getByRole('textbox').waitFor();
