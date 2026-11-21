@@ -780,7 +780,7 @@ pub(crate) mod tests {
                                 json!({"data":[{"id":"11111111-1111-4111-8111-111111111111","name":"Saved conversation","cwd":cwd,"preview":"saved answer","updatedAt":1700000000,"status":{"type":"notLoaded"}}],"nextCursor":null})
                             }
                             "thread/read" => {
-                                json!({"thread":{"id":p["threadId"],"name":"Saved conversation","cwd":cwd,"historyMode":"paginated","status":{"type":"notLoaded"}}})
+                                json!({"thread":{"id":p["threadId"],"name":"Saved conversation","preview":"파일 브라우저를 개선해 주세요.","cwd":cwd,"historyMode":"paginated","status":{"type":"notLoaded"}}})
                             }
                             "thread/turns/list" => {
                                 json!({"data":[{"id":active_turn,"status":if active {"inProgress"} else {"completed"}}],"nextCursor":null})

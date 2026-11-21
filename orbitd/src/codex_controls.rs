@@ -45,6 +45,26 @@ fn no_args(args: &str) -> Result<()> {
     }
     Ok(())
 }
+fn suggest_session_name(preview: &str) -> Option<String> {
+    const LIMIT: usize = 48;
+    let line = preview.lines().map(str::trim).find(|line| {
+        !line.is_empty() && !line.starts_with("/tmp/") && !line.starts_with("<image")
+    })?;
+    let line = line.trim_start_matches(['#', '>', '*', '-']).trim_start();
+    let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let mut name: String = chars.by_ref().take(LIMIT).collect();
+    if chars.next().is_some() {
+        if let Some((prefix, _)) = name.rsplit_once(' ') {
+            if prefix.chars().count() >= LIMIT / 2 {
+                name.truncate(prefix.len());
+            }
+        }
+    }
+    let name = name.trim_end_matches([' ', '.', '!', '?', ',', '。', '！', '？']);
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 fn catalog() -> Value {
     json!([
         {"name":"resume","description":"이전 대화 검색 · 현재 세션에서 이어가기","usage":"/resume [검색어 또는 대화 ID]","duringTask":true},
@@ -56,7 +76,7 @@ fn catalog() -> Value {
         {"name":"plan","description":"Plan 모드 조회 · 변경","usage":"/plan [on|off]","duringTask":false},
         {"name":"compact","description":"대화 문맥 압축","duringTask":false},
         {"name":"review","description":"변경 사항 코드 리뷰","usage":"/review [리뷰 지침]","duringTask":false},
-        {"name":"rename","description":"Codex 대화 이름 변경","usage":"/rename 이름","duringTask":true},
+        {"name":"rename","description":"대화 이름 추천 및 변경","usage":"/rename [이름]","duringTask":true},
         {"name":"pwd","description":"현재 작업 폴더","duringTask":true},
         {"name":"skills","description":"사용 가능한 스킬","duringTask":true},
         {"name":"mcp","description":"현재 대화의 MCP 서버와 도구","duringTask":true},
@@ -105,6 +125,7 @@ impl CodexSession {
                 "/ps",
                 "/copy",
                 "/export",
+                "/rename",
                 "/fast",
                 "/plan",
             ]
@@ -497,7 +518,11 @@ impl CodexSession {
                 json!({"type":"pwd","cwd":settings["cwd"]})
             }
             "rename" => {
-                if args.is_empty() || args.len() > 200 {
+                if args.is_empty() {
+                    let thread = self.saved_thread(&thread_id).await?;
+                    return Ok(json!({"type":"rename","currentName":thread["name"],"suggestion":suggest_session_name(thread["preview"].as_str().unwrap_or_default())}));
+                }
+                if args.len() > 200 || args.chars().any(char::is_control) {
                     bail!("/rename 이름 (최대 200바이트) 형식으로 입력하세요.");
                 }
                 self.rpc("thread/name/set", json!({"threadId":thread_id,"name":args}))
@@ -597,6 +622,17 @@ impl CodexSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recommends_a_short_title_from_the_conversation_preview() {
+        assert_eq!(
+            suggest_session_name("\n#  대기열 UI 오류 수정.\n상세 내용"),
+            Some("대기열 UI 오류 수정".into())
+        );
+        assert_eq!(suggest_session_name(" \n/tmp/orbit-image.png"), None);
+        let long = "모바일 파일 브라우저에서 미리보기 레이아웃을 개선하고 기존 세션으로 돌아오는 방법을 검증해주세요.";
+        assert!(suggest_session_name(long).unwrap().chars().count() <= 48);
+    }
     async fn setup() -> (crate::codex::tests::Fixture, CodexSession) {
         let f = crate::codex::tests::fixture().await;
         let handle = CodexSession::connect(&f.socket).await.unwrap();

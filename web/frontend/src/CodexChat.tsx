@@ -431,6 +431,10 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
     try {
       let result = await request({ op: 'command', command, ...extra });
       if (result.type === 'resumeOpened') { setDraft('');onSessionChange(result.session);return; }
+      if (result.type === 'rename') {
+        if (result.session?.id === session.id) onSessionChange(result.session);
+        result = { ...result, currentName: result.currentName || session.name };
+      }
       if (result.state) applyLiveState(state.current, result.state, -1);
       if (result.type === 'status') {
         if(view===commandView.current)setCommandResult({...result,usageLoading:true});

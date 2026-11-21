@@ -79,6 +79,11 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    if(b.command!=='/plan')settings.collaborationMode={mode:b.command==='/plan on'?'plan':'default'};
    result={type:'plan',state:snapshot()};
   }
+  if(b.op==='command'&&b.command==='/rename')result={type:'rename',currentName:storedSession.name,suggestion:'모바일 화면과 진행 상태 확인'};
+  if(b.op==='command'&&b.command.startsWith('/rename ')){
+   storedSession={...storedSession,name:b.command.slice('/rename '.length)};
+   result={type:'rename',name:storedSession.name,session:storedSession};
+  }
   if(b.op==='queue/remove'){
    queue={...queue,items:queue.items.filter(item=>item.id!==b.entryId),version:queue.version+1};
    result=snapshot();
@@ -115,7 +120,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    queue={...queue,items,version:queue.version+1};
    wsClient.send(JSON.stringify({type:'state',state:snapshot()}));
   };
-  const queued=Array.from({length:4},(_,index)=>({id:'queued-'+index,text:'대기 항목 '+index}));
+  const longQueueText='공백이 있는 긴 대기 메시지 '.repeat(20)+'\n'+'long-file-path-'.repeat(28);
+  const queued=Array.from({length:4},(_,index)=>({id:'queued-'+index,text:index===0?longQueueText:'대기 항목 '+index}));
   updateQueue(queued.slice(0,3));
   await queuePanel.getByText('대기 메시지 3개',{exact:true}).waitFor();
   for(const width of [320,390]){
@@ -126,6 +132,17 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    }).length);
    if(completeRows!==3)throw Error('Queue rows or cancel buttons are cut off at '+width);
   }
+  for(const width of [320,390,1440]){
+   await page.setViewportSize({width,height:844});
+   const fits=await queueRows.first().evaluate(row=>{
+    const list=row.parentElement, bounds=list.getBoundingClientRect();
+    const button=row.querySelector('button').getBoundingClientRect(), message=row.querySelector('span');
+    return list.scrollWidth<=list.clientWidth&&button.right<=bounds.right&&
+     message.scrollWidth>message.clientWidth&&getComputedStyle(message).textOverflow==='ellipsis';
+   });
+   if(!fits)throw Error('Long queued text pushes the cancel button outside the card at '+width);
+  }
+  await page.setViewportSize({width:390,height:844});
   await page.evaluate(()=>{
    Object.defineProperty(window.visualViewport,'height',{configurable:true,get:()=>440});
    window.visualViewport.dispatchEvent(new Event('resize'));
@@ -142,6 +159,8 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await queuePanel.getByRole('button',{name:'전체 보기'}).click();
   const queueDialog=page.getByRole('dialog',{name:'대기 메시지 전체 보기'});
   await queueDialog.getByText('대기 항목 3',{exact:true}).waitFor();
+  const fullText=queueDialog.getByRole('listitem').first().locator('span');
+  if(await fullText.textContent()!==longQueueText||!await fullText.evaluate(span=>span.scrollWidth<=span.clientWidth&&span.clientHeight>80))throw Error('Long queued text did not wrap in the full queue');
   await queueDialog.getByRole('listitem').filter({hasText:'대기 항목 3'}).getByRole('button',{name:'취소'}).click();
   await queueDialog.getByText('대기 항목 3',{exact:true}).waitFor({state:'hidden'});
   if(!ops.some(op=>op.op==='queue/remove'&&op.entryId==='queued-3'))throw Error('Queue dialog removed the wrong entry');
@@ -398,17 +417,29 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await mobilePlan.getByRole('button',{name:'Plan 모드',exact:true}).waitFor();
   await mobilePlan.getByRole('button',{name:'명령 창 닫기'}).click();
   await mobilePlan.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.orbitModal);
+  await command('/rename');
+  const renameDialog=page.getByRole('dialog',{name:'대화 이름',exact:true});
+  const suggestion=renameDialog.getByRole('textbox',{name:'추천 이름'});
+  if(await suggestion.inputValue()!=='모바일 화면과 진행 상태 확인')throw Error('Chat title suggestion was not prefilled');
+  await page.locator('.codexConnection').getByText(name,{exact:true}).waitFor();
+  const renamed='모바일 화면 점검';
+  await suggestion.fill(renamed);
+  await renameDialog.getByRole('button',{name:'이름 적용'}).click();
+  await page.locator('.codexConnection').getByText(renamed,{exact:true}).waitFor();
+  await renameDialog.getByRole('button',{name:'명령 창 닫기'}).click();
+  await page.waitForFunction(()=>!history.state?.orbitModal);
   const back=page.getByRole('button',{name:'세션 목록으로 돌아가기',exact:true});
   await back.click();
-  const card=page.locator('.sessionCard').filter({has:page.getByTitle(name,{exact:true})});
-  const row=card.locator('.row'),actions=card.getByLabel(`Actions for ${name}`,{exact:true});
+  const card=page.locator('.sessionCard').filter({has:page.getByTitle(renamed,{exact:true})});
+  const row=card.locator('.row'),actions=card.getByLabel(`Actions for ${renamed}`,{exact:true});
   await row.waitFor();await assertFit('session cards');
   await page.screenshot({path:'/workspace/output/orbit-sessions-mobile.png'});
   const sessionActions=page.getByRole('dialog',{name:'Session actions',exact:true});
   await actions.click();
   await sessionActions.waitFor();
   if(!await sessionActions.evaluate(el=>el.matches(':modal')))throw Error('Mobile session actions are not modal');
-  await sessionActions.getByText(name,{exact:true}).waitFor();
+  await sessionActions.getByText(renamed,{exact:true}).waitFor();
   await page.waitForFunction(()=>!!history.state?.orbitModal);
   await page.goBack();
   await sessionActions.waitFor({state:'hidden'});

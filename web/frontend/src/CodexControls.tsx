@@ -31,6 +31,22 @@ function ResumePicker({result,busy,running,run}: Pick<Props,'result'|'busy'|'run
     {result.nextCursor && <button disabled={busy} onClick={()=>void run(`/resume${result.search ? ' '+result.search : ''}`,{cursor:result.nextCursor,allWorkspaces:result.allWorkspaces})}>이전 대화 더 보기</button>}
   </>;
 }
+function RenamePicker({ result, busy, readOnly, run }: Pick<Props, 'result' | 'busy' | 'readOnly' | 'run'>) {
+  const [name, setName] = useState(result.suggestion ?? result.currentName ?? '');
+  const nextName = name.trim();
+  const tooLong = new TextEncoder().encode(nextName).length > 200;
+  return <form onSubmit={event => {
+    event.preventDefault();
+    if (!busy && !readOnly && nextName && !tooLong) void run(`/rename ${nextName}`);
+  }}>
+    {result.currentName && <Fields rows={ [['현재 이름', result.currentName]] } />}
+    <label>{result.suggestion ? '추천 이름' : '새 이름'}
+      <input value={name} maxLength={200} onChange={event => setName(event.target.value)} />
+    </label>
+    {tooLong && <p role="status">이름을 200바이트 이내로 줄이세요.</p>}
+    <button disabled={busy || readOnly || !nextName || tooLong}>이름 적용</button>
+  </form>;
+}
 export function CodexControls(props: Props) {
   const { result, busy, running, readOnly, run } = props;
   useDialogHistory(props.close);
@@ -56,7 +72,9 @@ export function CodexControls(props: Props) {
     {result.type === 'mcp' && <>{(result.data || []).map((server: any) => <section key={server.name}><h4>{server.name}</h4><Fields rows={ [['인증', server.authStatus], ['도구', Object.keys(server.tools || {}).join(', ') || '없음']] } /></section>)}{!result.data?.length && <p>연결된 MCP 서버가 없습니다.</p>}{result.nextCursor && <p>서버 목록 일부를 표시했습니다.</p>}</>}
     {result.type === 'ps' && <pre>{JSON.stringify(result.data, null, 2)}</pre>}
     {result.type === 'pwd' && <p className="codexPath">{result.cwd}</p>}
-    {result.type === 'rename' && <p>대화 이름을 “{result.name}”으로 변경했습니다.</p>}
+    {result.type === 'rename' && (result.name
+      ? <p role="status">대화 이름을 “{result.name}”으로 변경했습니다.</p>
+      : <RenamePicker {...props} />)}
     {result.message && <p role="status">{result.message}</p>}
     {busy && <p role="status">명령 처리 중…</p>}
   </section></div>;

@@ -76,6 +76,14 @@ impl Db {
         )?;
         Ok(())
     }
+    pub fn rename_web_session(&self, id: &str, thread_id: &str, name: &str) -> Result<()> {
+        let changed = self.conn.lock().unwrap().execute(
+            "UPDATE sessions SET name=?3 WHERE id=?1 AND codex_thread_id=?2 AND mode='web'",
+            params![id, thread_id, name],
+        )?;
+        anyhow::ensure!(changed == 1, "Web session no longer exists");
+        Ok(())
+    }
     #[cfg(test)]
     pub fn update_codex_thread(&self, id: &str, thread: &str) -> Result<()> {
         self.conn.lock().unwrap().execute(

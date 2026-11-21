@@ -62,6 +62,11 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                 let resume_arg = if body["op"]=="command" { body["command"].as_str().and_then(|text|text.trim().strip_prefix("/resume")).filter(|tail|tail.is_empty() || tail.starts_with(char::is_whitespace)).map(str::trim) } else { None };
                 let resume_id=resume_arg.filter(|arg|uuid::Uuid::parse_str(arg).is_ok());
                 let fork = body["op"] == "fork";
+                let rename = body["op"] == "command"
+                    && body["command"]
+                        .as_str()
+                        .and_then(|text| text.trim().split_once(char::is_whitespace))
+                        .is_some_and(|(command, args)| command == "/rename" && !args.trim().is_empty());
                 let allowed = state.registry.get_session(&id).map(|session| fork || resume_arg.is_some() || crate::codex::CodexSession::read_operation(&body) || session.status == orb_common::SessionStatus::Running).unwrap_or(false);
                 if !allowed {
                     if send.send(Message::Text(json!({"type":"error","id":body["id"],"error":"This session is stopped or removed"}).to_string())).await.is_err() { break; }
@@ -92,6 +97,8 @@ async fn handle(mut socket: WebSocket, state: AppState, id: String) {
                             let result = if fork {
                                 registry.fork_web_thread(&session_id, &connection.thread_id(), body["turnId"].as_str().unwrap_or_default())
                                     .await.map(|session| json!({"session":session}))
+                            } else if rename {
+                                registry.rename_web_session(&session_id, &connection, &body).await
                             } else {
                                 connection.operation(&body).await
                             };

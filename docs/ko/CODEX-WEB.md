@@ -44,7 +44,8 @@ POST /api/v1/sessions
 - `/permissions [read-only|workspace-write|full-access]`: 현재 대화의 권한 변경. 전체 접근은 선택 창에서 명시적으로 확인한다.
 - `/fast [on|off]`, `/usage`: Fast 설정과 계정 사용 한도. 서버 정책과 모델이 지원할 때만 Fast를 적용한다.
 - `/plan [on|off]`, `/compact`, `/review [지침]`: Plan, 문맥 압축, 변경 리뷰. 실행 중인 작업이 끝난 뒤 사용한다.
-- `/rename 이름`, `/pwd`, `/skills`, `/mcp`, `/ps`, `/stop`: 대화 이름·폴더·스킬·MCP·현재 대화의 백그라운드 터미널 조회/정리.
+- `/rename`: 첫 메시지에서 이름을 추천한다. 추천 이름을 수정하고 적용하거나 `/rename 이름`으로 바로 바꿀 수 있다.
+- `/pwd`, `/skills`, `/mcp`, `/ps`, `/stop`: 폴더·스킬·MCP·현재 대화의 백그라운드 터미널 조회/정리.
 - `/copy`, `/export`, `/help`: 마지막 답변 복사, 대화 Markdown 다운로드, 지원 명령 안내.
 
 데스크톱에서는 입력창에 포커스가 있을 때 `Alt+P`로 Plan과 Default를 전환한다. `/plan`을 실행하면 입력창 아래 현재 모드로 포커스가 이동한다. 좌우 방향키로 모드를 바꾸면 포커스가 입력창으로 돌아온다. 모바일에서는 `/plan`으로 모드 선택 창을 연다.

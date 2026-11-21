@@ -400,9 +400,37 @@ impl SessionRegistry {
         }
     }
     pub fn mark_web_input(&self, ident: &str) -> Result<()> {
+        let _guard = self.metadata.lock().unwrap();
         let session = self.get_session(ident)?;
         self.has_input.lock().unwrap().insert(session.id.clone());
-        self.save_web_session(&session)
+        self.write_web_session(&session)
+    }
+    pub async fn rename_web_session(
+        &self,
+        ident: &str,
+        handle: &crate::codex::CodexSession,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let _web = self.web.lock().await;
+        let previous = self.get_session(ident)?;
+        let thread_id = handle.thread_id();
+        anyhow::ensure!(
+            previous.status == SessionStatus::Running
+                && previous.codex_thread_id.as_deref() == Some(&thread_id),
+            "대화가 변경되었습니다. 다시 연결한 뒤 이름을 바꾸세요."
+        );
+        let mut result = handle.operation(body).await?;
+        let name = result["name"].as_str().context("Codex 대화 이름이 없습니다.")?;
+        let _guard = self.metadata.lock().unwrap();
+        let mut session = self.get_session(ident)?;
+        session.name = name.to_owned();
+        self.write_web_session(&session)?;
+        if let Err(error) = self.db.rename_web_session(&session.id, &thread_id, name) {
+            let _ = self.write_web_session(&previous);
+            return Err(error);
+        }
+        result["session"] = serde_json::to_value(session)?;
+        Ok(result)
     }
     fn web_metadata_path(&self, id: &str) -> std::path::PathBuf {
         self.config
@@ -412,6 +440,9 @@ impl SessionRegistry {
     }
     fn save_web_session(&self, session: &Session) -> Result<()> {
         let _guard = self.metadata.lock().unwrap();
+        self.write_web_session(session)
+    }
+    fn write_web_session(&self, session: &Session) -> Result<()> {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let path = self.web_metadata_path(&session.id);
@@ -699,6 +730,23 @@ mod tests {
         assert!(session.pid.is_none());
         assert_eq!(session.codex_thread_id.as_deref(), Some("test-thread"));
         assert!(registry.attach(&session.id).is_err());
+        let handle = registry.codex_session(&session.id).await.unwrap();
+        let suggestion = handle
+            .operation(&serde_json::json!({"op":"command","command":"/rename"}))
+            .await
+            .unwrap();
+        assert_eq!(suggestion["suggestion"], "파일 브라우저를 개선해 주세요");
+        assert_eq!(registry.get_session(&session.id).unwrap().name, session.name);
+        let renamed = registry
+            .rename_web_session(
+                &session.id,
+                &handle,
+                &serde_json::json!({"op":"command","command":"/rename 파일 브라우저 개선"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(renamed["session"]["name"], "파일 브라우저 개선");
+        assert_eq!(registry.get_session(&session.id).unwrap().name, "파일 브라우저 개선");
         registry
             .web
             .lock()
@@ -709,6 +757,7 @@ mod tests {
             .await;
         drop(registry);
         let restored = SessionRegistry::new(database(), config);
+        assert_eq!(restored.get_session(&session.id).unwrap().name, "파일 브라우저 개선");
         assert_eq!(
             restored.get_session(&session.id).unwrap().codex_thread_id,
             session.codex_thread_id

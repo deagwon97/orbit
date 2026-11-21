@@ -92,9 +92,9 @@
 .codexQueue { border:1px solid var(--chat-border); border-radius:9px; padding:8px 12px; margin:0 0 10px; background:var(--chat-muted); font-size:12px; }
 .codexQueue header, .codexQueueActions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px; }
 .codexQueue button { flex-shrink:0; font-size:12px; min-height:28px; }
-.codexQueue ol { display:grid; gap:4px; list-style:none; padding:0; margin:4px 0 0; }
+.codexQueue ol { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; list-style:none; padding:0; margin:4px 0 0; }
 .codexQueue li { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.codexQueue li span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.codexQueue li span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .codexQueue p { color:var(--chat-warning); overflow-wrap:anywhere; }
 .codexQueueDialogBody { padding:12px; }
 .codexQueueDialog li { align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--chat-border); }
