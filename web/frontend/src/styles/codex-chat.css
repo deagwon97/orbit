@@ -67,6 +67,8 @@
 .codexWork.running .codexDot { box-shadow:0 0 0 3px var(--chat-accent-soft); }
 .codexWork.failed .codexDot { background:var(--chat-danger); }
 .codexWork button { border:0; background:none; color:var(--chat-secondary); padding:0; min-height:24px; font:inherit; font-size:11px; }
+.codexWork .codexWorkToggle { padding:4px 8px; }
+@media (max-width:820px) { .codexWork .codexWorkToggle { min-height:44px; } }
 .codexWorkHeading > button:last-child:not(.codexCommand) { margin-left:auto; }
 .codexWork .codexCommand { flex:1; display:block; min-width:0; color:var(--chat-accent); text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .codexWorkBody { border-left:1px solid var(--chat-border); padding-left:12px; margin:5px 0 0 17px; min-width:0; }

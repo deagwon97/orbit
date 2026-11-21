@@ -143,7 +143,7 @@ function WorkLog({ item }: { item: CodexItem }) {
   const exploring = actions.length > 0 && actions.every((a: any) => ['read', 'search', 'listFiles'].includes(a.type));
   if (item.type === 'reasoning' && !full.trim()) return null;
   const label = progressLabel(item), caption=progressCaption(item);
-  const collapse = <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '− Collapse' : hidden ? `+ ${hidden} more ${hidden === 1 ? 'line' : 'lines'}` : '+ Show details'}</button>;
+  const collapse = <button type="button" className="codexWorkToggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '− Collapse' : hidden ? `+ ${hidden} more ${hidden === 1 ? 'line' : 'lines'}` : '+ Show details'}</button>;
   return <section className={`codexWork ${running ? 'running' : ''} ${failed ? 'failed' : ''}`} data-item={item.id}>
     <div className="codexWorkHeading"><span className="codexDot" /><strong>{label}</strong>{caption && <button className="codexCommand" title={caption} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{caption.split('\n')[0]}{caption.includes('\n') ? ' …' : ''}</button>}{failed && item.exitCode != null && <small>exit {item.exitCode}</small>}{expanded && collapse}</div>
     <div className="codexWorkBody">
