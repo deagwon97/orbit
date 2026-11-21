@@ -12,7 +12,7 @@ use orb_common::{
     ReadFileResponse, StopRequest, WriteFileRequest,
 };
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use tokio::fs;
 
 pub async fn list_backends(State(state): State<AppState>) -> Response {
@@ -282,6 +282,7 @@ pub async fn list_entries(
         path: current,
         entries,
         can_create_file: true,
+        can_move_file: cfg!(target_os = "linux"),
     })
     .into_response()
 }
@@ -289,6 +290,133 @@ pub async fn list_entries(
 #[derive(Debug, Deserialize)]
 pub struct FilePathQuery {
     pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MoveFileRequest {
+    path: PathBuf,
+    parent: PathBuf,
+}
+
+pub async fn move_file(Json(req): Json<MoveFileRequest>) -> Response {
+    let Some(name) = req.path.file_name() else {
+        return (StatusCode::BAD_REQUEST, "A source filename is required.").into_response();
+    };
+    if !req.path.is_absolute() || !req.parent.is_absolute() {
+        return (StatusCode::BAD_REQUEST, "Absolute paths are required.").into_response();
+    }
+    match fs::symlink_metadata(&req.path).await {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return (StatusCode::BAD_REQUEST, "Source is not a regular file.").into_response(),
+        Err(err) => return move_file_error(err),
+    }
+    let parent = match fs::canonicalize(&req.parent).await {
+        Ok(path) => path,
+        Err(err) => return move_file_error(err),
+    };
+    let destination = parent.join(name);
+    match tokio::task::spawn_blocking({
+        let destination = destination.clone();
+        move || rename_file_exclusive(&req.path, &destination)
+    })
+    .await
+    {
+        Ok(Ok(())) => Json(CreateEntryResponse { path: destination }).into_response(),
+        Ok(Err(err)) => move_file_error(err),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+fn move_file_error(err: std::io::Error) -> Response {
+    use std::io::ErrorKind;
+    match err.kind() {
+        ErrorKind::AlreadyExists => (
+            StatusCode::CONFLICT,
+            "An entry with that name already exists.",
+        )
+            .into_response(),
+        ErrorKind::CrossesDevices => (
+            StatusCode::BAD_REQUEST,
+            "Files can only be moved within the same filesystem.",
+        )
+            .into_response(),
+        ErrorKind::NotFound => (StatusCode::NOT_FOUND, err.to_string()).into_response(),
+        ErrorKind::NotADirectory | ErrorKind::InvalidInput => {
+            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+        }
+        ErrorKind::PermissionDenied => (StatusCode::FORBIDDEN, err.to_string()).into_response(),
+        ErrorKind::Unsupported => (StatusCode::NOT_IMPLEMENTED, err.to_string()).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_file_exclusive(source: &FsPath, destination: &FsPath) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    // The kernel checks for a collision and renames in the same operation.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn rename_file_exclusive(_source: &FsPath, _destination: &FsPath) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod move_file_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn moves_regular_files_without_overwriting_destination() {
+        struct TestDirectory(PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let directory = TestDirectory(std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()));
+        let parent = directory.0.join("target");
+        fs::create_dir_all(&parent).await.unwrap();
+        let source = directory.0.join("새 파일.txt");
+        let destination = parent.join("새 파일.txt");
+        fs::write(&source, "source").await.unwrap();
+        fs::write(&destination, "destination").await.unwrap();
+
+        let request = || {
+            Json(MoveFileRequest {
+                path: source.clone(),
+                parent: parent.clone(),
+            })
+        };
+        assert_eq!(move_file(request()).await.status(), StatusCode::CONFLICT);
+        assert_eq!(fs::read_to_string(&source).await.unwrap(), "source");
+        assert_eq!(
+            fs::read_to_string(&destination).await.unwrap(),
+            "destination"
+        );
+
+        fs::remove_file(&destination).await.unwrap();
+        assert_eq!(move_file(request()).await.status(), StatusCode::OK);
+        assert!(!fs::try_exists(&source).await.unwrap());
+        assert_eq!(fs::read_to_string(&destination).await.unwrap(), "source");
+        assert_eq!(move_file(request()).await.status(), StatusCode::NOT_FOUND);
+    }
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;

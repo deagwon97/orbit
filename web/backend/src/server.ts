@@ -141,6 +141,15 @@ app.route({
   }
 });
 
+app.post("/api/v1/fs/files/move", async (req, reply) => {
+  const res = await fetch(`${orbitdBase(req)}/api/v1/fs/files/move`, {
+    method: "POST",
+    headers: { ...authHeader(req), "content-type": "application/json" },
+    body: JSON.stringify(req.body)
+  });
+  return forwardJSON(reply, res);
+});
+
 app.get("/api/v1/sessions", async (req, reply) => {
   const res = await fetch(`${orbitdBase(req)}/api/v1/sessions${queryString(req)}`, { headers: authHeader(req) });
   return forwardJSON(reply, res);

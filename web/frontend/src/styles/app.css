@@ -745,12 +745,26 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orbit-accent);
   background: var(--orbit-surface);
 }
 .fileExplorerPath {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px;
   margin: 0 0 8px;
+  background: transparent;
+  border: 1px solid transparent;
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--orbit-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: start;
+}
+.fileExplorerPath[aria-current="true"] { color: var(--orbit-accent); }
+.fileExplorerPath[data-drop-target], .fileEntryRow[data-drop-target] {
+  color: var(--orbit-accent);
+  background: var(--orbit-accent-soft);
+  outline: 1px solid var(--orbit-accent);
+  outline-offset: -1px;
 }
 .fileExplorerActions { display: flex; gap: 6px; align-items: center; }
 .fileExplorerActions button { min-height: 34px; font-size: 12px; }

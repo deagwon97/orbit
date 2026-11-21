@@ -269,6 +269,7 @@ type ListEntriesResponse = {
   home: string;
   entries: FsEntry[];
   can_create_file?: boolean;
+  can_move_file?: boolean;
 };
 type OpenedFile = { path: string; content: string; savedContent: string };
 type EntryTree = Record<string, FsEntry[]>;
@@ -340,6 +341,17 @@ async function api(path: string, init: RequestInit = {}, connection?: OrbitConne
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+function fileOperationError(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  try {
+    const response: unknown = JSON.parse(message);
+    if (response && typeof response === "object" && "error" in response && typeof response.error === "string") {
+      return response.error;
+    }
+  } catch {}
+  return message;
 }
 
 async function createDirectory(connection: OrbitConnection, parent: string, name: string) {
@@ -888,6 +900,7 @@ function App() {
     </div>}
     <section className={`layout${detailOpen ? " showDetail" : ""}${sessionsOpen && sessionsCollapsed ? " sessionsCollapsed" : ""}`} style={layoutStyle}>
       {fileEditorOpen && activeConnection ? <FileWorkspace
+          key={activeConnection.id}
           listHeader={listHeader}
           connection={activeConnection}
           onSessions={() => { setFileEditorOpen(false); setDetailOpen(false); }}
@@ -1338,10 +1351,15 @@ function FileWorkspace(props: {
   const [openedFile, setOpenedFile] = useState<OpenedFile | null>(null);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit");
   const [creation, setCreation] = useState<{ kind: "folder" | "file"; parent: string } | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [draggedFile, setDraggedFile] = useState<{ path: string; parent: string } | null>(null);
+  const [dropFolder, setDropFolder] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 820px)").matches);
 
   useEffect(() => {
@@ -1352,7 +1370,7 @@ function FileWorkspace(props: {
     return () => breakpoint.removeEventListener("change", update);
   }, []);
 
-  async function loadEntries(path?: string, options: { root?: boolean } = {}) {
+  async function loadEntries(path?: string, options: { root?: boolean; keepError?: boolean } = {}) {
     const key = path ?? "__root__";
     if (options.root) setListBusy(true);
     setLoadingPaths((current) => new Set(current).add(key));
@@ -1360,14 +1378,18 @@ function FileWorkspace(props: {
       const query = new URLSearchParams({ include_hidden: "true" });
       if (path) query.set("path", path);
       const response = await api(`/api/v1/fs/entries?${query}`, {}, connection) as ListEntriesResponse;
-      setListing(current => options.root || !current || current.path === response.path ? response : current);
+      setListing(current => options.root || !current || current.path === response.path ? response : {
+        ...current,
+        can_create_file: response.can_create_file ?? current.can_create_file,
+        can_move_file: response.can_move_file ?? current.can_move_file
+      });
       setTree((current) => ({ ...current, [response.path]: response.entries }));
       setExpanded((current) => {
         const next = new Set(current);
         next.add(response.path);
         return next;
       });
-      setError("");
+      if (!options.keepError) setError("");
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1383,6 +1405,7 @@ function FileWorkspace(props: {
   }
 
   async function resetRoot(path?: string) {
+    setSelectedFolder(null);
     setTree({});
     setExpanded(new Set());
     await loadEntries(path, { root: true });
@@ -1398,6 +1421,7 @@ function FileWorkspace(props: {
   }
 
   async function toggleDir(entry: FsEntry) {
+    setSelectedFolder(entry.path);
     if (expanded.has(entry.path)) {
       setExpanded((current) => {
         const next = new Set(current);
@@ -1414,6 +1438,7 @@ function FileWorkspace(props: {
   }
 
   async function openFile(path: string) {
+    if (moving || opening) return;
     if (openedFile && editContent !== openedFile.savedContent && !window.confirm("Discard unsaved changes?")) return;
     setSaveError(null);
     const kind = getFileViewKind(path);
@@ -1425,6 +1450,7 @@ function FileWorkspace(props: {
       setError("");
       return;
     }
+    setOpening(true);
     try {
       const result = await api(`/api/v1/fs/files?path=${encodeURIComponent(path)}`, {}, connection) as { path: string; content: string };
       setOpenedFile({ path: result.path, content: result.content, savedContent: result.content });
@@ -1434,11 +1460,13 @@ function FileWorkspace(props: {
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOpening(false);
     }
   }
 
   async function saveFile() {
-    if (!openedFile) return;
+    if (!openedFile || moving) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -1454,12 +1482,57 @@ function FileWorkspace(props: {
     }
   }
 
+  function clearDrag() {
+    setDraggedFile(null);
+    setDropFolder(null);
+  }
+
+  function folderDropHandlers(parent: string): React.HTMLAttributes<HTMLButtonElement> {
+    if (!draggedFile || draggedFile.parent === parent || moving || saving || opening || loadingPaths.size) return {};
+    return {
+      onDragOver(event) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropFolder(parent);
+      },
+      onDragLeave(event) {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+          setDropFolder(current => current === parent ? null : current);
+        }
+      },
+      async onDrop(event) {
+        event.preventDefault();
+        clearDrag();
+        setMoving(true);
+        setError("");
+        try {
+          const result = await api("/api/v1/fs/files/move", {
+            method: "POST",
+            body: JSON.stringify({ path: draggedFile.path, parent })
+          }, connection) as { path: string };
+          setOpenedFile(current => current?.path === draggedFile.path ? { ...current, path: result.path } : current);
+          setSaveError(current => current?.path === draggedFile.path ? null : current);
+          await Promise.all([
+            loadEntries(draggedFile.parent, { keepError: true }),
+            loadEntries(parent, { keepError: true })
+          ]);
+        } catch (err) {
+          setError(fileOperationError(err));
+        } finally {
+          setMoving(false);
+        }
+      }
+    };
+  }
+
   useEffect(() => { initialPath ? void resetRoot(initialPath) : void resetHome(); }, []);
 
   const isDirty = openedFile !== null && editContent !== openedFile.savedContent;
   const fileName = openedFile?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "No file";
   const lineCount = editContent ? editContent.split("\n").length : 0;
   const rootEntries = listing ? tree[listing.path] ?? [] : [];
+  const creationParent = selectedFolder ?? listing?.path;
   const viewKind = openedFile ? getFileViewKind(openedFile.path) : null;
   const markdownPreview = viewKind === "markdown" && viewMode === "view";
   const mobileMarkdownPreview = mobile && detailOpen && markdownPreview;
@@ -1475,7 +1548,7 @@ function FileWorkspace(props: {
   }, [mobileMarkdownPreview, mobile, detailOpen]);
   const saveLabel = saving ? "Saving..." : isDirty ? "Save" : "Saved";
 
-  function renderTree(entries: FsEntry[], depth = 0): React.ReactNode[] {
+  function renderTree(entries: FsEntry[], parent: string, depth = 0): React.ReactNode[] {
     return entries.flatMap((entry) => {
       const isDir = entry.kind === "dir";
       const isExpanded = expanded.has(entry.path);
@@ -1489,17 +1562,27 @@ function FileWorkspace(props: {
         type="button"
         className="fileEntryRow"
         aria-expanded={isDir ? isExpanded : undefined}
-        aria-current={openedFile?.path === entry.path ? "true" : undefined}
+        aria-current={(isDir ? selectedFolder === entry.path : openedFile?.path === entry.path) ? "true" : undefined}
+        data-drop-target={dropFolder === entry.path || undefined}
+        draggable={!isDir && listing?.can_move_file === true && !saving && !opening && !moving}
+        onDragStart={!isDir && listing?.can_move_file === true ? event => {
+          if (moving || saving || opening) { event.preventDefault(); return; }
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-orbit-file", entry.path);
+          setDraggedFile({ path: entry.path, parent });
+        } : undefined}
+        onDragEnd={clearDrag}
+        {...(isDir ? folderDropHandlers(entry.path) : {})}
         title={entry.name}
         style={{ "--file-indent": `${depth * 12}px` } as React.CSSProperties}
-        onClick={() => isDir ? void toggleDir(entry) : void openFile(entry.path)}
+        onClick={() => !moving && (isDir ? void toggleDir(entry) : void openFile(entry.path))}
       >
         <EntryIcon size={15} aria-hidden="true" />
         <span>{entry.name}</span>
       </button>;
       const childRows = isDir && isExpanded ? [
         ...(isLoading ? [<div key={`${entry.path}:loading`} className="fileEntryLoading" style={{ "--file-indent": `${depth * 14}px` } as React.CSSProperties}>Loading...</div>] : []),
-        ...renderTree(children, depth + 1)
+        ...renderTree(children, entry.path, depth + 1)
       ] : [];
       return [row, ...childRows];
     });
@@ -1512,21 +1595,25 @@ function FileWorkspace(props: {
         <button onClick={onSessions}><TerminalIcon size={14} />Sessions</button>
         <button className="activeButton"><FolderOpen size={14} />Files</button>
       </div>
-      {error && <div className="folderError">{error}</div>}
+      {error && <div className="folderError" role="alert">{error}</div>}
       <div className="paneListControls">
-        <div className="fileExplorerPath" title={listing?.path}>{listing?.path || "Loading..."}</div>
+        <button type="button" className="fileExplorerPath" title={listing?.path} aria-label="Select root folder"
+          disabled={!listing || moving} aria-current={listing && !selectedFolder ? "true" : undefined}
+          data-drop-target={!!listing && dropFolder === listing.path || undefined}
+          {...(listing ? folderDropHandlers(listing.path) : {})}
+          onClick={() => setSelectedFolder(null)}>{listing?.path || "Loading..."}</button>
         <div className="fileExplorerActions">
-          <button disabled={!listing?.parent || listBusy} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
-          <button disabled={!listing?.home || listBusy} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
-          <button type="button" className="iconButton fileCreateFolderButton" title="New folder" aria-label="New folder" disabled={!listing || listBusy} onClick={() => listing && setCreation({ kind: "folder", parent: listing.path })}><FolderPlus size={17} /></button>
-          <button type="button" className="iconButton" title={listing && !listing.can_create_file ? "New file requires an updated orbitd" : "New file"} aria-label="New file" disabled={!listing?.can_create_file || listBusy} onClick={() => listing && setCreation({ kind: "file", parent: listing.path })}><FilePlus size={17} /></button>
-          <button className="iconButton" title="Refresh" aria-label="Refresh" disabled={listBusy} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={16} /></button>
+          <button disabled={!listing?.parent || listBusy || moving} onClick={() => listing?.parent && void resetRoot(listing.parent)}><ChevronUp size={14} />Up</button>
+          <button disabled={!listing?.home || listBusy || moving} onClick={() => listing?.home && void resetRoot(listing.home)}><Home size={14} />Home</button>
+          <button type="button" className="iconButton fileCreateFolderButton" title="New folder" aria-label="New folder" disabled={!creationParent || listBusy || moving} onClick={() => creationParent && setCreation({ kind: "folder", parent: creationParent })}><FolderPlus size={17} /></button>
+          <button type="button" className="iconButton" title={listing && !listing.can_create_file ? "New file requires an updated orbitd" : "New file"} aria-label="New file" disabled={!listing?.can_create_file || listBusy || moving} onClick={() => creationParent && setCreation({ kind: "file", parent: creationParent })}><FilePlus size={17} /></button>
+          <button className="iconButton" title="Refresh" aria-label="Refresh" disabled={listBusy || moving} onClick={() => void resetRoot(listing?.path)}><RefreshCcw size={16} /></button>
         </div>
       </div>
       <div className="fileExplorerList paneList">
         {listBusy && <div className="folderEmpty">Loading...</div>}
         {!listBusy && rootEntries.length === 0 && <div className="folderEmpty">Empty</div>}
-        {!listBusy && renderTree(rootEntries)}
+        {!listBusy && listing && renderTree(rootEntries, listing.path)}
       </div>
     </aside>
     <PaneResizer width={masterPaneWidth} onWidthChange={onMasterPaneWidth} />
@@ -1537,7 +1624,7 @@ function FileWorkspace(props: {
           {viewKind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
           <span>{fileName}</span>
         </div> : <div className="fileTab muted">Welcome</div>}
-        {openedFile && viewKind !== "image" && <button className="fileSaveButton" disabled={saving || !isDirty} aria-busy={saving} aria-label={saveLabel} title={saveLabel} onClick={saveFile}>
+        {openedFile && viewKind !== "image" && <button className="fileSaveButton" disabled={saving || moving || !isDirty} aria-busy={saving} aria-label={saveLabel} title={saveLabel} onClick={saveFile}>
           <Save size={16} aria-hidden="true" /><span>{saveLabel}</span>
         </button>}
         {openedFile && viewKind === "markdown" && <div className="fileViewActions">
@@ -1624,14 +1711,7 @@ function CreateFileEntryDialog({ kind, parent, connection, onClose, onCreated }:
       }, connection);
       onCreated();
     } catch (err) {
-      let message = err instanceof Error ? err.message : String(err);
-      try {
-        const response: unknown = JSON.parse(message);
-        if (response && typeof response === "object" && "error" in response && typeof response.error === "string") {
-          message = response.error;
-        }
-      } catch {}
-      setError(message);
+      setError(fileOperationError(err));
     } finally {
       submitting.current = false;
       setBusy(false);

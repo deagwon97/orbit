@@ -17,6 +17,11 @@ const sessionName = 'Build and test on ARM64';
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' });
       let saved, shortcut, deletedSession;
       const imageRequests = [];
+      const folder = project + '/.agents';
+      const children = ['.settings', 'sample-0.txt'].map(name => ({ name, path: folder + '/' + name, kind: 'file' }));
+      const filesIn = parent => parent === folder ? children : entries;
+      const listEntries = parent => [...filesIn(parent)].sort((a, b) =>
+        a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1);
       let canCreateFile = false, tempPath, tempSession, submittedSession;
       let tempFoldersCreated = 0, failFirstRun = width === 320;
       const entries = [
@@ -66,13 +71,25 @@ const sessionName = 'Build and test on ARM64';
         if (pathname.endsWith('/entries')) {
           const query = new URL(route.request().url()).searchParams;
           assert.equal(query.get('include_hidden'), 'true');
-          const folder = project + '/.agents';
           if (query.get('path') === folder) {
-            return fulfill({ path: folder, home: project, parent: project, entries: [
-              { name: '.settings', path: folder + '/.settings', kind: 'file' },
-            ] });
+            return fulfill({ path: folder, home: project, parent: project, entries: listEntries(folder), can_create_file: canCreateFile, can_move_file: true });
           }
-          return fulfill({ path: project, home: project, parent: null, entries, can_create_file: canCreateFile });
+          return fulfill({ path: project, home: project, parent: null, entries: listEntries(project), can_create_file: canCreateFile, can_move_file: true });
+        }
+        if (pathname.endsWith('/fs/files/move')) {
+          const { path: source, parent } = route.request().postDataJSON();
+          const list = filesIn(source.slice(0, source.lastIndexOf('/')));
+          const index = list.findIndex(entry => entry.path === source);
+          assert(index >= 0);
+          const destination = filesIn(parent);
+          const entry = list[index];
+          if (destination.some(item => item.name === entry.name)) {
+            return route.fulfill({ status: 409, json: { error: 'An entry with that name already exists.' } });
+          }
+          list.splice(index, 1);
+          const moved = { ...entry, path: parent + '/' + entry.name };
+          destination.push(moved);
+          return fulfill({ path: moved.path });
         }
         if (route.request().method() === 'POST' && (pathname.endsWith('/dirs') || pathname.endsWith('/files'))) {
           const body = route.request().postDataJSON();
@@ -82,12 +99,13 @@ const sessionName = 'Build and test on ARM64';
             tempPath = home + '/' + body.name;
             return route.fulfill({ status: 201, json: { path: tempPath } });
           }
-          assert.equal(body.parent, project);
-          if (entries.some(entry => entry.name === body.name)) {
+          assert([folder, project].includes(body.parent));
+          const destination = filesIn(body.parent);
+          if (destination.some(entry => entry.name === body.name)) {
             return route.fulfill({ status: 409, json: { error: 'An entry with that name already exists.' } });
           }
-          const created = { name: body.name, path: project + '/' + body.name, kind: pathname.endsWith('/dirs') ? 'dir' : 'file' };
-          entries.push(created);
+          const created = { name: body.name, path: body.parent + '/' + body.name, kind: pathname.endsWith('/dirs') ? 'dir' : 'file' };
+          destination.push(created);
           return route.fulfill({ status: 201, json: { path: created.path } });
         }
         if (pathname.endsWith('/fs/raw')) {
@@ -325,6 +343,7 @@ const sessionName = 'Build and test on ARM64';
       assert((await hiddenChild.locator('svg').boundingBox()).x > (await hiddenFolder.locator('svg').boundingBox()).x);
       await hiddenFolder.click();
       await hiddenChild.waitFor({ state: 'hidden' });
+      assert.equal(await hiddenFolder.getAttribute('aria-current'), 'true');
 
       const newFolderButton = page.getByRole('button', { name: 'New folder', exact: true });
       const newFileButton = page.getByRole('button', { name: 'New file', exact: true });
@@ -336,19 +355,21 @@ const sessionName = 'Build and test on ARM64';
       assert(await newFileButton.isDisabled());
       await newFolderButton.click();
       const newFolder = page.getByRole('dialog', { name: 'New folder', exact: true });
-      await newFolder.getByText(project, { exact: true }).waitFor();
+      await newFolder.getByText(folder, { exact: true }).waitFor();
       await newFolder.getByLabel('Name', { exact: true }).fill('notes');
       canCreateFile = true;
       await newFolder.getByRole('button', { name: 'Create', exact: true }).click();
       await newFolder.waitFor({ state: 'hidden' });
       await page.waitForFunction(() => !history.state?.orbitModal);
       await page.getByRole('button', { name: 'notes', exact: true }).waitFor();
+      assert(children.some(entry => entry.name === 'notes' && entry.kind === 'dir'));
 
       assert(await newFileButton.isEnabled());
       await newFileButton.click();
       const newFile = page.getByRole('dialog', { name: 'New file', exact: true });
+      await newFile.getByText(folder, { exact: true }).waitFor();
       const fileName = newFile.getByLabel('Name', { exact: true });
-      await fileName.fill('README.md');
+      await fileName.fill('.settings');
       const createFile = newFile.getByRole('button', { name: 'Create', exact: true });
       await createFile.click();
       await newFile.getByRole('alert').getByText('An entry with that name already exists.', { exact: true }).waitFor();
@@ -356,7 +377,35 @@ const sessionName = 'Build and test on ARM64';
       await createFile.click();
       await newFile.waitFor({ state: 'hidden' });
       await page.waitForFunction(() => !history.state?.orbitModal);
-      await page.getByRole('button', { name: 'notes.txt', exact: true }).waitFor();
+      const createdFile = page.getByRole('button', { name: 'notes.txt', exact: true });
+      await createdFile.waitFor();
+      assert(children.some(entry => entry.name === 'notes.txt'));
+      const rootFolder = page.getByRole('button', { name: 'Select root folder', exact: true });
+      if (!mobile) {
+        const moved = page.waitForResponse(response => response.url().endsWith('/fs/files/move') && response.ok());
+        await createdFile.dragTo(rootFolder);
+        await moved;
+        await page.waitForFunction(() => !document.querySelector('.fileCreateFolderButton').disabled);
+        assert(entries.some(entry => entry.name === 'notes.txt'));
+        await createdFile.click();
+        const movedEditor = page.locator('.fileEditorSurface');
+        const draft = movedEditor.getByRole('textbox');
+        await draft.fill('Keep this draft after moving');
+        const movedAgain = page.waitForResponse(response => response.url().endsWith('/fs/files/move') && response.ok());
+        await createdFile.dragTo(hiddenFolder);
+        await movedAgain;
+        await page.waitForFunction(expected => document.querySelector('.fileBreadcrumb')?.textContent === expected, folder + '/notes.txt');
+        assert.equal(await draft.evaluate(node => node instanceof HTMLTextAreaElement ? node.value : node.textContent), 'Keep this draft after moving');
+        await movedEditor.getByRole('button', { name: 'Save', exact: true }).click();
+        await movedEditor.locator('.fileStatusBar').getByText('Saved', { exact: true }).waitFor();
+        assert.deepEqual(saved, { path: folder + '/notes.txt', content: 'Keep this draft after moving' });
+        const duplicate = page.getByRole('button', { name: 'sample-0.txt', exact: true }).last();
+        await duplicate.dragTo(hiddenFolder);
+        await page.getByRole('alert').getByText('An entry with that name already exists.', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('button', { name: 'sample-0.txt', exact: true }).count(), 2);
+      }
+      await rootFolder.click();
+      assert.equal(await rootFolder.getAttribute('aria-current'), 'true');
       await fileRow.click();
       const editor = page.locator('.fileEditorSurface');
       const markdown = '# Updated on ' + width + '\n\n![Markdown image](./docs/desktop.svg)\n\n<p><img src="docs/../assets/test%20image.svg" alt="HTML image" width="8"></p>\n\n' +

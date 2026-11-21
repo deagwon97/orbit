@@ -47,6 +47,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/sessions/:id/files/:file", get(codex::read_file))
         .route("/api/v1/fs/dirs", get(api::list_dirs).post(api::create_dir))
         .route("/api/v1/fs/entries", get(api::list_entries))
+        .route("/api/v1/fs/files/move", post(api::move_file))
         .route(
             "/api/v1/fs/files",
             get(api::read_file)

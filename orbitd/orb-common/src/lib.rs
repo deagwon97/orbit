@@ -143,6 +143,8 @@ pub struct ListEntriesResponse {
     pub entries: Vec<FsEntry>,
     #[serde(default)]
     pub can_create_file: bool,
+    #[serde(default)]
+    pub can_move_file: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
