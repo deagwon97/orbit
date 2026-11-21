@@ -638,11 +638,10 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
             if (running && (draft.trim() || availableAttachments.length) && !commandInput && s.capabilities.queue) { event.preventDefault(); void sendText(true); return; }
           }
           if (event.key === 'Enter') {
-            // A touch device can report a mouse as its primary pointer, including in desktop mode.
-            const desktopKeyboard = navigator.maxTouchPoints === 0 && window.matchMedia('(pointer: fine) and (hover: hover)').matches;
-            if (event.shiftKey || !desktopKeyboard) return;
+            if (event.shiftKey || event.altKey || event.metaKey) return;
+            if (!event.ctrlKey && !window.matchMedia('(width > 820px)').matches) return;
             event.preventDefault();
-            if (voiceActive) return;
+            if (voiceActive || event.repeat) return;
             if (matches.length && !matches.some(command => `/${command.name}` === draft)) { void runCommand(`/${matches[selectedCommand % matches.length].name}`, {}, true); return; }
             event.currentTarget.form?.requestSubmit();
           }

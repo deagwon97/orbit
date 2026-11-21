@@ -32,7 +32,7 @@ POST /api/v1/sessions
 
 응답은 `mode: "web"`과 `codex_thread_id`를 포함한다. `pid`에는 활성 Web 워커의 PID가 표시된다. 워커 연결이 없으면 `null`이다. WebSocket `/api/v1/sessions/:id/codex`는 기존 Bearer 인증을 사용하며, Web 백엔드가 선택한 orbitd로 연결과 인증을 전달한다. 브라우저는 세션 ID로만 접근하고 임의 RPC·소켓 경로·Codex thread ID를 지정할 수 없다.
 
-허용 작업은 `history`, `send`, `steer`, `queue`, `queue/remove`, `queue/resume`, `command`, `interrupt`, `reply`, `fork`다. 데스크톱에서는 Enter로 현재 턴에 추가 지시를 보내고 Tab 또는 다음 턴 버튼으로 예약한다. 모바일에서는 Enter로 줄바꿈하고 전송·예약 버튼을 사용한다. 복수 브라우저의 중복 입력과 승인 응답은 서버에서 검사한다. 서버가 제공하는 추론 요약만 표시하며 raw reasoning은 표시하지 않는다.
+허용 작업은 `history`, `send`, `steer`, `queue`, `queue/remove`, `queue/resume`, `command`, `interrupt`, `reply`, `fork`다. 820px보다 넓은 화면에서는 Enter로 전송하고, 820px 이하에서는 Enter로 줄바꿈한다. Ctrl+Enter는 화면 폭에 관계없이 전송하고 Shift+Enter는 줄바꿈한다. 작업 중 전송은 현재 턴에 추가 지시를 보내며 Tab 또는 다음 턴 버튼으로 예약할 수 있다. 복수 브라우저의 중복 입력과 승인 응답은 서버에서 검사한다. 서버가 제공하는 추론 요약만 표시하며 raw reasoning은 표시하지 않는다.
 
 ## 대화 명령과 입력
 
