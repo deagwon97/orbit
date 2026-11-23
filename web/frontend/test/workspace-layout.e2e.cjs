@@ -40,7 +40,10 @@ const sessionName = 'Build and test on ARM64';
       await page.route('**/api/v1/**', route => {
         const { pathname } = new URL(route.request().url());
         const fulfill = json => route.fulfill({ json });
-        if (pathname.endsWith('/backends')) return fulfill([{ id: 'codex', name: 'Codex', modes: ['cli', 'web'] }]);
+        if (pathname.endsWith('/backends')) {
+          const modes = route.request().headers()['x-orbitd-url'] === 'http://home.internal:7777' ? ['cli'] : ['cli', 'web'];
+          return fulfill([{ id: 'codex', name: 'Codex', modes }]);
+        }
         if (pathname.endsWith('/sessions')) {
           if (route.request().method() === 'POST') {
             submittedSession = route.request().postDataJSON();
@@ -58,7 +61,9 @@ const sessionName = 'Build and test on ARM64';
           ]);
         }
         if (pathname.endsWith('/dirs') && route.request().method() === 'GET') {
-          return fulfill({ path: project, home, cwd: project, parent: home, dirs: [] });
+          const dir = new URL(route.request().url()).searchParams.get('path') || project;
+          return fulfill({ path: dir, home, cwd: project, parent: dir === home ? null : home,
+            dirs: dir === home ? [{ name: 'orbit', path: project }] : [] });
         }
         if (route.request().method() === 'DELETE' && pathname.endsWith('/sessions/fixture-web')) {
           deletedSession = 'fixture-web';
@@ -191,16 +196,48 @@ const sessionName = 'Build and test on ARM64';
 
       await page.getByTitle('New session', { exact: true }).click();
       const create = page.getByRole('dialog', { name: 'New session' });
-      assert(await create.getByRole('radio', { name: 'CLI · Terminal' }).isChecked());
+      await page.waitForFunction(() => document.querySelector('.sessionModeOptions input')?.checked);
+      assert(await create.getByRole('radio', { name: 'Web · Chat' }).isChecked());
       assert.deepEqual(await create.locator('.sessionModeOptions label').allTextContents(), ['Web · Chat', 'CLI · Terminal']);
       assert.equal(await create.getByLabel('Name', { exact: true }).count(), 0);
       assert.equal(await create.getByLabel('Attach after run', { exact: true }).count(), 0);
-      await create.getByRole('radio', { name: 'Web · Chat' }).check();
       assert.equal(await create.getByLabel('Environment', { exact: true }).count(), 0);
-      await create.getByRole('button', { name: 'Cancel' }).click();
+      await create.getByTitle('Browse folders', { exact: true }).click();
+      const picker = page.getByRole('dialog', { name: 'Working directory', exact: true });
+      await picker.waitFor();
+      await page.keyboard.press('Escape');
+      await picker.waitFor({ state: 'hidden' });
+      await create.waitFor();
+      await create.getByTitle('Browse folders', { exact: true }).click();
+      await picker.waitFor();
+      await page.mouse.click(2, 2);
+      await picker.waitFor({ state: 'hidden' });
+      await create.waitFor();
+      await create.getByTitle('Browse folders', { exact: true }).click();
+      const favoriteCurrent = picker.getByRole('button', { name: 'Favorite current folder', exact: true });
+      await picker.getByRole('button', { name: 'orbit', exact: true }).click();
+      await picker.getByText(project, { exact: true }).waitFor();
+      await favoriteCurrent.click();
+      assert.equal(await favoriteCurrent.getAttribute('aria-pressed'), 'true');
+      const favorites = picker.getByRole('region', { name: 'Favorites', exact: true });
+      await favorites.getByRole('button', { name: project, exact: true }).waitFor();
+      await picker.getByRole('button', { name: 'Use', exact: true }).click();
+      await picker.waitFor({ state: 'hidden' });
+      assert.equal(await create.getByPlaceholder('cwd', { exact: true }).inputValue(), project);
+      await create.getByRole('radio', { name: 'CLI · Terminal' }).check();
+      await page.mouse.click(2, 2);
+      await create.waitFor({ state: 'hidden' });
       await page.waitForFunction(() => !history.state?.orbitModal);
       await page.getByTitle('New session', { exact: true }).click();
-      await create.getByRole('radio', { name: 'Web · Chat', exact: true }).check();
+      await page.waitForFunction(() => document.querySelector('.sessionModeOptions input')?.checked);
+      await create.getByTitle('Browse folders', { exact: true }).click();
+      await favorites.getByRole('button', { name: project, exact: true }).click();
+      await picker.locator('.folderPath').filter({ hasText: project }).waitFor();
+      await favorites.getByRole('button', { name: 'Remove favorite ' + project, exact: true }).click();
+      await favorites.waitFor({ state: 'hidden' });
+      await favoriteCurrent.click();
+      await picker.getByRole('button', { name: 'Use', exact: true }).click();
+      await picker.waitFor({ state: 'hidden' });
       await create.getByPlaceholder('cwd', { exact: true }).fill(project);
       await create.getByRole('button', { name: 'Run in temp folder', exact: true }).click();
       if (width === 320) {
@@ -467,6 +504,16 @@ const sessionName = 'Build and test on ARM64';
       await openMenu();
       await menu.getByRole('button', { name: 'Home workstation', exact: true }).click();
       await waitForMenuClose();
+      await page.getByTitle('New session', { exact: true }).click();
+      assert(await create.getByRole('radio', { name: 'CLI · Terminal', exact: true }).isChecked());
+      assert(await create.getByRole('radio', { name: 'Web · Chat', exact: true }).isDisabled());
+      await create.getByTitle('Browse folders', { exact: true }).click();
+      await favoriteCurrent.waitFor();
+      assert.equal(await favorites.count(), 0);
+      await picker.getByRole('button', { name: 'Close', exact: true }).click();
+      await picker.waitFor({ state: 'hidden' });
+      await create.getByRole('button', { name: 'Cancel' }).click();
+      await page.waitForFunction(() => !history.state?.orbitModal);
       await openMenu();
       assert.equal(await menu.getByRole('button', { name: 'Home workstation', exact: true }).getAttribute('aria-current'), 'true');
       await themeToggle.click();
@@ -477,6 +524,7 @@ const sessionName = 'Build and test on ARM64';
       assert.equal(await scheme(), 'light');
       await menuButton.waitFor();
       assert.equal(await menu.count(), 0);
+      assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('orbit.folderFavorites.build') || '[]')), [project]);
       await page.close();
     }
     console.log('Workspace layout passed at 320, 390 and 1440 pixels');

@@ -101,6 +101,18 @@ Web 세션 메타데이터는 `$ORBIT_DATA_DIR/codex-sessions/<orb-session-id>.j
 
 이 기능들은 기존 orbitd 명령과 알림을 이용하므로 웹만 갱신하며 데몬 재시작이 필요 없다.
 
+## PWA 작업 완료 알림
+
+휴대폰에 설치한 Orbit에서 실행 중인 Codex Web 세션의 메뉴를 열고 **완료 알림 켜기**를 누른다. 기기에서 알림을 허용하면 실행 중인 턴과 대기 입력이 모두 성공적으로 끝났을 때 알림을 받는다. 알림을 누르면 해당 세션을 연다. 같은 메뉴에서 세션별로 알림을 끌 수 있다.
+
+알림은 Web API가 기본 orbitd의 기존 WebSocket을 구독해 전송한다. Web API에 다음 환경 변수를 설정한다.
+
+- `ORBIT_PUSH_ORIGIN` — PWA의 공개 HTTPS 주소.
+- `ORBIT_PUSH_DATA_FILE` — Web API가 쓸 수 있는 영구 볼륨의 파일 경로. 구독과 자동 생성된 VAPID 키를 함께 저장하며, 이 저장소는 단일 Web API 프로세스에서 사용한다.
+- `ORBIT_PUSH_SUBJECT` — 선택 설정. 기본값은 공개 HTTPS 주소다.
+
+Web API의 `ORBITD_URL`과 `ORBIT_TOKEN`으로 연결할 수 있는 세션을 지원한다. 구독과 VAPID 키는 Web API에 저장하고 orbitd에는 별도 알림 설정을 저장하지 않는다.
+
 ## 작업 중 추가 입력과 진행 출력
 
 답변 사이의 반복 `Codex` 이름표와 `Codex가 작업하고 있습니다` 문구는 표시하지 않는다. 완료한 명령은 `Ran`, 실행 중인 명령은 `Running`으로 구분한다. `Working` 경과 시간·중단은 유지하고 현재 도구·승인 대기·재시도처럼 구체적인 상태가 있을 때만 설명을 붙인다.

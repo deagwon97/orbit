@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { Maximize2, X } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useDialogHistory } from './dialog-history';
+import { useDialogDismiss } from './dialog-dismiss';
 
 export type DiagramFormat = 'Mermaid' | 'SVG' | 'HTML';
 
@@ -125,6 +126,7 @@ export function CodexDiagram({ text, format }: { text: string; format: DiagramFo
   const close = () => { setOpen(false); setZoomed(false); };
   const dialogOpen = open && !!result && result !== 'failed';
   useDialogHistory(close, dialogOpen);
+  const dismiss = useDialogDismiss(close);
   useLayoutEffect(() => {
     const panel = dialog.current;
     if (!dialogOpen || !panel) return;
@@ -165,8 +167,7 @@ export function CodexDiagram({ text, format }: { text: string; format: DiagramFo
         <Maximize2 size={16} aria-hidden="true" />
       </button>
     </div>
-    {open && <dialog ref={dialog} className="codexDiagramDialog" aria-labelledby={titleId}
-      onCancel={event => { event.preventDefault(); close(); }}>
+    {open && <dialog ref={dialog} className="codexDiagramDialog" aria-labelledby={titleId} {...dismiss}>
       <header>
         <strong id={titleId}>{format} diagram</strong>
         <button type="button" className="codexDiagramZoom" aria-pressed={zoomed} onClick={() => setZoomed(value => !value)}>

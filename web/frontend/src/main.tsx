@@ -1,11 +1,13 @@
 import "@xterm/xterm/css/xterm.css";
 
 import { cancelDetailHistory, dialogHandledBack, pushDetailHistory, useDialogHistory } from './dialog-history';
+import { ModalBackdrop, useDialogDismiss } from './dialog-dismiss';
+import { SessionPushToggle } from './SessionPushToggle';
 import { CodexChat } from "./CodexChat";
 import { copyText } from "./clipboard";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Eye, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Eye, FilePlus, FileText, FolderOpen, FolderPlus, Home, Image as ImageIcon, Info, LogOut, Menu, MessageSquare, MoreHorizontal, Moon, PanelLeftClose, PanelLeftOpen, Plus, PlugZap, RefreshCcw, Save, Server, Star, Sun, Terminal as TerminalIcon, Trash2, X } from "lucide-react";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -609,7 +611,13 @@ function App() {
     if (focusSessionListToggle.current) sessionListToggleRef.current?.focus({ preventScroll: true });
     focusSessionListToggle.current = false;
   }, [sessionsCollapsed]);
-  const [activeConnectionId, setActiveConnectionId] = useState(() => localStorage.getItem("orbit.activeConnection") || "");
+  const [pushTarget, setPushTarget] = useState(() => {
+    const query = new URLSearchParams(location.search);
+    const session = query.get("orbitSession");
+    const connection = query.get("orbitConnection");
+    return session && connection && connections.some(item => item.id === connection) ? { session, connection } : null;
+  });
+  const [activeConnectionId, setActiveConnectionId] = useState(() => pushTarget?.connection || localStorage.getItem("orbit.activeConnection") || "");
   const [sessions, setSessions] = useState<ConnectedSession[]>([]);
   const [backendCatalog, setBackendCatalog] = useState<Record<string, AgentBackend[]>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -618,8 +626,7 @@ function App() {
   const closeSessionActions = React.useCallback(() => setSessionActions(null), []);
   const showAll = true;
   const [tool, setTool] = useState("codex");
-  const [sessionMode, setSessionMode] = useState<"cli" | "web">("cli");
-  useEffect(() => setSessionMode("cli"), [activeConnectionId]);
+  const [sessionModeOverride, setSessionMode] = useState<"cli" | "web" | null>(null);
   const [cwd, setCwd] = useState("");
   const [env, setEnv] = useState("");
   const [busy, setBusy] = useState(false);
@@ -631,6 +638,8 @@ function App() {
   const [folderOpen, setFolderOpen] = useState(false);
   const [dirListing, setDirListing] = useState<DirListing | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
+  const [dirError, setDirError] = useState("");
+  const dirRequest = useRef(0);
   const [fileEditorOpen, setFileEditorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -645,6 +654,8 @@ function App() {
     return connections.find((connection) => connection.id === activeConnectionId) ?? connections[0] ?? null;
   }, [connections, activeConnectionId]);
   const backends = backendCatalog[activeConnection?.id || ""] || defaultBackends;
+  const supportsCodexWeb = tool === "codex" && backends.some(backend => backend.id === "codex" && backend.modes?.includes("web"));
+  const sessionMode = supportsCodexWeb ? sessionModeOverride ?? "web" : "cli";
   const selected = useMemo(() => sessions.find((session) => session.key === selectedKey) ?? null, [sessions, selectedKey]);
   const layoutStyle = { "--master-pane-width": `${masterPaneWidth}px` } as React.CSSProperties;
 
@@ -727,7 +738,6 @@ function App() {
     setBusy(true);
     let tempCwd: string | undefined;
     try {
-      if (sessionMode === "web" && (tool !== "codex" || !backends.find(backend => backend.id === tool)?.modes?.includes("web"))) throw new Error("This orbitd does not support Codex Web yet");
       const body: Record<string, unknown> = { tool, mode: sessionMode, env: sessionMode === "web" ? {} : parseEnv(env) };
       if (inTempFolder) {
         const { home } = await api("/api/v1/fs/dirs", {}, activeConnection) as DirListing;
@@ -770,23 +780,25 @@ function App() {
 
   async function loadDirs(path?: string) {
     if (!activeConnection) return;
+    const request = ++dirRequest.current;
     setDirBusy(true);
+    setDirError("");
     try {
       const query = path ? `?path=${encodeURIComponent(path)}` : "";
-      const listing = await api(`/api/v1/fs/dirs${query}`, {}, activeConnection) as DirListing;
+      let listing = await api(`/api/v1/fs/dirs${query}`, {}, activeConnection) as DirListing;
       if (!path && listing.home && listing.path !== listing.home) {
-        setDirListing(await api(`/api/v1/fs/dirs?path=${encodeURIComponent(listing.home)}`, {}, activeConnection) as DirListing);
-      } else {
-        setDirListing(listing);
+        listing = await api(`/api/v1/fs/dirs?path=${encodeURIComponent(listing.home)}`, {}, activeConnection) as DirListing;
       }
+      if (request === dirRequest.current) setDirListing(listing);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
+      if (request === dirRequest.current) setDirError(fileOperationError(err));
     } finally {
-      setDirBusy(false);
+      if (request === dirRequest.current) setDirBusy(false);
     }
   }
 
   function openFolderPicker() {
+    setDirListing(null);
     setFolderOpen(true);
     void loadDirs(cwd.trim() || undefined);
   }
@@ -796,6 +808,19 @@ function App() {
   }, [activeConnectionId, connections]);
   useEffect(() => { if (authed) void loadBackends(); }, [authed, activeConnection?.id]);
   useEffect(() => { if (authed) void load(); }, [authed, showAll, activeConnection?.id]);
+  useEffect(() => {
+    if (!pushTarget) return;
+    const target = sessions.find(session => session.id === pushTarget.session &&
+      session.connection.id === pushTarget.connection && session.mode === "web");
+    if (!target) return;
+    const url = new URL(location.href);
+    url.searchParams.delete("orbitSession");
+    url.searchParams.delete("orbitConnection");
+    history.replaceState(history.state, "", url);
+    setPushTarget(null);
+    setSelectedKey(target.key);
+    setDetailOpen(true);
+  }, [sessions, pushTarget]);
   useEffect(() => {
     if (selectedKey && !sessions.some((session) => session.key === selectedKey)) {
       setSelectedKey(null);
@@ -918,7 +943,7 @@ function App() {
             {!sessionsCollapsed && sessionListButton}
           </div>
           <div className="sessionListHeader paneListControls">
-            <button className="primaryButton" title="New session" disabled={busy} onClick={() => { setRunError(""); setCreateOpen(true); }}><Plus size={16} />New session</button>
+            <button className="primaryButton" title="New session" disabled={busy} onClick={() => { setRunError(""); setSessionMode(null); setCreateOpen(true); }}><Plus size={16} />New session</button>
           </div>
           <div className="sessions paneList">
             {sessions.map(session => {
@@ -977,6 +1002,8 @@ function App() {
       trigger={sessionActions.trigger}
       mobile={sessionActions.mobile}
       deleting={deletingSessionKey !== null}
+      pushAction={actionSession.mode === "web" && actionSession.status === "running"
+        ? <SessionPushToggle id={actionSession.id} connection={actionSession.connection} /> : null}
       onClose={closeSessionActions}
       onDetach={selectedKey === actionSession.key ? () => {
         closeSessionActions();
@@ -1014,7 +1041,7 @@ function App() {
       error={runError}
       sessionMode={sessionMode}
       onSessionMode={setSessionMode}
-      onTool={(value) => { setTool(value); setSessionMode("cli"); }}
+      onTool={(value) => { setTool(value); setSessionMode(null); }}
       onCwd={setCwd}
       onEnv={setEnv}
       onBrowse={openFolderPicker}
@@ -1023,9 +1050,11 @@ function App() {
       onRunInTempFolder={() => void runSession(true)}
     />}
     {folderOpen && activeConnection && <FolderPicker
+      key={activeConnection.id}
       connection={activeConnection}
       listing={dirListing}
       busy={dirBusy}
+      loadError={dirError}
       selected={cwd}
       onClose={() => setFolderOpen(false)}
       onLoad={loadDirs}
@@ -1119,11 +1148,12 @@ function PaneResizer({ width, onWidthChange, onCollapse, controls }: {
   />;
 }
 
-function SessionActions({ sessionName, trigger, mobile, deleting, onClose, onDetach, onDelete }: {
+function SessionActions({ sessionName, trigger, mobile, deleting, pushAction, onClose, onDetach, onDelete }: {
   sessionName: string;
   trigger: HTMLButtonElement;
   mobile: boolean;
   deleting: boolean;
+  pushAction: React.ReactNode;
   onClose: () => void;
   onDetach?: () => void;
   onDelete: () => void;
@@ -1131,6 +1161,7 @@ function SessionActions({ sessionName, trigger, mobile, deleting, onClose, onDet
   const dialogRef = useRef<HTMLDialogElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   useDialogHistory(onClose, mobile);
+  const dismiss = useDialogDismiss(onClose);
 
   React.useLayoutEffect(() => {
     const breakpoint = window.matchMedia("(max-width: 820px)");
@@ -1174,6 +1205,7 @@ function SessionActions({ sessionName, trigger, mobile, deleting, onClose, onDet
   }, [trigger, onClose]);
 
   const actions = <div className="sessionCardActionButtons">
+    {pushAction}
     {onDetach && <button type="button" onClick={onDetach}><LogOut size={15} />Detach</button>}
     <button type="button" className="dangerButton" disabled={deleting} onClick={onDelete}><Trash2 size={15} />Delete session</button>
   </div>;
@@ -1182,8 +1214,7 @@ function SessionActions({ sessionName, trigger, mobile, deleting, onClose, onDet
     className="workspaceDialog sessionActionsDialog"
     ref={dialogRef}
     aria-label="Session actions"
-    onCancel={event => { event.preventDefault(); onClose(); }}
-    onClick={event => { if (event.target === event.currentTarget) onClose(); }}
+    {...dismiss}
   >
     <div className="modalTop">
       <strong>{sessionName}</strong>
@@ -1219,6 +1250,7 @@ function OrbitMenu({ connections, activeConnectionId, darkTheme, onToggleTheme, 
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   useDialogHistory(onClose);
+  const dismiss = useDialogDismiss(onClose);
   React.useLayoutEffect(() => {
     const dialog = dialogRef.current;
     dialog?.showModal();
@@ -1229,8 +1261,7 @@ function OrbitMenu({ connections, activeConnectionId, darkTheme, onToggleTheme, 
     className="workspaceDialog"
     ref={dialogRef}
     aria-labelledby="orbit-menu-title"
-    onCancel={event => { event.preventDefault(); onClose(); }}
-    onClick={event => { if (event.target === event.currentTarget) onClose(); }}
+    {...dismiss}
   >
     <div className="orbitMenuContent">
       <div className="modalTop">
@@ -1280,9 +1311,8 @@ function NewSessionModal(props: {
   onRun: () => void;
   onRunInTempFolder: () => void;
 }) {
-  useDialogHistory(props.onClose);
   const supportsWeb = props.backends.some(backend => backend.id === "codex" && backend.modes?.includes("web"));
-  return <div className="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
+  return <ModalBackdrop labelledBy="new-session-title" close={props.onClose} locked={props.busy}>
     <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); props.onRun(); }}>
       <div className="modalTop">
         <strong id="new-session-title">New session</strong>
@@ -1328,7 +1358,7 @@ function NewSessionModal(props: {
         <button className="primaryButton" disabled={props.busy}><PlugZap size={16} />Run</button>
       </div>
     </form>
-  </div>;
+  </ModalBackdrop>;
 }
 
 function FileWorkspace(props: {
@@ -1718,8 +1748,8 @@ function CreateFileEntryDialog({ kind, parent, connection, onClose, onCreated }:
     }
   }
 
-  return <dialog className="workspaceDialog" ref={dialogRef} aria-labelledby="file-create-title"
-    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+  const dismiss = useDialogDismiss(onClose, !busy);
+  return <dialog className="workspaceDialog" ref={dialogRef} aria-labelledby="file-create-title" {...dismiss}>
     <form className="fileCreateForm" onSubmit={event => { event.preventDefault(); void create(); }}>
       <div className="modalTop">
         <strong id="file-create-title">{kind === "folder" ? "New folder" : "New file"}</strong>
@@ -1789,15 +1819,35 @@ function FolderPicker(props: {
   connection: OrbitConnection;
   listing: DirListing | null;
   busy: boolean;
+  loadError: string;
   selected: string;
   onClose: () => void;
   onLoad: (path?: string) => void;
   onSelect: (path: string) => void;
 }) {
-  useDialogHistory(props.onClose);
   const [newFolder, setNewFolder] = useState("");
   const [error, setError] = useState("");
+  const favoritesKey = `orbit.folderFavorites.${props.connection.id}`;
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(favoritesKey) || "[]");
+      return Array.isArray(stored) ? [...new Set(stored.filter((path): path is string => typeof path === "string" && path.startsWith("/")))] : [];
+    } catch {
+      return [];
+    }
+  });
   const current = props.listing?.path ?? props.selected;
+  const currentFavorite = !!props.listing?.path && favorites.includes(props.listing.path);
+  function toggleFavorite(path: string) {
+    const next = favorites.includes(path) ? favorites.filter(favorite => favorite !== path) : [...favorites, path];
+    try {
+      localStorage.setItem(favoritesKey, JSON.stringify(next));
+      setFavorites(next);
+      setError("");
+    } catch {
+      setError("Could not save favorites in this browser.");
+    }
+  }
   async function createFolder() {
     if (!props.listing?.path || !newFolder.trim()) return;
     try {
@@ -1810,13 +1860,21 @@ function FolderPicker(props: {
     }
   }
 
-  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+  return <ModalBackdrop labelledBy="folder-picker-title" close={props.onClose}>
     <div className="folderPicker">
       <div className="folderTop">
-        <strong>Working directory</strong>
+        <strong id="folder-picker-title">Working directory</strong>
         <button title="Close" onClick={props.onClose}><X size={16} /></button>
       </div>
-      <div className="folderPath">{current || "Loading..."}</div>
+      <div className="folderLocation">
+        <div className="folderPath" title={current}>{current || (props.busy ? "Loading..." : "—")}</div>
+        <button type="button" className="iconButton folderFavoriteToggle" aria-label="Favorite current folder"
+          title={currentFavorite ? "Remove current folder from favorites" : "Add current folder to favorites"}
+          aria-pressed={currentFavorite} disabled={!props.listing?.path || props.busy}
+          onClick={() => props.listing?.path && toggleFavorite(props.listing.path)}>
+          <Star size={16} fill={currentFavorite ? "currentColor" : "none"} aria-hidden="true" />
+        </button>
+      </div>
       <div className="folderActions">
         <button disabled={!props.listing?.parent || props.busy} onClick={() => props.listing?.parent && props.onLoad(props.listing.parent)}><ChevronUp size={16} />Up</button>
         <button disabled={!props.listing?.home || props.busy} onClick={() => props.listing?.home && props.onLoad(props.listing.home)}><Home size={16} />Home</button>
@@ -1826,8 +1884,19 @@ function FolderPicker(props: {
         <input placeholder="new empty folder" value={newFolder} onChange={(event) => setNewFolder(event.target.value)} />
         <button disabled={!props.listing?.path || !newFolder.trim() || props.busy}><FolderOpen size={16} />Create</button>
       </form>
-      {error && <div className="folderError">{error}</div>}
+      {(error || props.loadError) && <div className="folderError" role="alert">{error || props.loadError}</div>}
       <div className="folderList">
+        {favorites.length > 0 && <section className="folderFavorites" aria-label="Favorites">
+          <strong>Favorites</strong>
+          <ul>{favorites.map(path => <li key={path}>
+            <button type="button" className="folderRow" title={path} disabled={props.busy}
+              aria-current={props.listing?.path === path ? "location" : undefined} onClick={() => props.onLoad(path)}>
+              <Star size={15} aria-hidden="true" /><span>{path}</span>
+            </button>
+            <button type="button" className="iconButton folderFavoriteRemove" title="Remove favorite" aria-label={`Remove favorite ${path}`}
+              onClick={() => toggleFavorite(path)}><X size={15} aria-hidden="true" /></button>
+          </li>)}</ul>
+        </section>}
         {props.busy && <div className="folderEmpty">Loading...</div>}
         {!props.busy && props.listing?.dirs.length === 0 && <div className="folderEmpty">No folders</div>}
         {!props.busy && props.listing?.dirs.map((dir) => <button key={dir.path} className="folderRow" onClick={() => props.onLoad(dir.path)}>
@@ -1836,7 +1905,7 @@ function FolderPicker(props: {
         </button>)}
       </div>
     </div>
-  </div>;
+  </ModalBackdrop>;
 }
 
 function Login({ onLogin, themeButton }: { onLogin: (input: { label: string; url: string; token: string }) => Promise<void>; themeButton: React.ReactNode }) {
@@ -1869,7 +1938,6 @@ function ConnectionModal(props: {
   onClose: () => void;
   onConnect: (input: { label: string; url: string; token: string }) => Promise<void>;
 }) {
-  useDialogHistory(props.onClose);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("http://127.0.0.1:7777");
   const [token, setToken] = useState("");
@@ -1887,10 +1955,10 @@ function ConnectionModal(props: {
     }
   }
 
-  return <div className="modalBackdrop" role="dialog" aria-modal="true">
+  return <ModalBackdrop labelledBy="connection-modal-title" close={props.onClose} locked={busy}>
     <form className="sessionModal" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <div className="modalTop">
-        <strong>Add orbitd</strong>
+        <strong id="connection-modal-title">Add orbitd</strong>
         <button type="button" title="Close" onClick={props.onClose}><X size={16} /></button>
       </div>
       <label className="fieldLabel">
@@ -1911,7 +1979,7 @@ function ConnectionModal(props: {
         <button className="primaryButton" disabled={busy || !url.trim()}><PlugZap size={16} />{busy ? "Connecting..." : "Connect"}</button>
       </div>
     </form>
-  </div>;
+  </ModalBackdrop>;
 }
 
 function closeDisclosureOnEscape(event: React.KeyboardEvent<HTMLDetailsElement>) {

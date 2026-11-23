@@ -3,6 +3,12 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
 (async()=>{
  const c=JSON.parse(fs.readFileSync(0,'utf8')),browser=await chromium.launch({executablePath:chromium.executablePath(),headless:true,args:['--no-sandbox']}),page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),name=`Mobile UI QA ${Date.now()}`,errors=[],ops=[];let active=true,wsClient,wsAttempts=0,failConnections=false;
  await page.addInitScript(() => {
+  Object.defineProperty(navigator.serviceWorker, 'ready', {value:Promise.resolve({
+   pushManager:{subscribe:async ({userVisibleOnly,applicationServerKey})=>{
+    if(!userVisibleOnly||applicationServerKey[0]!==1)throw Error('Missing Web Push options');
+    return {endpoint:'https://fcm.googleapis.com/fcm/send/fixture'};
+   }},
+  })});
   Object.defineProperty(window, 'SpeechRecognition', {value:undefined,configurable:true});
   window.webkitSpeechRecognition = class {
    start() {
@@ -44,6 +50,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  const testCwd=c.cwd||'/home/qa/project';
  const connection={id:'mobile-ui',label:'Home workstation with a long host name',url:'http://qa.invalid:7777',token:'fixture'};
  let storedSession;
+ let pushEnabled=false;
  const graphPath='/home/qa/project/results/comparison.png';
  const relativeGraphPath=settings.cwd+'/results/relative chart.svg';
  const generatedPath='/tmp/orbit-generated.png';
@@ -52,6 +59,14 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  await page.route('**/api/v1/**',async route=>{
   const {pathname}=new URL(route.request().url());
   const method=route.request().method();
+  if(pathname==='/api/v1/push/sessions/mobile-ui-fixture'){
+   const headers=route.request().headers();
+   if(headers['x-orbitd-url']!==connection.url||!(/^[0-9a-f]{64}$/).test(headers['x-orbit-push-device']))throw Error('Missing push device or server');
+   if(method==='GET')return route.fulfill({json:{publicKey:'AQ',enabled:pushEnabled}});
+   if(method==='PUT'&&route.request().postDataJSON().connection!==connection.id)throw Error('Missing push connection');
+   pushEnabled=method==='PUT';
+   return route.fulfill({status:204});
+  }
   if(pathname.endsWith('/backends'))return route.fulfill({json:[{id:'codex',name:'Codex',modes:['cli','web']}]});
   if(pathname.endsWith('/sessions')){
    if(method==='POST'){
@@ -189,6 +204,10 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(!ops.some(op=>op.op==='queue/remove'&&op.entryId==='queued-3'))throw Error('Queue dialog removed the wrong entry');
   await page.goBack();
   await queueDialog.waitFor({state:'hidden'});
+  await queuePanel.getByRole('button',{name:'전체 보기'}).click();
+  await queueDialog.waitFor();
+  await page.mouse.click(2,2);
+  await queueDialog.waitFor({state:'hidden'});
   await page.getByText('Codex 연결됨',{exact:true}).waitFor();
   updateQueue([]);
   await queuePanel.waitFor({state:'hidden'});
@@ -247,6 +266,10 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.keyboard.press('Enter');
   await diagramDialog.waitFor();
   await page.keyboard.press('Escape');
+  await diagramDialog.waitFor({state:'hidden'});
+  await enlargeDiagram.click();
+  await diagramDialog.waitFor();
+  await page.mouse.click(2,2);
   await diagramDialog.waitFor({state:'hidden'});
   const mermaidBlock=page.locator('.codexCode').filter({has:page.locator('iframe[title="Mermaid preview"]')}).first();
   await mermaidBlock.getByRole('button',{name:'Show source',exact:true}).click();
@@ -452,6 +475,12 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await page.locator('.codexConnection').getByText(renamed,{exact:true}).waitFor();
   await renameDialog.getByRole('button',{name:'명령 창 닫기'}).click();
   await page.waitForFunction(()=>!history.state?.orbitModal);
+  const pushLink=new URL(c.webUrl);
+  pushLink.searchParams.set('orbitSession',storedSession.id);
+  pushLink.searchParams.set('orbitConnection',connection.id);
+  await page.goto(pushLink.href);
+  await page.locator('.codexConnection').getByText(renamed,{exact:true}).waitFor();
+  await page.waitForFunction(()=>!new URLSearchParams(location.search).has('orbitSession'));
   const back=page.getByRole('button',{name:'세션 목록으로 돌아가기',exact:true});
   await back.click();
   const card=page.locator('.sessionCard').filter({has:page.getByTitle(renamed,{exact:true})});
@@ -463,6 +492,11 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await sessionActions.waitFor();
   if(!await sessionActions.evaluate(el=>el.matches(':modal')))throw Error('Mobile session actions are not modal');
   await sessionActions.getByText(renamed,{exact:true}).waitFor();
+  const enablePush=sessionActions.getByRole('button',{name:'완료 알림 켜기',exact:true});
+  const disablePush=sessionActions.getByRole('button',{name:'완료 알림 끄기',exact:true});
+  await enablePush.click();
+  await disablePush.click();
+  await enablePush.waitFor();
   await page.waitForFunction(()=>!!history.state?.orbitModal);
   await page.goBack();
   await sessionActions.waitFor({state:'hidden'});

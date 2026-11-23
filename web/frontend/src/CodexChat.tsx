@@ -12,6 +12,7 @@ import { suggestions, isCommand, type ConversationCommand } from './codex-comman
 import type { Session as OrbitSession } from './main';
 import { useVoiceInput } from './codex-voice-input';
 import { useDialogHistory } from './dialog-history';
+import { useDialogDismiss } from './dialog-dismiss';
 import { copyText } from './clipboard';
 import { CodexDiagram, diagramFormat, type DiagramFormat } from './CodexDiagram';
 
@@ -194,6 +195,7 @@ function MessageQueue({ queue, disabled, error, action }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => setOpen(false);
   useDialogHistory(close, open);
+  const dismiss = useDialogDismiss(close);
   useLayoutEffect(() => {
     const panel = dialog.current;
     if (!open || !panel) return;
@@ -223,10 +225,7 @@ function MessageQueue({ queue, disabled, error, action }: {
     </header>
     {queue.error && <p>{queue.error}</p>}
     {rows(items.slice(0, queuePreviewLimit))}
-    {open && <dialog className="workspaceDialog codexQueueDialog" ref={dialog} aria-label="대기 메시지 전체 보기"
-      onCancel={event => { event.preventDefault(); close(); }}
-      onClick={event => { if (event.target === event.currentTarget) close(); }}
-    >
+    {open && <dialog className="workspaceDialog codexQueueDialog" ref={dialog} aria-label="대기 메시지 전체 보기" {...dismiss}>
       <div className="codexQueueDialogBody">
         <header><strong>{title}</strong><button type="button" autoFocus onClick={close}>닫기</button></header>
         {(queue.error || error) && <p role="alert">{queue.error || error}</p>}

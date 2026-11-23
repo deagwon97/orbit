@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import { WebSocket } from "ws";
 import { config } from "./config.js";
 import { terminalModePrefix } from "./terminal-state.js";
+import { registerSessionPush } from "./session-push.js";
 
 const app = Fastify({ logger: {
   serializers: { req: (req: any) => ({
@@ -318,5 +319,17 @@ app.get("/api/v1/sessions/:id/codex", { websocket: true }, (socket, req: any) =>
   socket.on("close", () => remote.close());
   socket.on("error", () => remote.close());
 });
+
+const pushFile = process.env.ORBIT_PUSH_DATA_FILE;
+const pushOrigin = process.env.ORBIT_PUSH_ORIGIN;
+if (pushFile && pushOrigin && config.token) {
+  registerSessionPush(app, {
+    file: pushFile,
+    origin: pushOrigin,
+    subject: process.env.ORBIT_PUSH_SUBJECT || pushOrigin,
+    upstream: config.orbitd,
+    token: config.token,
+  });
+}
 
 await app.listen({ port: config.port, host: "0.0.0.0" });

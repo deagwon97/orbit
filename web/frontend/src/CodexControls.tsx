@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
-import { useDialogHistory } from './dialog-history';
+import { ModalBackdrop } from './dialog-dismiss';
 import { CodexStatus, QuotaPanels } from './CodexStatus';
 
 type Props = { result: any; busy: boolean; running: boolean; readOnly: boolean; run: (command: string, extra?: any) => Promise<void>; close: () => void; insert: (text: string) => void };
@@ -49,13 +49,11 @@ function RenamePicker({ result, busy, readOnly, run }: Pick<Props, 'result' | 'b
 }
 export function CodexControls(props: Props) {
   const { result, busy, running, readOnly, run } = props;
-  useDialogHistory(props.close);
-  const panel=useRef<HTMLElement>(null);
-  useEffect(()=>{const previous=document.activeElement;return()=>{if(previous instanceof HTMLElement && previous.isConnected && !['TEXTAREA','INPUT'].includes(previous.tagName))previous.focus({preventScroll:true});};},[]);
   const [confirmFull, setConfirmFull] = useState(false);
   const state = result.state || {}, settings = state.settings || {};
   const titles: Record<string, string> = { resume: '이전 대화 이어가기', status: '세션 상태', model: '모델 및 추론 강도', permissions: '작업 권한', fast: 'Fast 모드', usage: '계정 사용량', plan: 'Plan 모드', help: '대화 명령', skills: '스킬', mcp: 'MCP 서버', ps: '백그라운드 터미널', rename: '대화 이름', pwd: '작업 폴더' };
-  return <div className="codexControlsBackdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) props.close(); }}><section ref={panel} className={`codexControls${result.type === 'status' ? ' codexStatusDialog' : ''}`} role="dialog" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); props.close(); } if(event.key==='Tab'){const nodes=Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, a[href]')||[]);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}} }} aria-modal="true" aria-label={titles[result.type] || '명령 결과'}>
+  return <ModalBackdrop className="codexControlsBackdrop" close={props.close} locked={busy} label={titles[result.type] || '명령 결과'}>
+    <section className={`codexControls${result.type === 'status' ? ' codexStatusDialog' : ''}`}>
     <header><strong>/{result.type} · {titles[result.type] || '명령 결과'}</strong><button type="button" autoFocus aria-label="명령 창 닫기" onClick={props.close}>×</button></header>
     {running && ['model', 'permissions', 'fast'].includes(result.type) && <p className="codexControlsNotice">현재 작업은 계속 진행하며 변경 사항은 이후 턴에 적용됩니다.</p>}
     {result.type === 'resume' && <ResumePicker {...props} />}
@@ -77,5 +75,5 @@ export function CodexControls(props: Props) {
       : <RenamePicker {...props} />)}
     {result.message && <p role="status">{result.message}</p>}
     {busy && <p role="status">명령 처리 중…</p>}
-  </section></div>;
+  </section></ModalBackdrop>;
 }
