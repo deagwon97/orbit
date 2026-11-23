@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Copy, File as FileIcon, ImagePlus, Paperclip, Plus, RotateCcw, X } from 'lucide-react';
+import { fetchWorkspaceImage } from './workspace-images';
 export type ImageSession = { id: string; connection: { url: string; token: string } };
 export type UploadedAttachment = { id: string; path: string; name: string; kind?: 'image' | 'file' };
 type AttachmentDraft = { key: string; name: string; kind: 'image' | 'file'; preview?: string; file: File; status: 'uploading' | 'ready' | 'error'; id?: string; path?: string; error?: string };
@@ -108,4 +109,32 @@ function HistoryImage({path,session}: {path:string;session:ImageSession}) {
 }
 export function MessageImages({content,session}: {content:any[];session:ImageSession}) {
   return <>{content.filter(c=>c.type==='localImage').map((c,i)=><HistoryImage key={`${c.path}-${i}`} path={c.path} session={session}/>)}</>;
+}
+
+export function WorkspaceImage({ path, label, session }: { path: string; label: string; session: ImageSession }) {
+  const { url: server, token } = session.connection;
+  const [result, setResult] = useState<{ path: string; url: string }>();
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl = '';
+    setResult(undefined);
+    void fetchWorkspaceImage(path, server, token, controller.signal).then(blob => {
+      if (controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setResult({ path, url: objectUrl });
+    }).catch(() => {
+      if (!controller.signal.aborted) setResult({ path, url: '' });
+    });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path, server, token]);
+
+  const current = result?.path === path ? result : undefined;
+  return <span className="codexWorkspaceImage">
+    {current?.url
+      ? <a href={current.url} download={path.split('/').at(-1) || 'image'} title="원본 이미지 다운로드"><img src={current.url} alt={label} />{label}</a>
+      : <span title={path}>{label} <small role="status">{current ? '미리보기를 불러올 수 없습니다.' : '이미지 불러오는 중…'}</small></span>}
+  </span>;
 }

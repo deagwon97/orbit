@@ -44,6 +44,11 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
  const testCwd=c.cwd||'/home/qa/project';
  const connection={id:'mobile-ui',label:'Home workstation with a long host name',url:'http://qa.invalid:7777',token:'fixture'};
  let storedSession;
+ const graphPath='/home/qa/project/results/comparison.png';
+ const relativeGraphPath=settings.cwd+'/results/relative chart.svg';
+ const generatedPath='/tmp/orbit-generated.png';
+ const missingGraphPath='/mnt/data/missing.png';
+ const imageRequests=[];
  await page.route('**/api/v1/**',async route=>{
   const {pathname}=new URL(route.request().url());
   const method=route.request().method();
@@ -65,6 +70,15 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
    if(route.request().headers()['content-type']!=='application/octet-stream')throw Error('Ordinary file upload was not binary');
    return route.fulfill({json:{id:name,path:'/tmp/orbit-codex-images-qa/mobile-ui-fixture/'+name}});
   }
+  if(pathname.endsWith('/fs/raw')){
+   const file=new URL(route.request().url());
+   const path=file.searchParams.get('path');
+   imageRequests.push(path);
+   if(file.searchParams.has('token')||route.request().headers().authorization!=='Bearer fixture'||route.request().headers()['x-orbitd-url']!==connection.url)throw Error('Image request did not use the session host and header auth');
+   if(path===missingGraphPath)return route.fulfill({status:404,body:'Missing'});
+   if(![graphPath,relativeGraphPath,generatedPath].includes(path))throw Error('Unexpected image path: '+path);
+   return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300"><rect width="640" height="300" fill="blue"/></svg>'});
+  }
   if(pathname.endsWith('/dirs'))return route.fulfill({json:{path:testCwd,cwd:testCwd,home:testCwd,parent:'/home/qa',dirs:[]}});
   return route.abort();
  });
@@ -72,7 +86,7 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   if(failConnections){void ws.close({code:1011,reason:'QA unavailable'});return;}
   ws.send(JSON.stringify({type:'ready',state:snapshot()}));ws.onMessage(raw=>{
   const b=JSON.parse(String(raw));ops.push(b);let result={};
-  if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'},{id:'diagrams',type:'agentMessage',status:'completed',text:diagramAnswer}]}]},state:snapshot()};
+  if(b.op==='history')result={thread:{turns:[{id:'ui-turn',startedAt,status:active?'inProgress':'completed',items:[{id:'user',type:'userMessage',content:[{type:'text',text:'모바일 화면과 진행 상태를 확인해줘.'}]},{id:'work',type:'commandExecution',status:'completed',command:'rg --files src',aggregatedOutput:'src/CodexChat.tsx\nsrc/CodexControls.tsx\nsrc/CodexStatus.tsx\nsrc/styles/codex-chat.css\nsrc/main.tsx',exitCode:0},{id:'empty-reasoning',type:'reasoning',summary:[]},{id:'answer',type:'agentMessage',text:'## 화면을 정리하고 있습니다\n세션의 실행 위치와 작업 내용을 확인할 수 있습니다.\n\n- 대화 공간을 넓게 사용합니다.\n- 주간 한도를 막대로 확인합니다.\n\n```js\n'+Array.from({length:28},(_,i)=>'const line'+i+' = '+i+';').join('\n')+'\n```\n\n추가 지시는 작업 중에도 보낼 수 있습니다.'},{id:'diagrams',type:'agentMessage',status:'completed',text:diagramAnswer},{id:'charts',type:'agentMessage',status:'completed',text:'[비교 그래프]('+graphPath+')\n\n![상대 경로 그래프](results/relative%20chart.svg)\n\n[없는 그래프](sandbox:'+missingGraphPath+')'},{id:'native-image',type:'imageGeneration',status:'completed',savedPath:generatedPath}]}]},state:snapshot()};
   if(b.op==='command'){if(b.command==='/help')result={type:'help',commands};else if(b.command==='/status')result={type:'status',threadId:'12345678-1234-4234-8234-123456789012',state:snapshot()};else if(b.command==='/usage')result={type:'usage',...limits};else if(b.command==='/model')result={type:'model',state:snapshot(),models:[{id:settings.model,model:settings.model,supportedReasoningEfforts:[{reasoningEffort:'medium',description:'Medium'}]}]};else result={type:'resume',data:[],state:snapshot()};}
   if(b.op==='interrupt'){active=false;ws.send(JSON.stringify({type:'notification',message:{method:'turn/completed',params:{turn:{id:'ui-turn',status:'interrupted'}}}}));}
   if(b.op==='command'&&/^\/plan(?: |$)/.test(b.command)){
@@ -114,6 +128,15 @@ const fs=require('node:fs'),{chromium}=require('/app/node_modules/playwright');
   await cwdPopup.getByText(settings.cwd,{exact:true}).waitFor();
   await cwdSummary.press('Escape');
   await cwdPopup.waitFor({state:'hidden'});
+  for(const label of ['비교 그래프','상대 경로 그래프','orbit-generated.png']){
+   const chart=page.getByRole('img',{name:label,exact:true});
+   await chart.waitFor();
+   await page.waitForFunction(name=>Array.from(document.images).some(img=>img.alt===name&&img.naturalWidth===640),label);
+   const image=await chart.boundingBox();
+   if(image.width>390)throw Error('Chart overflows the mobile chat');
+  }
+  await page.getByRole('status').filter({hasText:'미리보기를 불러올 수 없습니다.'}).waitFor();
+  if(imageRequests.length!==4||!imageRequests.includes(relativeGraphPath))throw Error('Unexpected workspace image fetches');
   const queuePanel=page.locator('.codexQueue');
   const queueRows=queuePanel.locator(':scope > ol > li');
   const updateQueue=items=>{

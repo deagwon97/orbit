@@ -3,7 +3,8 @@ import { Marked, Tokenizer, type Token, type Tokens } from 'marked';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyLiveState, itemText, mergeHistory, newChatState, observe, output, putItem, rememberTurnStart, type CodexItem } from './codex-state';
 import './styles/codex-chat.css';
-import { AttachmentDrafts, AttachmentPicker, MessageImages, useAttachments, type UploadedAttachment } from './CodexImages';
+import { AttachmentDrafts, AttachmentPicker, MessageImages, WorkspaceImage, useAttachments, type UploadedAttachment, type ImageSession } from './CodexImages';
+import { workspaceImagePath } from './workspace-images';
 import { progressCaption, progressLabel, queuesDuringTurn, specificActivity } from './codex-progress';
 import { CodexWorking } from './CodexWorking';
 import { CodexControls } from './CodexControls';
@@ -34,22 +35,30 @@ const chatMarkdown = new Marked({
   },
 });
 
-function Inline({ tokens = [] }: { tokens?: Token[] }) {
+type ConversationWorkspace = { cwd: string; session: ImageSession };
+
+function Inline({ tokens = [], workspace }: { tokens?: Token[]; workspace?: ConversationWorkspace }) {
   return <>{tokens.map((token, i) => {
     switch (token.type) {
-      case 'strong': return <strong key={i}><Inline tokens={token.tokens} /></strong>;
-      case 'em': return <em key={i}><Inline tokens={token.tokens} /></em>;
-      case 'del': return <del key={i}><Inline tokens={token.tokens} /></del>;
+      case 'strong': return <strong key={i}><Inline tokens={token.tokens} workspace={workspace} /></strong>;
+      case 'em': return <em key={i}><Inline tokens={token.tokens} workspace={workspace} /></em>;
+      case 'del': return <del key={i}><Inline tokens={token.tokens} workspace={workspace} /></del>;
       case 'codespan': return <code key={i}>{token.text}</code>;
       case 'br': return <br key={i} />;
       case 'checkbox': return <input key={i} className="codexTaskCheckbox" type="checkbox" checked={token.checked} disabled />;
-      case 'link':
-        if (/^(https?:|mailto:|#)/i.test(token.href)) {
+      case 'image':
+      case 'link': {
+        const path = workspace && workspaceImagePath(token.href, workspace.cwd);
+        if (path && workspace) {
+          return <WorkspaceImage key={i} path={path} label={token.text || path.split('/').at(-1) || '이미지'} session={workspace.session} />;
+        }
+        if (token.type === 'link' && /^(https?:|mailto:|#)/i.test(token.href)) {
           return <a key={i} href={token.href} title={token.title ?? undefined} target="_blank" rel="noreferrer"><Inline tokens={token.tokens} /></a>;
         }
         break;
+      }
     }
-    if ('tokens' in token && token.tokens) return <Inline key={i} tokens={token.tokens} />;
+    if ('tokens' in token && token.tokens) return <Inline key={i} tokens={token.tokens} workspace={workspace} />;
     return <React.Fragment key={i}>{'text' in token ? token.text : token.raw}</React.Fragment>;
   })}</>;
 }
@@ -96,17 +105,18 @@ function CodeBlock({ text, format, streaming }: { text: string; format?: Diagram
     {!preview && expanded && <div className="codexCodeFooter">{toggle}</div>}
   </div>;
 }
-function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+function Markdown({ text, streaming, workspace }: { text: string; streaming?: boolean; workspace?: ConversationWorkspace }) {
+  const inline = (tokens?: Token[]) => <Inline tokens={tokens} workspace={workspace} />;
   function blocks(tokens: Token[] = [], tightList = false): React.ReactNode {
     return tokens.map((token, i) => {
       switch (token.type) {
         case 'space':
         case 'def': return null;
         case 'code': return <CodeBlock key={i} text={token.text} streaming={streaming} format={diagramFormat(token.lang, token.text)} />;
-        case 'heading': return React.createElement(`h${token.depth}`, { key: i }, <Inline tokens={token.tokens} />);
-        case 'paragraph': return <p key={i}><Inline tokens={token.tokens} /></p>;
+        case 'heading': return React.createElement(`h${token.depth}`, { key: i }, inline(token.tokens));
+        case 'paragraph': return <p key={i}>{inline(token.tokens)}</p>;
         case 'text': {
-          const content = <Inline tokens={token.tokens ?? [token]} />;
+          const content = inline(token.tokens ?? [token]);
           return tightList ? <React.Fragment key={i}>{content}</React.Fragment> : <p key={i}>{content}</p>;
         }
         case 'list': {
@@ -121,7 +131,7 @@ function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
         case 'table': {
           const renderRow = (cells: Tokens.TableCell[], header = false) => {
             const Cell = header ? 'th' : 'td';
-            return cells.map((cell, j) => <Cell key={j} style={{ textAlign: cell.align ?? undefined }}><Inline tokens={cell.tokens} /></Cell>);
+            return cells.map((cell, j) => <Cell key={j} style={{ textAlign: cell.align ?? undefined }}>{inline(cell.tokens)}</Cell>);
           };
           return <div className="codexTable" key={i}><table>
             <thead><tr>{renderRow(token.header, true)}</tr></thead>
@@ -134,7 +144,7 @@ function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   }
   return <div className="codexProse">{blocks(chatMarkdown.lexer(text))}</div>;
 }
-function WorkLog({ item }: { item: CodexItem }) {
+function WorkLog({ item, session }: { item: CodexItem; session: ImageSession }) {
   const [expanded, setExpanded] = useState(false);
   const full = output(item).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\n+$/, '');
   const lines = full ? full.split('\n') : [], hidden = Math.max(0, lines.length - 3);
@@ -147,6 +157,8 @@ function WorkLog({ item }: { item: CodexItem }) {
   return <section className={`codexWork ${running ? 'running' : ''} ${failed ? 'failed' : ''}`} data-item={item.id}>
     <div className="codexWorkHeading"><span className="codexDot" /><strong>{label}</strong>{caption && <button className="codexCommand" title={caption} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{caption.split('\n')[0]}{caption.includes('\n') ? ' …' : ''}</button>}{failed && item.exitCode != null && <small>exit {item.exitCode}</small>}{expanded && collapse}</div>
     <div className="codexWorkBody">
+      {item.type === 'imageGeneration' && typeof item.savedPath === 'string' && item.savedPath.startsWith('/') &&
+        <WorkspaceImage path={item.savedPath} label={item.savedPath.split('/').at(-1) || '생성된 이미지'} session={session} />}
       {exploring && actions.map((a: any, index: number) => <div className="codexAction" key={index}><span>{a.type === 'read' ? 'Read' : a.type === 'search' ? 'Search' : 'List files'}</span><span>{a.name || [a.query, a.path].filter(Boolean).join(' ') || a.command}</span></div>)}
       {expanded && caption && <pre>{caption}</pre>}
       {expanded && item.arguments!=null && <pre>{JSON.stringify(item.arguments,null,2)}</pre>}
@@ -599,7 +611,7 @@ export function CodexChat({ session, onSessionChange, onSessionFork, onBack, ses
         const message = ['userMessage', 'agentMessage', 'system'].includes(item.type);
         const canFork = forkBoundaries.get(item.turnId) === id;
         return <React.Fragment key={id}>
-          {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} streaming={item.status === 'inProgress'} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} />}
+          {message ? <article className={`codexMessage ${item.type}`}><MessageImages content={item.content || []} session={session} /><Markdown text={itemText(item)} streaming={item.status === 'inProgress'} workspace={item.type === 'agentMessage' ? { cwd, session } : undefined} />{item.type==='agentMessage'&&item.questions?.length>0&&<div className="codexAsyncQuestions">{item.questions.map((question:any,index:number)=><section key={index}><strong>{question.title}</strong>{question.options?.map((option:string)=><button type="button" key={option} onClick={()=>{setDraft(value=>[value,`${question.title}: ${option}`].filter(Boolean).join('\n'));promptRef.current?.focus();}}>{option}</button>)}</section>)}</div>}</article> : <WorkLog item={item} session={session} />}
           {canFork && <div className="codexTurnActions">
             <button type="button" disabled={connection !== 'ready' || forkingTurn !== null} onClick={() => void forkTurn(item.turnId)}>
               <GitFork size={14} />{forkingTurn === item.turnId ? 'Forking…' : 'Fork here'}

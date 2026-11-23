@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useRef } from "react";
+import { fetchWorkspaceImage } from "./workspace-images";
 
 const fileOrigin = "https://orbit-files.invalid";
 
@@ -36,15 +37,7 @@ export function FileMarkdownPreview({ source, path, server, token }: {
         try {
           const file = new URL(src, base);
           if (file.origin !== fileOrigin) return;
-          const query = new URLSearchParams({ path: decodeURIComponent(file.pathname) });
-          const headers = new Headers({ "x-orbitd-url": server });
-          if (token) headers.set("Authorization", `Bearer ${token}`);
-          const res = await fetch(`/api/v1/fs/raw?${query}`, {
-            headers,
-            signal: controller.signal,
-          });
-          if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) return;
-          const blob = await res.blob();
+          const blob = await fetchWorkspaceImage(decodeURIComponent(file.pathname), server, token, controller.signal);
           if (controller.signal.aborted) return;
           const url = URL.createObjectURL(blob);
           objectUrls.push(url);

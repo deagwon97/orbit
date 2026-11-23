@@ -126,6 +126,10 @@
 .codexProse .codexTaskItem { list-style:none; }
 .codexTaskCheckbox { min-height:0; margin:0 .45em 0 0; accent-color:var(--chat-accent); }
 .codexProse a { color:var(--chat-accent); text-underline-offset:3px; }.codexProse :not(pre) > code { background:var(--chat-muted); padding:2px 5px; border-radius:5px; font-size:.88em; }
+.codexWorkspaceImage { display:block; max-width:100%; margin:8px 0; overflow-wrap:anywhere; }
+.codexWorkspaceImage a { display:inline-block; max-width:100%; color:var(--chat-accent); }
+.codexWorkspaceImage img { display:block; max-width:100%; height:auto; margin-bottom:4px; border-radius:8px; }
+.codexWorkspaceImage small { display:inline; color:var(--chat-secondary); font-weight:400; }
 .codexProse blockquote { border-left:3px solid var(--chat-control-border); margin:16px 0; padding:4px 16px; color:var(--chat-secondary); }.codexProse hr { border:0; border-top:1px solid var(--chat-border); margin:24px 0; }
 .codexTable { overflow-x:auto; margin:20px 0; }.codexTable table { width:100%; border-collapse:collapse; text-align:left; font-size:.94em; }.codexTable th,.codexTable td { padding:13px 16px; border-bottom:1px solid var(--chat-border); min-width:100px; }.codexTable th { color:var(--chat-ink); font-weight:600; }
 .codexEmpty { padding:clamp(30px,12vh,120px) 12px 30px; }.codexEmptyMark { display:block; color:var(--chat-accent); font-size:38px; margin-bottom:15px; }.codexEmpty h2 { font-size:25px; color:var(--chat-ink); font-weight:500; margin:0 0 12px; }.codexEmpty p { font-size:14px; }.codexEmpty small { display:block; margin-top:20px; color:var(--chat-secondary); }
